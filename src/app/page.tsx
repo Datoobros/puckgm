@@ -16,12 +16,20 @@ export default async function Home() {
         <p className="text-sm text-zinc-500">
           Signed in as {user?.primaryEmailAddress?.emailAddress ?? user?.id}
         </p>
-        <Link
-          href="/players"
-          className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
-        >
-          Browse players
-        </Link>
+        <div className="flex gap-3">
+          <Link
+            href="/players"
+            className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
+          >
+            Browse players
+          </Link>
+          <Link
+            href="/leagues"
+            className="rounded border border-black/10 px-4 py-2 text-sm font-medium dark:border-white/15"
+          >
+            Leagues
+          </Link>
+        </div>
       </Show>
       <Show when="signed-out">
         <p className="text-sm text-zinc-500">
