@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
@@ -39,7 +40,9 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
       <ul className="divide-y divide-black/10 dark:divide-white/10">
         {league.teams.map((team) => (
           <li key={team.id} className="py-2 text-sm">
-            {team.name}
+            <Link href={`/leagues/${league.id}/teams/${team.id}`} className="hover:underline">
+              {team.name}
+            </Link>
             {team.managerUserId === userId && (
               <span className="ml-2 text-xs text-zinc-500">(you)</span>
             )}

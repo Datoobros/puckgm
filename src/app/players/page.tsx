@@ -1,6 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { computePlayerPoints, STARTER_SCORING } from "@/lib/scoring/engine";
+import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
+import { addPlayerAction } from "./actions";
 
 async function searchResults(query: string) {
   const players = await prisma.player.findMany({
@@ -29,14 +31,41 @@ async function defaultList() {
   });
 }
 
+interface RosterContext {
+  leagueId: string;
+  teamId: string;
+  isMyTeam: boolean;
+}
+
+async function resolveRosterContext(
+  leagueId: string | undefined,
+  teamId: string | undefined,
+  userId: string,
+): Promise<RosterContext | null> {
+  if (!leagueId || !teamId) return null;
+  const team = await prisma.team.findUnique({ where: { id: teamId } });
+  if (!team || team.leagueId !== leagueId) return null;
+  return { leagueId, teamId, isMyTeam: team.managerUserId === userId };
+}
+
 export default async function PlayersPage(props: PageProps<"/players">) {
-  await auth.protect();
+  const { userId } = await auth.protect();
 
   const params = await props.searchParams;
   const query = typeof params.q === "string" ? params.q.trim() : "";
+  const rosterContext = await resolveRosterContext(
+    typeof params.leagueId === "string" ? params.leagueId : undefined,
+    typeof params.teamId === "string" ? params.teamId : undefined,
+    userId,
+  );
 
   const results = query ? await searchResults(query) : null;
   const notable = query ? null : await defaultList();
+
+  const shownIds = (results ?? notable ?? []).map((p) => p.id);
+  const ownership = rosterContext
+    ? await getLeagueOwnershipMap(rosterContext.leagueId, shownIds)
+    : new Map<string, string>();
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
@@ -46,6 +75,13 @@ export default async function PlayersPage(props: PageProps<"/players">) {
         starter scoring config (2/G, 1/A, 0.1/SOG, 4/W, 0.2/SV) — leagues will
         set their own values later.
       </p>
+      {rosterContext && (
+        <p className="mt-2 text-sm text-zinc-500">
+          {rosterContext.isMyTeam
+            ? "Adding players to your team."
+            : "Viewing ownership only — this isn't your team."}
+        </p>
+      )}
 
       <form method="get" className="mt-6 flex gap-2">
         <input
@@ -55,6 +91,12 @@ export default async function PlayersPage(props: PageProps<"/players">) {
           placeholder="Search a player..."
           className="flex-1 rounded border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
         />
+        {rosterContext && (
+          <>
+            <input type="hidden" name="leagueId" value={rosterContext.leagueId} />
+            <input type="hidden" name="teamId" value={rosterContext.teamId} />
+          </>
+        )}
         <button
           type="submit"
           className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
@@ -79,6 +121,8 @@ export default async function PlayersPage(props: PageProps<"/players">) {
                 gamesIngested: p.gamesIngested,
                 points: p.points,
               }))}
+              rosterContext={rosterContext}
+              ownership={ownership}
             />
           </>
         )}
@@ -98,6 +142,8 @@ export default async function PlayersPage(props: PageProps<"/players">) {
                 gamesIngested: null,
                 points: null,
               }))}
+              rosterContext={rosterContext}
+              ownership={ownership}
             />
           </>
         )}
@@ -116,7 +162,15 @@ interface PlayerRow {
   points: number | null;
 }
 
-function PlayerTable({ rows }: { rows: PlayerRow[] }) {
+function PlayerTable({
+  rows,
+  rosterContext,
+  ownership,
+}: {
+  rows: PlayerRow[];
+  rosterContext: RosterContext | null;
+  ownership: Map<string, string>;
+}) {
   if (rows.length === 0) {
     return <p className="text-sm text-zinc-500">No players found.</p>;
   }
@@ -135,6 +189,7 @@ function PlayerTable({ rows }: { rows: PlayerRow[] }) {
               <th className="py-2 font-medium text-right">Pts</th>
             </>
           )}
+          {rosterContext && <th className="py-2" />}
         </tr>
       </thead>
       <tbody>
@@ -151,6 +206,30 @@ function PlayerTable({ rows }: { rows: PlayerRow[] }) {
                   {p.points.toFixed(1)}
                 </td>
               </>
+            )}
+            {rosterContext && (
+              <td className="py-2 text-right">
+                {ownership.has(p.id) ? (
+                  <span className="text-xs text-zinc-500">
+                    {ownership.get(p.id)}
+                  </span>
+                ) : rosterContext.isMyTeam ? (
+                  <form
+                    action={addPlayerAction.bind(
+                      null,
+                      rosterContext.leagueId,
+                      rosterContext.teamId,
+                      p.id,
+                    )}
+                  >
+                    <button type="submit" className="text-xs underline">
+                      Add
+                    </button>
+                  </form>
+                ) : (
+                  <span className="text-xs text-zinc-500">—</span>
+                )}
+              </td>
             )}
           </tr>
         ))}
