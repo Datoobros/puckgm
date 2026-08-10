@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Show } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
 
@@ -8,16 +9,23 @@ export default async function Home() {
     <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
       <h1 className="text-3xl font-semibold tracking-tight">puckgm</h1>
       <p className="max-w-md text-zinc-600 dark:text-zinc-400">
-        Dynasty fantasy hockey GM sim. Nothing here yet but auth.
+        Dynasty fantasy hockey GM sim. Early days — player stats are the
+        first thing built.
       </p>
       <Show when="signed-in">
         <p className="text-sm text-zinc-500">
           Signed in as {user?.primaryEmailAddress?.emailAddress ?? user?.id}
         </p>
+        <Link
+          href="/players"
+          className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
+        >
+          Browse players
+        </Link>
       </Show>
       <Show when="signed-out">
         <p className="text-sm text-zinc-500">
-          Sign in above to see it work.
+          Sign in above, then head to the players page to see real stats.
         </p>
       </Show>
     </div>
