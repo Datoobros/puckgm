@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
 import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
-import { syncAllRosters } from "@/lib/players/sync";
+import { syncTeamsRosters } from "@/lib/players/sync";
+
+// Vercel Hobby allows up to 60s per serverless function (default is much
+// lower). The first production run of this route did a full 32-team roster
+// sync sequentially and got killed mid-flight — 500 with no body, since the
+// platform terminates the function rather than letting it finish. Scoping
+// the sync to only teams that played (see ingestDate) plus this opt-in
+// covers a realistic in-season day; if a day ever needs more than 60s,
+// that's a sign the work needs to move off the request path entirely
+// (e.g. a queue), not a bigger number here.
+export const maxDuration = 60;
 
 // Vercel's documented pattern: cron-triggered requests carry this header
 // automatically. CRON_SECRET is a belt-and-suspenders check so the route
@@ -15,7 +25,7 @@ export async function GET(request: Request) {
 
   const date = yesterdayUTC();
   const ingestResult = await ingestDate(date);
-  const rosterResults = await syncAllRosters();
+  const rosterResults = await syncTeamsRosters(ingestResult.teamsInvolved);
 
   const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
   const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
@@ -23,6 +33,6 @@ export async function GET(request: Request) {
   return NextResponse.json({
     ok: true,
     ingest: ingestResult,
-    rosterSync: { synced: rosterSynced, failed: rosterFailed },
+    rosterSync: { teams: ingestResult.teamsInvolved, synced: rosterSynced, failed: rosterFailed },
   });
 }

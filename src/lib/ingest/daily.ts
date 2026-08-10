@@ -8,7 +8,13 @@ import { ingestGame } from "@/lib/ingest/games";
 interface NhlDaySchedule {
   gameWeek: {
     date: string;
-    games: { id: number; gameType: number; gameState: string }[];
+    games: {
+      id: number;
+      gameType: number;
+      gameState: string;
+      awayTeam: { abbrev: string };
+      homeTeam: { abbrev: string };
+    }[];
   }[];
 }
 
@@ -18,6 +24,10 @@ export interface DailyIngestResult {
   gamesIngested: number;
   gamesSkipped: number;
   errors: { gameId: number; error: string }[];
+  /** Teams involved in that day's ingested games — feeds the scoped roster
+   * sync so a quiet day (or even a full slate) never has to touch all 32
+   * teams, only the ones that actually played. */
+  teamsInvolved: string[];
 }
 
 /** date must be "YYYY-MM-DD". */
@@ -30,6 +40,7 @@ export async function ingestDate(date: string): Promise<DailyIngestResult> {
   let gamesIngested = 0;
   let gamesSkipped = 0;
   const errors: { gameId: number; error: string }[] = [];
+  const teamsInvolved = new Set<string>();
 
   for (const g of games) {
     // Regular season only for now — playoffs (gameType 3) are Stage 6+
@@ -40,14 +51,26 @@ export async function ingestDate(date: string): Promise<DailyIngestResult> {
     }
     try {
       const result = await ingestGame(g.id);
-      if (result.status === "ingested") gamesIngested += 1;
-      else gamesSkipped += 1;
+      if (result.status === "ingested") {
+        gamesIngested += 1;
+        teamsInvolved.add(g.awayTeam.abbrev);
+        teamsInvolved.add(g.homeTeam.abbrev);
+      } else {
+        gamesSkipped += 1;
+      }
     } catch (e) {
       errors.push({ gameId: g.id, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  return { date, gamesFound: games.length, gamesIngested, gamesSkipped, errors };
+  return {
+    date,
+    gamesFound: games.length,
+    gamesIngested,
+    gamesSkipped,
+    errors,
+    teamsInvolved: [...teamsInvolved],
+  };
 }
 
 /** Yesterday's date in UTC, formatted YYYY-MM-DD.
