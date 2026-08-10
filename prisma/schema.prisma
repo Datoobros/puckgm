@@ -1,0 +1,322 @@
+// Prisma schema for the dynasty fantasy hockey GM sim.
+// Mirrors the data model in ../../DESIGN.md §4. Keep them in sync.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 4.1 Player identity — internal IDs, mapped to external sources.
+// Never key application logic off a vendor ID directly.
+// ---------------------------------------------------------------------------
+
+model Player {
+  id              String   @id @default(cuid())
+  fullName        String
+  dob             DateTime?
+  primaryPosition String? // C, LW, RW, D, G
+  shoots          String? // L, R
+  currentNhlOrg   String? // team abbrev, e.g. "EDM" — derived, refreshed from NHL data
+  careerNhlGp     Int      @default(0) // derived — drives the 80-GP waiver exemption
+  officialRosterStatus String? // ACTIVE | IR | LTIR — derived from source data, see DESIGN.md §2.6
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sourceIds     PlayerSourceId[]
+  statLines     GameStatLine[]
+  rosterSlots   RosterSlot[]
+  draftPickUsed DraftPick[]
+  tradeItems    TradeItem[]
+  fabids        FaBid[]
+  waiverClaims  WaiverClaim[]
+  lineupEntries LineupEntry[]
+
+  @@index([currentNhlOrg])
+}
+
+model PlayerSourceId {
+  id       String @id @default(cuid())
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id])
+  source   String // 'nhl' | 'espn' | 'eliteprospects'
+  sourceId String
+
+  @@unique([source, sourceId])
+  @@index([playerId])
+}
+
+// Raw stat lines only. Fantasy points are always computed on read against a
+// league's scoring config — never persisted. See DESIGN.md §4.1.
+model GameStatLine {
+  id        String   @id @default(cuid())
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id])
+  gameId    String // NHL game id
+  gameDate  DateTime
+  league    String   @default("NHL")
+  statsJson Json
+  createdAt DateTime @default(now())
+
+  @@unique([playerId, gameId])
+  @@index([gameDate])
+}
+
+// ---------------------------------------------------------------------------
+// Leagues, settings, teams
+// ---------------------------------------------------------------------------
+
+model League {
+  id            String   @id @default(cuid())
+  name          String
+  seasonFounded Int
+  settingsJson  Json // includes mutability-tiered settings, see DESIGN.md §2.10
+  createdAt     DateTime @default(now())
+
+  teams            Team[]
+  settingsLog      LeagueSettingsLog[]
+  draftPicks       DraftPick[]
+  trades           Trade[]
+  matchupPeriods   MatchupPeriod[]
+}
+
+model LeagueSettingsLog {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id])
+  field     String
+  oldValue  Json?
+  newValue  Json
+  changedAt DateTime @default(now())
+  changedBy String // user id
+}
+
+enum TeamState {
+  ACTIVE
+  ORPHAN_FROZEN
+}
+
+model Team {
+  id            String    @id @default(cuid())
+  leagueId      String
+  league        League    @relation(fields: [leagueId], references: [id])
+  name          String
+  managerUserId String
+  state         TeamState @default(ACTIVE)
+  createdAt     DateTime  @default(now())
+
+  rosterSlots       RosterSlot[]
+  draftPicksOwned   DraftPick[]        @relation("CurrentOwner")
+  draftPicksOrig    DraftPick[]        @relation("OriginalOwner")
+  tradeItemsFrom    TradeItem[]        @relation("FromTeam")
+  tradeItemsTo      TradeItem[]        @relation("ToTeam")
+  faabBudgets       FaabBudget[]
+  faBids            FaBid[]
+  waiverClaims      WaiverClaim[]
+  lineupEntries     LineupEntry[]
+
+  @@index([leagueId])
+}
+
+// ---------------------------------------------------------------------------
+// Rosters — ACTIVE / FARM / IR. See DESIGN.md §2.3–2.6.
+// ---------------------------------------------------------------------------
+
+enum RosterSlotType {
+  ACTIVE
+  FARM
+  IR
+}
+
+model RosterSlot {
+  id             String         @id @default(cuid())
+  teamId         String
+  team           Team           @relation(fields: [teamId], references: [id])
+  playerId       String
+  player         Player         @relation(fields: [playerId], references: [id])
+  slotType       RosterSlotType
+  effectiveFrom  DateTime       @default(now())
+  effectiveTo    DateTime?
+
+  @@index([teamId, slotType])
+  @@index([playerId])
+}
+
+// ---------------------------------------------------------------------------
+// Draft picks — first-class tradeable objects. DESIGN.md §2.8 / §4.1.
+// ---------------------------------------------------------------------------
+
+model DraftPick {
+  id                String   @id @default(cuid())
+  leagueId          String
+  league            League   @relation(fields: [leagueId], references: [id])
+  season            Int
+  round             Int
+  originalTeamId    String
+  originalTeam      Team     @relation("OriginalOwner", fields: [originalTeamId], references: [id])
+  currentOwnerId    String
+  currentOwner      Team     @relation("CurrentOwner", fields: [currentOwnerId], references: [id])
+  lotteryResult     Int? // final pick number after lottery
+  usedOnPlayerId    String?
+  usedOnPlayer      Player?  @relation(fields: [usedOnPlayerId], references: [id])
+
+  tradeItems TradeItem[]
+
+  @@index([leagueId, season])
+}
+
+// ---------------------------------------------------------------------------
+// Trades — with review window. DESIGN.md §2.11.
+// ---------------------------------------------------------------------------
+
+enum TradeState {
+  PROPOSED
+  UNDER_REVIEW
+  VETOED
+  PROCESSED
+  CANCELLED
+}
+
+model Trade {
+  id           String     @id @default(cuid())
+  leagueId     String
+  league       League     @relation(fields: [leagueId], references: [id])
+  proposedAt   DateTime   @default(now())
+  reviewEndsAt DateTime
+  state        TradeState @default(PROPOSED)
+
+  items TradeItem[]
+
+  @@index([leagueId, state])
+}
+
+enum TradeItemType {
+  PLAYER
+  PICK
+  FAAB
+}
+
+model TradeItem {
+  id         String        @id @default(cuid())
+  tradeId    String
+  trade      Trade         @relation(fields: [tradeId], references: [id])
+  fromTeamId String
+  fromTeam   Team          @relation("FromTeam", fields: [fromTeamId], references: [id])
+  toTeamId   String
+  toTeam     Team          @relation("ToTeam", fields: [toTeamId], references: [id])
+  itemType   TradeItemType
+  playerId   String?
+  player     Player?       @relation(fields: [playerId], references: [id])
+  draftPickId String?
+  draftPick  DraftPick?    @relation(fields: [draftPickId], references: [id])
+  faabAmount Int?
+}
+
+// ---------------------------------------------------------------------------
+// FAAB / the wire. DESIGN.md §2.7 / §2.9.
+// ---------------------------------------------------------------------------
+
+model FaabBudget {
+  id              String @id @default(cuid())
+  teamId          String
+  team            Team   @relation(fields: [teamId], references: [id])
+  season          Int
+  startingAmount  Int
+  remaining       Int
+
+  @@unique([teamId, season])
+}
+
+enum FaBidResult {
+  PENDING
+  WON
+  LOST
+}
+
+model FaBid {
+  id           String      @id @default(cuid())
+  teamId       String
+  team         Team        @relation(fields: [teamId], references: [id])
+  playerId     String
+  player       Player      @relation(fields: [playerId], references: [id])
+  amount       Int
+  targetSlot   RosterSlotType
+  processDate  DateTime
+  result       FaBidResult @default(PENDING)
+  createdAt    DateTime    @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Demotion waivers. DESIGN.md §2.3 / §2.9 — distinct from the wire (FA claims).
+// ---------------------------------------------------------------------------
+
+enum WaiverClaimResult {
+  PENDING
+  AWARDED
+  CLEARED
+}
+
+model WaiverClaim {
+  id              String            @id @default(cuid())
+  teamId          String
+  team            Team              @relation(fields: [teamId], references: [id])
+  playerId        String
+  player          Player            @relation(fields: [playerId], references: [id])
+  priorityAtClaim Int
+  result          WaiverClaimResult @default(PENDING)
+  createdAt       DateTime          @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Matchups and lineups. DESIGN.md §2.4.
+// ---------------------------------------------------------------------------
+
+model MatchupPeriod {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id])
+  season    Int
+  periodNo  Int
+  startDate DateTime
+  endDate   DateTime
+
+  @@unique([leagueId, season, periodNo])
+}
+
+// Lineups are pre-set and freely editable, no weekly lock — only a per-game
+// lock once a player's own game starts. DESIGN.md §2.4.
+model LineupEntry {
+  id         String   @id @default(cuid())
+  teamId     String
+  team       Team     @relation(fields: [teamId], references: [id])
+  playerId   String
+  player     Player   @relation(fields: [playerId], references: [id])
+  gameDate   DateTime
+  lineupSlot String // e.g. "C1", "LW1", "D2", "UTIL", "BE"
+  createdAt  DateTime @default(now())
+
+  @@unique([teamId, playerId, gameDate])
+}
+
+// ---------------------------------------------------------------------------
+// Append-only transaction log. DESIGN.md §4.1 — the source of truth for
+// "why does this team own this pick / this player." Never mutate a row here;
+// corrections are new rows.
+// ---------------------------------------------------------------------------
+
+model TransactionLog {
+  id          String   @id @default(cuid())
+  leagueId    String
+  type        String // CALLUP | SEND_DOWN | IR_MOVE | TRADE | FAAB_WIN | WAIVER_CLAIM | DRAFT_PICK | LINEUP_EDIT
+  actorTeamId String?
+  payload     Json
+  effectiveAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([leagueId, type])
+  @@index([actorTeamId])
+}
