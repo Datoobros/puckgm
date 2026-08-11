@@ -28,6 +28,25 @@ function shiftDate(date: string, days: number): string {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Row ordering for the ESPN-style layout: players sort into their current
+// lineup slot (not roster-add order) — C block, then L, then R, then D, then
+// UTIL, then Bench. A visual divider is coarser than the sort: C/L/R don't
+// get a line between them, only before D / UTIL / Bench do.
+const SKATER_SLOT_ORDER = ["C", "L", "R", "D", "UTIL", "BE"];
+const SKATER_DIVIDER_GROUPS: string[][] = [["C", "L", "R"], ["D"], ["UTIL"], ["BE"]];
+const GOALIE_SLOT_ORDER = ["G", "BE"];
+const GOALIE_DIVIDER_GROUPS: string[][] = [["G"], ["BE"]];
+
+function slotSortRank(slot: string, order: string[]): number {
+  const idx = order.indexOf(slot);
+  return idx === -1 ? order.length : idx;
+}
+
+function slotGroupIndex(slot: string, groups: string[][]): number {
+  const idx = groups.findIndex((g) => g.includes(slot));
+  return idx === -1 ? groups.length : idx;
+}
+
 export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/teams/[teamId]">) {
   const { userId } = await auth.protect();
   const { id: leagueId, teamId } = await props.params;
@@ -94,9 +113,15 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
 
   // Goalies rendered in their own table below skaters — matching ESPN's team
   // page, which groups by position rather than mixing stat columns that
-  // don't apply across both.
-  const activeSkaters = activeSlots.filter((s) => s.player.primaryPosition !== "G");
-  const activeGoalies = activeSlots.filter((s) => s.player.primaryPosition === "G");
+  // don't apply across both. Within each table, rows sort by *current lineup
+  // slot* (not roster-add order) so putting a player into C moves him up
+  // into the C group immediately — sort is stable, so ties keep roster order.
+  const activeSkaters = activeSlots
+    .filter((s) => s.player.primaryPosition !== "G")
+    .sort((a, b) => slotSortRank(lineupFor(a).currentSlot, SKATER_SLOT_ORDER) - slotSortRank(lineupFor(b).currentSlot, SKATER_SLOT_ORDER));
+  const activeGoalies = activeSlots
+    .filter((s) => s.player.primaryPosition === "G")
+    .sort((a, b) => slotSortRank(lineupFor(a).currentSlot, GOALIE_SLOT_ORDER) - slotSortRank(lineupFor(b).currentSlot, GOALIE_SLOT_ORDER));
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -134,6 +159,14 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           >
             Next →
           </Link>
+          {date !== todayUTC() && (
+            <Link
+              href={`/leagues/${leagueId}/teams/${teamId}?date=${todayUTC()}&view=${view}`}
+              className="rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+            >
+              Today
+            </Link>
+          )}
           <span className="text-sm text-zinc-500">{date === todayUTC() ? "Today" : date}</span>
         </div>
         <ViewControls leagueId={leagueId} teamId={teamId} date={date} view={view} />
@@ -146,6 +179,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         <SectionLabel>Skaters</SectionLabel>
         <RosterTable
           slots={activeSkaters}
+          slotGroups={SKATER_DIVIDER_GROUPS}
           statsById={statsById}
           columns={SKATER_COLUMNS}
           leagueId={leagueId}
@@ -161,6 +195,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         <SectionLabel>Goalies</SectionLabel>
         <RosterTable
           slots={activeGoalies}
+          slotGroups={GOALIE_DIVIDER_GROUPS}
           statsById={statsById}
           columns={GOALIE_COLUMNS}
           leagueId={leagueId}
@@ -219,6 +254,7 @@ interface LineupInfo {
 
 function RosterTable({
   slots,
+  slotGroups,
   statsById,
   columns,
   leagueId,
@@ -229,6 +265,7 @@ function RosterTable({
   emptyText,
 }: {
   slots: RosterSlotWithPlayer[];
+  slotGroups: string[][];
   statsById: Map<string, PlayerStatsRow>;
   columns: StatColumn[];
   leagueId: string;
@@ -271,12 +308,16 @@ function RosterTable({
             const lineup = lineupFor(s);
             const eligible = eligibleSlotsForPosition(player.primaryPosition);
 
+            const group = slotGroupIndex(lineup.currentSlot, slotGroups);
+            const prevGroup = i > 0 ? slotGroupIndex(lineupFor(slots[i - 1]).currentSlot, slotGroups) : group;
+            const isGroupStart = i > 0 && group !== prevGroup;
+
             return (
               <tr
                 key={playerId}
                 className={`border-b border-black/5 last:border-0 dark:border-white/5 ${
                   i % 2 === 1 ? "bg-black/[.015] dark:bg-white/[.02]" : ""
-                }`}
+                } ${isGroupStart ? "border-t-2 border-t-black/20 dark:border-t-white/20" : ""}`}
               >
                 <td className="py-2 pl-4 pr-2 font-medium">
                   {player.fullName}

@@ -27,13 +27,16 @@ export function LineupSlotSelect({
 }) {
   return (
     <form action={setLineupSlotAction.bind(null, leagueId, teamId, playerId, date)}>
+      {/* bg-white/text-black is deliberate: the native option popup ignores
+          the app's dark theme and renders on the OS's own white background —
+          see ViewControls.tsx for the same fix and fuller explanation. */}
       <select
         key={value}
         name="slot"
         defaultValue={value}
         disabled={locked}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-black/10 bg-transparent px-2 py-1 text-xs disabled:opacity-50 dark:border-white/15"
+        className="rounded border border-black/10 bg-white px-2 py-1 text-xs text-black disabled:opacity-50 dark:border-white/15"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value} disabled={o.disabled}>
