@@ -3,14 +3,12 @@ import { Show } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
 import { getTeamsForUser, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getRosterCounts } from "@/lib/rosters/mutations";
-import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 import { Card, SectionLabel } from "@/components/Card";
 
 export default async function Home() {
   const user = await currentUser();
   const teams = user ? await getTeamsForUser(user.id) : [];
   const rosterCounts = user ? await getRosterCounts(teams.map((t) => t.id)) : new Map<string, number>();
-  const topPlayers = user ? await getPlayerStatsAggregate({ limit: 5 }) : [];
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -77,31 +75,6 @@ export default async function Home() {
                 );
               })}
             </div>
-          </div>
-        )}
-
-        {topPlayers.length > 0 && (
-          <div className="mt-8">
-            <SectionLabel>Top Players (2025-26 fantasy points)</SectionLabel>
-            <Card>
-              <ul className="divide-y divide-black/5 dark:divide-white/5">
-                {topPlayers.map((p, i) => (
-                  <li key={p.id} className="flex items-center justify-between py-2 text-sm">
-                    <span>
-                      <span className="mr-2 text-zinc-500">{i + 1}.</span>
-                      {p.fullName}
-                      <span className="ml-2 text-xs text-zinc-500">
-                        {p.primaryPosition} · {p.currentNhlOrg ?? "—"}
-                      </span>
-                    </span>
-                    <span className="font-medium tabular-nums">{p.points.toFixed(1)}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link href="/players" className="mt-3 block text-xs text-zinc-500 hover:underline">
-                See all players →
-              </Link>
-            </Card>
           </div>
         )}
       </Show>

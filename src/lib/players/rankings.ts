@@ -5,7 +5,7 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { computeFantasyPointsFromTotals, STARTER_SCORING } from "@/lib/scoring/engine";
+import { computeFantasyPointsFromTotals, STARTER_SCORING, type ScoringConfig } from "@/lib/scoring/engine";
 
 export interface PlayerAggregateRow {
   id: string;
@@ -41,6 +41,10 @@ export interface PlayerStatsRow extends PlayerAggregateRow {
 export async function getPlayerStatsAggregate(opts?: {
   playerIds?: string[];
   limit?: number;
+  /** Defaults to STARTER_SCORING. Callers with a league in scope should
+   * always pass that league's settingsJson.scoringConfig instead — this is
+   * the one function every points display ultimately runs through. */
+  scoringConfig?: ScoringConfig;
 }): Promise<PlayerStatsRow[]> {
   if (opts?.playerIds && opts.playerIds.length === 0) return [];
 
@@ -73,9 +77,10 @@ export async function getPlayerStatsAggregate(opts?: {
     GROUP BY p.id
   `;
 
+  const config = opts?.scoringConfig ?? STARTER_SCORING;
   const withPoints = rows.map((r) => ({
     ...r,
-    points: computeFantasyPointsFromTotals(r, STARTER_SCORING),
+    points: computeFantasyPointsFromTotals(r, config),
   }));
   withPoints.sort((a, b) => b.points - a.points);
   return opts?.limit ? withPoints.slice(0, opts.limit) : withPoints;

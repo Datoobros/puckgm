@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// No global "Players" link — players are always viewed within a league now
+// (scoring is league-specific), so that link lives in LeagueNav instead.
 const LINKS = [
   { href: "/", label: "Home" },
-  { href: "/players", label: "Players" },
   { href: "/leagues", label: "Leagues" },
 ];
 

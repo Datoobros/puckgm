@@ -1,0 +1,21 @@
+import { notFound } from "next/navigation";
+import { auth } from "@clerk/nextjs/server";
+import { getLeague } from "@/lib/leagues/mutations";
+import { LeagueNav } from "@/components/LeagueNav";
+
+export default async function LeagueLayout(props: LayoutProps<"/leagues/[id]">) {
+  const { userId } = await auth.protect();
+  const { id } = await props.params;
+
+  const league = await getLeague(id);
+  if (!league) notFound();
+
+  const myTeam = league.teams.find((t) => t.managerUserId === userId);
+
+  return (
+    <div>
+      <LeagueNav leagueId={id} myTeamId={myTeam?.id ?? null} />
+      {props.children}
+    </div>
+  );
+}

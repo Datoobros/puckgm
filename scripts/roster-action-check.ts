@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { createLeague } from "@/lib/leagues/mutations";
 import { getTeamRosterView } from "@/lib/rosters/mutations";
-import { addPlayerAction } from "@/app/players/actions";
+import { addPlayerAction } from "@/app/leagues/[id]/players/actions";
 import { dropPlayerAction } from "@/app/leagues/[id]/teams/[teamId]/actions";
 
 async function main() {

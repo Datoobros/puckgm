@@ -29,6 +29,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
 
   const statsRows = await getPlayerStatsAggregate({
     playerIds: allSlots.map((s) => s.playerId),
+    scoringConfig: settings.scoringConfig,
   });
   const statsById = new Map(statsRows.map((r) => [r.id, r]));
 
@@ -52,7 +53,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         </div>
         {isOwner && (
           <Link
-            href={`/players?leagueId=${leagueId}&teamId=${teamId}`}
+            href={`/leagues/${leagueId}/players`}
             className="rounded-full border border-black/10 px-4 py-1.5 text-sm font-medium hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
           >
             + Add

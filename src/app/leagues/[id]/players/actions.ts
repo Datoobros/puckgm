@@ -7,6 +7,6 @@ import { addPlayerToRoster } from "@/lib/rosters/mutations";
 export async function addPlayerAction(leagueId: string, teamId: string, playerId: string) {
   const { userId } = await auth.protect();
   await addPlayerToRoster({ leagueId, teamId, playerId, managerUserId: userId });
-  revalidatePath("/players");
+  revalidatePath(`/leagues/${leagueId}/players`);
   revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
 }
