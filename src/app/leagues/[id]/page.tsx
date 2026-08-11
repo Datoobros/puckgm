@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getRosterCounts } from "@/lib/rosters/mutations";
 import { createTeamAction } from "@/app/leagues/actions";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
+import { Card, SectionLabel } from "@/components/Card";
 
 export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">) {
   const { userId } = await auth.protect();
@@ -15,69 +17,97 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
   const settings = league.settingsJson as unknown as LeagueSettings;
   const yourTeam = league.teams.find((t) => t.managerUserId === userId);
   const commissioner = await getLeagueCommissioner(id);
+  const rosterCounts = await getRosterCounts(league.teams.map((t) => t.id));
+  const cap = Object.values(settings.rosterComposition).reduce((s, n) => s + n, 0);
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-12">
-      <div className="flex items-start justify-between">
+    <div className="mx-auto max-w-5xl px-6 py-8">
+      <div className="flex items-start justify-between border-b border-black/10 pb-4 dark:border-white/10">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{league.name}</h1>
           <p className="mt-1 text-sm text-zinc-500">
             {league.seasonFounded} season · {settings.scoringFormat.replace("_", " ")}
           </p>
         </div>
-        {commissioner === userId && (
-          <DeleteLeagueButton leagueId={league.id} leagueName={league.name} />
-        )}
       </div>
 
-      <div className="mt-6 rounded border border-black/10 p-4 text-sm dark:border-white/10">
-        <p className="text-zinc-500">Roster composition (locked)</p>
-        <p className="mt-1">
-          {Object.entries(settings.rosterComposition)
-            .map(([slot, count]) => `${count} ${slot}`)
-            .join(" · ")}
-        </p>
-        <p className="mt-3 text-zinc-500">Farm slots / IR slots</p>
-        <p className="mt-1">
-          {settings.farmSlots} farm · {settings.irSlots} IR
-        </p>
-      </div>
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <SectionLabel>Teams ({league.teams.length})</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {league.teams.map((team) => {
+              const isYou = team.managerUserId === userId;
+              const rosterCount = rosterCounts.get(team.id) ?? 0;
+              return (
+                <Link key={team.id} href={`/leagues/${league.id}/teams/${team.id}`}>
+                  <Card
+                    className={`transition-colors hover:border-black/25 dark:hover:border-white/25 ${
+                      isYou ? "border-foreground/30" : ""
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium">{team.name}</p>
+                      {isYou && (
+                        <span className="rounded bg-foreground px-1.5 py-0.5 text-[10px] font-semibold text-background">
+                          YOU
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      {rosterCount} / {cap} roster spots
+                    </p>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
 
-      <h2 className="mt-8 mb-2 text-sm font-medium text-zinc-500">
-        Teams ({league.teams.length})
-      </h2>
-      <ul className="divide-y divide-black/10 dark:divide-white/10">
-        {league.teams.map((team) => (
-          <li key={team.id} className="py-2 text-sm">
-            <Link href={`/leagues/${league.id}/teams/${team.id}`} className="hover:underline">
-              {team.name}
-            </Link>
-            {team.managerUserId === userId && (
-              <span className="ml-2 text-xs text-zinc-500">(you)</span>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      {!yourTeam && (
-        <div className="mt-8 rounded border border-black/10 p-4 dark:border-white/10">
-          <p className="text-sm text-zinc-500">You don&apos;t have a team here yet.</p>
-          <form action={createTeamAction.bind(null, league.id)} className="mt-3 flex gap-2">
-            <input
-              name="teamName"
-              required
-              placeholder="Your team name"
-              className="flex-1 rounded border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
-            />
-            <button
-              type="submit"
-              className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
-            >
-              Join league
-            </button>
-          </form>
+          {!yourTeam && (
+            <Card className="mt-4">
+              <p className="text-sm text-zinc-500">You don&apos;t have a team here yet.</p>
+              <form action={createTeamAction.bind(null, league.id)} className="mt-3 flex gap-2">
+                <input
+                  name="teamName"
+                  required
+                  placeholder="Your team name"
+                  className="flex-1 rounded border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
+                />
+                <button
+                  type="submit"
+                  className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
+                >
+                  Join league
+                </button>
+              </form>
+            </Card>
+          )}
         </div>
-      )}
+
+        <div>
+          <SectionLabel>League Info</SectionLabel>
+          <Card>
+            <p className="text-xs text-zinc-500">Roster composition (locked)</p>
+            <p className="mt-1 text-sm">
+              {Object.entries(settings.rosterComposition)
+                .map(([slot, count]) => `${count} ${slot}`)
+                .join(" · ")}
+            </p>
+            <p className="mt-3 text-xs text-zinc-500">Farm slots / IR slots</p>
+            <p className="mt-1 text-sm">
+              {settings.farmSlots} farm · {settings.irSlots} IR
+            </p>
+          </Card>
+
+          {commissioner === userId && (
+            <div className="mt-4">
+              <SectionLabel>Commissioner Tools</SectionLabel>
+              <Card>
+                <DeleteLeagueButton leagueId={league.id} leagueName={league.name} />
+              </Card>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

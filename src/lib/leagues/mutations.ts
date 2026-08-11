@@ -112,6 +112,16 @@ export async function getLeague(leagueId: string) {
   });
 }
 
+/** Every team a user manages, across every league — the home dashboard's
+ * "Your Teams" list. */
+export async function getTeamsForUser(userId: string) {
+  return prisma.team.findMany({
+    where: { managerUserId: userId },
+    include: { league: true },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 /** Leagues created before commissionerUserId existed have it as null —
  * fall back to whoever created the earliest team as the inferred owner. */
 export async function getLeagueCommissioner(leagueId: string): Promise<string | null> {

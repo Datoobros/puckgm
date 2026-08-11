@@ -22,9 +22,7 @@ export function NavBar() {
             key={link.href}
             href={link.href}
             className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-              isActive
-                ? "bg-foreground text-background"
-                : "text-zinc-500 hover:text-foreground"
+              isActive ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
             }`}
           >
             {link.label}

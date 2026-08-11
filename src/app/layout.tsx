@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import {
   ClerkProvider,
@@ -33,14 +34,23 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       >
         <body className="min-h-full flex flex-col">
-          <header className="flex items-center justify-between gap-3 border-b border-black/10 p-4 dark:border-white/10">
+          <header className="flex items-center gap-4 border-b border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-100">
+            <Link href="/" className="text-sm font-bold tracking-tight text-white">
+              puckgm
+            </Link>
             <Show when="signed-in">
               <NavBar />
             </Show>
             <div className="ml-auto flex items-center gap-3">
               <Show when="signed-out">
-                <SignInButton mode="modal" />
-                <SignUpButton mode="modal" />
+                <SignInButton mode="modal">
+                  <button className="text-sm text-zinc-300 hover:text-white">Sign in</button>
+                </SignInButton>
+                <SignUpButton mode="modal">
+                  <button className="rounded bg-white px-3 py-1.5 text-sm font-medium text-zinc-950">
+                    Sign up
+                  </button>
+                </SignUpButton>
               </Show>
               <Show when="signed-in">
                 <UserButton />

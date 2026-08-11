@@ -130,3 +130,14 @@ export async function getLeagueOwnershipMap(
   });
   return new Map(slots.map((s) => [s.playerId, s.team.name]));
 }
+
+/** teamId -> active roster count, for the league/home dashboard cards. */
+export async function getRosterCounts(teamIds: string[]): Promise<Map<string, number>> {
+  if (teamIds.length === 0) return new Map();
+  const grouped = await prisma.rosterSlot.groupBy({
+    by: ["teamId"],
+    where: { teamId: { in: teamIds }, slotType: "ACTIVE", effectiveTo: null },
+    _count: { _all: true },
+  });
+  return new Map(grouped.map((g) => [g.teamId, g._count._all]));
+}

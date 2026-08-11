@@ -1,7 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { computeFantasyPointsFromTotals, computePlayerPoints, STARTER_SCORING } from "@/lib/scoring/engine";
+import { computePlayerPoints, STARTER_SCORING } from "@/lib/scoring/engine";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
+import { topPlayersByPoints } from "@/lib/players/rankings";
 import { addPlayerAction } from "./actions";
 
 async function searchResults(query: string) {
@@ -22,64 +23,6 @@ async function searchResults(query: string) {
   );
 
   return withStats.sort((a, b) => b.points - a.points);
-}
-
-interface PlayerAggregateRow {
-  id: string;
-  fullName: string;
-  primaryPosition: string | null;
-  currentNhlOrg: string | null;
-  careerNhlGp: number;
-  gamesIngested: number;
-  goals: number;
-  assists: number;
-  sog: number;
-  hits: number;
-  blockedShots: number;
-  pim: number;
-  plusMinus: number;
-  saves: number;
-  goalsAgainst: number;
-  wins: number;
-  shutouts: number;
-}
-
-// One Postgres GROUP BY across all ~52k stat lines, returning one row per
-// player (~1091 rows) with pre-summed raw stats — not 52k rows pulled into
-// Node. Points are computed from those sums in JS (computeFantasyPointsFromTotals)
-// so the scoring weights stay defined in exactly one place (engine.ts),
-// never duplicated into SQL.
-async function topPlayersByPoints(limit: number) {
-  const rows = await prisma.$queryRaw<PlayerAggregateRow[]>`
-    SELECT
-      p.id,
-      p."fullName",
-      p."primaryPosition",
-      p."currentNhlOrg",
-      p."careerNhlGp",
-      COUNT(g.id)::int AS "gamesIngested",
-      COALESCE(SUM((g."statsJson"->>'goals')::numeric), 0)::float AS goals,
-      COALESCE(SUM((g."statsJson"->>'assists')::numeric), 0)::float AS assists,
-      COALESCE(SUM((g."statsJson"->>'sog')::numeric), 0)::float AS sog,
-      COALESCE(SUM((g."statsJson"->>'hits')::numeric), 0)::float AS hits,
-      COALESCE(SUM((g."statsJson"->>'blockedShots')::numeric), 0)::float AS "blockedShots",
-      COALESCE(SUM((g."statsJson"->>'pim')::numeric), 0)::float AS pim,
-      COALESCE(SUM((g."statsJson"->>'plusMinus')::numeric), 0)::float AS "plusMinus",
-      COALESCE(SUM((g."statsJson"->>'saves')::numeric), 0)::float AS saves,
-      COALESCE(SUM((g."statsJson"->>'goalsAgainst')::numeric), 0)::float AS "goalsAgainst",
-      COALESCE(SUM(CASE WHEN g."statsJson"->>'decision' = 'W' THEN 1 ELSE 0 END), 0)::int AS wins,
-      COALESCE(SUM(CASE WHEN g."statsJson"->>'decision' = 'W' AND (g."statsJson"->>'goalsAgainst')::numeric = 0 THEN 1 ELSE 0 END), 0)::int AS shutouts
-    FROM "Player" p
-    LEFT JOIN "GameStatLine" g ON g."playerId" = p.id
-    GROUP BY p.id
-  `;
-
-  const withPoints = rows.map((r) => ({
-    ...r,
-    points: computeFantasyPointsFromTotals(r, STARTER_SCORING),
-  }));
-  withPoints.sort((a, b) => b.points - a.points);
-  return withPoints.slice(0, limit);
 }
 
 interface RosterContext {
