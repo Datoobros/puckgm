@@ -2,25 +2,27 @@
 // Distinct from roster ownership (src/lib/rosters/mutations.ts): owning a
 // player and starting him are two different questions. DESIGN.md §2.4.
 //
-// Slot values are unnumbered position groups ("C", "LW", "RW", "D", "G",
+// Slot values are unnumbered position groups ("C", "L", "R", "D", "G",
 // "UTIL", "BE"), not per-slot labels like "C1"/"C2" — the schema comment on
 // LineupEntry.lineupSlot uses numbered slots only as an example. Multiple
 // players can share slot "C" the same day; capacity is enforced by counting
 // rows per (team, date, slot) against the league's rosterComposition, not by
 // the DB's uniqueness (which is only teamId+playerId+gameDate). Simpler to
 // build and nothing downstream parses the string yet.
+//
+// Slot codes ("L"/"R") deliberately match Player.primaryPosition's stored
+// values (NHL's single-letter positionCode) rather than RosterComposition's
+// key names ("LW"/"RW", set at league creation — see src/app/leagues/new).
+// Those two naming schemes just don't agree; capFor() bridges them.
 
 import { prisma } from "@/lib/db";
 import type { LeagueSettings, RosterComposition } from "@/lib/leagues/mutations";
 import { getTeamGamesForDate, isLocked } from "@/lib/lineups/schedule";
 
-// Slot names ("LW"/"RW") match RosterComposition's keys, but Player.primaryPosition
-// is stored as NHL's single-letter positionCode ("L"/"R"), not "LW"/"RW" — the two
-// naming schemes just don't agree. Map slot -> eligible *stored* position codes here.
 const STARTER_ELIGIBILITY: Record<string, string[] | null> = {
   C: ["C"],
-  LW: ["L"],
-  RW: ["R"],
+  L: ["L"],
+  R: ["R"],
   D: ["D"],
   G: ["G"],
   UTIL: ["C", "L", "R", "D"],
@@ -31,6 +33,8 @@ export const LINEUP_SLOTS = Object.keys(STARTER_ELIGIBILITY);
 
 export function capFor(slot: string, comp: RosterComposition): number | null {
   if (slot === "BE") return null; // bench isn't capacity-limited, it's the leftover state
+  if (slot === "L") return comp.LW;
+  if (slot === "R") return comp.RW;
   return comp[slot as keyof RosterComposition] ?? 0;
 }
 

@@ -19,6 +19,11 @@ interface NhlDaySchedule {
 /** date must be "YYYY-MM-DD". Every game scheduled that day, any gameType. */
 export async function getDaySchedule(date: string): Promise<NhlScheduleGame[]> {
   const res = await fetch(`https://api-web.nhle.com/v1/schedule/${date}`);
+  // A date outside the NHL's currently published window (e.g. more than a
+  // season or so out) 404s — that's "no schedule published yet," not an
+  // error, and day-cycling on the team page can reach dates like that just
+  // by clicking Next repeatedly. Any other non-OK status is a real failure.
+  if (res.status === 404) return [];
   if (!res.ok) throw new Error(`NHL schedule API ${res.status} for ${date}`);
   const data = (await res.json()) as NhlDaySchedule;
   return data.gameWeek.find((d) => d.date === date)?.games ?? [];

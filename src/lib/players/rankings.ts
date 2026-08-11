@@ -5,7 +5,12 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { computeFantasyPointsFromTotals, STARTER_SCORING, type ScoringConfig } from "@/lib/scoring/engine";
+import {
+  computeFantasyPoints,
+  computeFantasyPointsFromTotals,
+  STARTER_SCORING,
+  type ScoringConfig,
+} from "@/lib/scoring/engine";
 
 export interface PlayerAggregateRow {
   id: string;
@@ -41,6 +46,10 @@ export interface PlayerStatsRow extends PlayerAggregateRow {
 export async function getPlayerStatsAggregate(opts?: {
   playerIds?: string[];
   limit?: number;
+  /** Restricts summed games to this range without dropping zero-game
+   * players from the result — see the JOIN condition below. Used for
+   * season-scoped views (e.g. "2025-26" vs "2026-27"); omit for career. */
+  dateRange?: { start: Date; end: Date };
   /** Defaults to STARTER_SCORING. Callers with a league in scope should
    * always pass that league's settingsJson.scoringConfig instead — this is
    * the one function every points display ultimately runs through. */
@@ -50,6 +59,13 @@ export async function getPlayerStatsAggregate(opts?: {
 
   const whereClause = opts?.playerIds
     ? Prisma.sql`WHERE p.id IN (${Prisma.join(opts.playerIds)})`
+    : Prisma.empty;
+
+  // The date filter belongs on the JOIN, not a WHERE clause — a WHERE here
+  // would turn this into an inner join and drop every player with zero
+  // games in range instead of showing them with all-zero totals.
+  const dateFilter = opts?.dateRange
+    ? Prisma.sql`AND g."gameDate" >= ${opts.dateRange.start} AND g."gameDate" <= ${opts.dateRange.end}`
     : Prisma.empty;
 
   const rows = await prisma.$queryRaw<PlayerAggregateRow[]>`
@@ -72,7 +88,7 @@ export async function getPlayerStatsAggregate(opts?: {
       COALESCE(SUM(CASE WHEN g."statsJson"->>'decision' = 'W' THEN 1 ELSE 0 END), 0)::int AS wins,
       COALESCE(SUM(CASE WHEN g."statsJson"->>'decision' = 'W' AND (g."statsJson"->>'goalsAgainst')::numeric = 0 THEN 1 ELSE 0 END), 0)::int AS shutouts
     FROM "Player" p
-    LEFT JOIN "GameStatLine" g ON g."playerId" = p.id
+    LEFT JOIN "GameStatLine" g ON g."playerId" = p.id ${dateFilter}
     ${whereClause}
     GROUP BY p.id
   `;
@@ -84,4 +100,50 @@ export async function getPlayerStatsAggregate(opts?: {
   }));
   withPoints.sort((a, b) => b.points - a.points);
   return opts?.limit ? withPoints.slice(0, opts.limit) : withPoints;
+}
+
+/** One row per player for a single calendar date — that day's raw box
+ * score run through the scoring config, not a season sum. Players with no
+ * completed game that date are simply absent from the map (same "missing
+ * = —" convention the season aggregate's callers already use). */
+export async function getPlayerDailyStats(
+  playerIds: string[],
+  date: string,
+  scoringConfig: ScoringConfig,
+): Promise<Map<string, PlayerStatsRow>> {
+  if (playerIds.length === 0) return new Map();
+
+  const gameDate = new Date(`${date}T00:00:00.000Z`);
+  const lines = await prisma.gameStatLine.findMany({
+    where: { playerId: { in: playerIds }, gameDate },
+    include: { player: true },
+  });
+
+  const map = new Map<string, PlayerStatsRow>();
+  for (const line of lines) {
+    const s = line.statsJson as Record<string, unknown>;
+    const num = (k: string) => Number(s[k] ?? 0);
+    const won = s.decision === "W";
+    map.set(line.playerId, {
+      id: line.playerId,
+      fullName: line.player.fullName,
+      primaryPosition: line.player.primaryPosition,
+      currentNhlOrg: line.player.currentNhlOrg,
+      careerNhlGp: line.player.careerNhlGp,
+      gamesIngested: 1,
+      goals: num("goals"),
+      assists: num("assists"),
+      sog: num("sog"),
+      hits: num("hits"),
+      blockedShots: num("blockedShots"),
+      pim: num("pim"),
+      plusMinus: num("plusMinus"),
+      saves: num("saves"),
+      goalsAgainst: num("goalsAgainst"),
+      wins: won ? 1 : 0,
+      shutouts: won && num("goalsAgainst") === 0 ? 1 : 0,
+      points: computeFantasyPoints(line.statsJson, scoringConfig),
+    });
+  }
+  return map;
 }

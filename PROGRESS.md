@@ -56,39 +56,62 @@ are written to be read later, not just at merge time.
 - Players moved under league scope (`/leagues/[id]/players`) — **not globally browsable
   anymore**, on purpose: scoring is league-specific. Sortable ESPN-style stats table
   (every column clickable), position tabs, Pro Team filter, Available/All filter.
-- Team roster page: skaters table, goalies table below (separate column sets, not padded
-  with dashes), Farm section (always empty right now — see above).
+- Team roster page is now the **ESPN-style "main screen"** — see Lineups below;
+  Skaters/Goalies tables carry lineup controls and stat-view switching directly, Farm
+  section unchanged (always empty right now — see above).
 
-**Lineups** (DESIGN.md §2.4)
-- `LineupEntry` now has a real read/write path: `src/lib/lineups/mutations.ts` +
-  `/leagues/[id]/teams/[teamId]/lineup`. Draws from **ACTIVE roster only**, per the design
-  doc's Roster-vs-Lineup distinction — farm/IR players never appear here.
-- Slot values are unnumbered position groups (`C`/`LW`/`RW`/`D`/`G`/`UTIL`/`BE`), not
-  numbered slots like "C1"/"C2" — the schema comment's numbering was illustrative, not a
-  requirement. Capacity per slot is enforced by counting rows against the league's
-  `rosterComposition`, not by a DB constraint.
-- **Real bug found and fixed during this build**: `Player.primaryPosition` is stored as
-  NHL's single-letter code (`"L"`/`"R"`), not `"LW"`/`"RW"` like `RosterComposition`'s keys.
-  Lineup eligibility maps slot names to the stored codes explicitly
-  (`src/lib/lineups/mutations.ts`). **Not fixed elsewhere** — `PlayerStatsTable`'s forward
-  filter (`FORWARD_POSITIONS = new Set(["C","LW","RW"])`) has the same mismatch and likely
-  under-filters wingers; out of scope for this change, worth a follow-up look.
+**Lineups** (DESIGN.md §2.4) — built directly into the team roster page, not a separate route
+- `LineupEntry` read/write path: `src/lib/lineups/mutations.ts`, rendered inline on
+  `/leagues/[id]/teams/[teamId]`. An earlier version of this shipped as its own
+  `/lineup` page — folded into the team page per explicit user direction ("I want it done
+  right on the main screen"), matching how ESPN does it. Draws from **ACTIVE roster only**,
+  per the design doc's Roster-vs-Lineup distinction — farm/IR players never appear here.
+- Slot values are single-letter position codes (`C`/`L`/`R`/`D`/`G`/`UTIL`/`BE`) chosen to
+  match `Player.primaryPosition`'s actual stored codes exactly (see bug below) — not
+  numbered slots like "C1"/"C2" (the schema comment's numbering was only illustrative) and
+  not `RosterComposition`'s key names (`LW`/`RW`, set at league creation — those stay as-is;
+  `capFor()` in `mutations.ts` bridges `L`→`comp.LW`, `R`→`comp.RW`). Capacity per slot is
+  enforced by counting rows against the league's `rosterComposition`, not a DB constraint.
+- Eligible positions render as a small tag beside each player's name (e.g. "C/UTIL") via
+  `eligibleSlotsForPosition()`.
+- Day-cycling (Prev/Next/date-picker) lives at the top of the team page and drives three
+  things at once: which date's opponent/lock/lineup-slot column is shown, and — when the
+  stats-view dropdown is set to **Daily** — which date's box score the stat columns show.
+  The dropdown's other options are **season aggregates** (`2025-26`, `2026-27`), bucketed by
+  calendar year in `src/lib/players/seasons.ts`; `getPlayerStatsAggregate` now takes an
+  optional `dateRange` (filtered inside the `LEFT JOIN`, not a `WHERE`, so zero-game players
+  still show up with real zeros instead of disappearing). Daily box scores come from a new
+  `getPlayerDailyStats()` in `src/lib/players/rankings.ts`, reusing the same `PlayerStatsRow`
+  shape so the existing column definitions needed no changes.
 - Per-game lock (DESIGN.md §2.4: "a player locks when his own game begins, nothing else")
   compares wall-clock time to the NHL schedule's `startTimeUTC` for the player's team that
   date (`src/lib/lineups/schedule.ts`), not `gameState` — `gameState` flips to "PRE" a few
   minutes before puck drop, which would lock too early. Enforced both server-side
   (`setLineupSlot` throws) and in the UI (select disabled).
-- Extracted `src/lib/nhl/schedule.ts` (`getDaySchedule`) out of the daily ingest job so the
-  lineup feature's per-date team/game lookup shares one fetch/parse instead of duplicating
-  it — `daily.ts` now calls the same function.
-- Real bug found and fixed **in this feature's own UI**: `<select defaultValue>` doesn't
-  re-apply on a React re-render for an already-mounted uncontrolled element — after editing
-  a lineup slot, the dropdown visually stayed on the old value until a hard reload, even
-  though the write persisted correctly. Fixed with `key={value}` on the `<select>` to force
-  remount when the underlying slot changes.
-- No UI yet to view a lineup you don't own edit controls for beyond read-only text, and
-  nothing consumes lineups for scoring yet — that's real work for whenever matchups get
-  built (see gaps below).
+- `src/lib/nhl/schedule.ts` (`getDaySchedule`) is shared between the daily ingest job and
+  the lineup feature's per-date team/game lookup, rather than each having its own fetch/parse.
+- **Three real bugs found and fixed while verifying against seeded (and, once, live) data:**
+  1. `Player.primaryPosition` is stored as NHL's single-letter code (`"L"`/`"R"`), not
+     `"LW"`/`"RW"` — this is *why* lineup slots are named `L`/`R` (see above), and it's
+     bridged explicitly in `mutations.ts`. **Not fixed elsewhere** — `PlayerStatsTable`'s
+     forward filter (`FORWARD_POSITIONS = new Set(["C","LW","RW"])`) has the same mismatch
+     and likely under-filters wingers; spun off as its own task, in progress separately.
+  2. `<select defaultValue>` doesn't re-apply on a React re-render for an already-mounted
+     uncontrolled element — after editing a lineup slot, the dropdown visually stayed on the
+     old value until a hard reload, even though the write persisted correctly. Fixed with
+     `key={value}` on the `<select>` to force remount when the slot changes.
+  3. `getDaySchedule` threw on the NHL API's 404 for dates outside its published schedule
+     window (e.g. cycling several seasons ahead) — crashed the whole page/mutation for what's
+     actually a normal case ("no schedule published that far out yet"). Now treats 404 as
+     zero games instead of an error.
+- **Discovered mid-session**: after the first version of this feature was pushed to
+  production, the live app already had a real `LineupEntry` for McDavid on the real "Qaiyam"
+  team (not test data) — confirms the deployed feature is being used for real. Verification
+  scripts in this session were careful to touch only far-future/safe test dates and clean up
+  by exact row ID, never a blanket delete, per the shared-db convention.
+- Nothing consumes lineups for scoring yet — a bench player and a starter score identically
+  today since there's no matchup to differentiate "played" from "started." Real work for
+  whenever matchups get built (see gaps below).
 
 ## Recent, worth knowing
 
