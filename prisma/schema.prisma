@@ -76,6 +76,11 @@ model League {
   seasonFounded Int
   settingsJson  Json // includes mutability-tiered settings, see DESIGN.md §2.10
   createdAt     DateTime @default(now())
+  // Nullable so this migration is safe against leagues created before this
+  // field existed — mutations.ts falls back to the earliest team's manager
+  // for those. Always set going forward (createLeague sets it to the
+  // creating manager).
+  commissionerUserId String?
 
   teams            Team[]
   settingsLog      LeagueSettingsLog[]

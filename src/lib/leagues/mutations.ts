@@ -60,6 +60,7 @@ export async function createLeague(input: CreateLeagueInput): Promise<{ leagueId
       name: input.name,
       seasonFounded: input.season,
       settingsJson: settings as unknown as Prisma.InputJsonValue,
+      commissionerUserId: input.managerUserId,
       teams: {
         create: {
           name: input.teamName,
@@ -109,4 +110,34 @@ export async function getLeague(leagueId: string) {
     where: { id: leagueId },
     include: { teams: true },
   });
+}
+
+/** Leagues created before commissionerUserId existed have it as null —
+ * fall back to whoever created the earliest team as the inferred owner. */
+export async function getLeagueCommissioner(leagueId: string): Promise<string | null> {
+  const league = await prisma.league.findUnique({ where: { id: leagueId } });
+  if (!league) return null;
+  if (league.commissionerUserId) return league.commissionerUserId;
+  const earliestTeam = await prisma.team.findFirst({
+    where: { leagueId },
+    orderBy: { createdAt: "asc" },
+  });
+  return earliestTeam?.managerUserId ?? null;
+}
+
+export async function deleteLeague(leagueId: string, callerUserId: string): Promise<void> {
+  const commissioner = await getLeagueCommissioner(leagueId);
+  if (!commissioner || commissioner !== callerUserId) {
+    throw new Error("Only the league commissioner can delete this league.");
+  }
+
+  // Same deletion order used throughout the test-cleanup scripts this
+  // session — RosterSlot and Team both have real FK constraints back to
+  // League with no cascade configured, so children go first.
+  await prisma.$transaction([
+    prisma.transactionLog.deleteMany({ where: { leagueId } }),
+    prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } }),
+    prisma.team.deleteMany({ where: { leagueId } }),
+    prisma.league.delete({ where: { id: leagueId } }),
+  ]);
 }

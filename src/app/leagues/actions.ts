@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { createLeague, createTeam, type RosterComposition } from "@/lib/leagues/mutations";
+import { createLeague, createTeam, deleteLeague, type RosterComposition } from "@/lib/leagues/mutations";
 
 function parseRosterComposition(formData: FormData): RosterComposition {
   const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
@@ -52,4 +52,10 @@ export async function createTeamAction(leagueId: string, formData: FormData) {
 
   await createTeam({ leagueId, managerUserId: userId, teamName });
   redirect(`/leagues/${leagueId}`);
+}
+
+export async function deleteLeagueAction(leagueId: string) {
+  const { userId } = await auth.protect();
+  await deleteLeague(leagueId, userId);
+  redirect("/leagues");
 }

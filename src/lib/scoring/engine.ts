@@ -85,6 +85,42 @@ export function computeFantasyPoints(statsJson: unknown, config: ScoringConfig):
   return total;
 }
 
+// Same weights, different entry point: computeFantasyPoints takes one raw
+// game's statsJson; this takes pre-summed totals across many games. Used by
+// the players list's default sort, which aggregates all ~52k stat lines in
+// a single Postgres GROUP BY (src/app/players/page.tsx) rather than pulling
+// every row into Node — summing per-row in JS for ~1000 players would mean
+// transferring the entire GameStatLine table on every page load.
+export interface StatTotals {
+  goals: number;
+  assists: number;
+  sog: number;
+  hits: number;
+  blockedShots: number;
+  pim: number;
+  plusMinus: number;
+  wins: number; // count of games with decision "W", not a per-game boolean
+  shutouts: number; // count
+  saves: number;
+  goalsAgainst: number;
+}
+
+export function computeFantasyPointsFromTotals(totals: StatTotals, config: ScoringConfig): number {
+  return (
+    totals.goals * (config.goals ?? 0) +
+    totals.assists * (config.assists ?? 0) +
+    totals.sog * (config.sog ?? 0) +
+    totals.hits * (config.hits ?? 0) +
+    totals.blockedShots * (config.blockedShots ?? 0) +
+    totals.pim * (config.pim ?? 0) +
+    totals.plusMinus * (config.plusMinus ?? 0) +
+    totals.wins * (config.wins ?? 0) +
+    totals.shutouts * (config.shutouts ?? 0) +
+    totals.saves * (config.saves ?? 0) +
+    totals.goalsAgainst * (config.goalsAgainst ?? 0)
+  );
+}
+
 export async function computePlayerPoints(
   playerId: string,
   config: ScoringConfig,

@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { createTeamAction } from "@/app/leagues/actions";
+import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
 
 export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">) {
   const { userId } = await auth.protect();
@@ -13,13 +14,21 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
 
   const settings = league.settingsJson as unknown as LeagueSettings;
   const yourTeam = league.teams.find((t) => t.managerUserId === userId);
+  const commissioner = await getLeagueCommissioner(id);
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-12">
-      <h1 className="text-2xl font-semibold tracking-tight">{league.name}</h1>
-      <p className="mt-1 text-sm text-zinc-500">
-        {league.seasonFounded} season · {settings.scoringFormat.replace("_", " ")}
-      </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{league.name}</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {league.seasonFounded} season · {settings.scoringFormat.replace("_", " ")}
+          </p>
+        </div>
+        {commissioner === userId && (
+          <DeleteLeagueButton leagueId={league.id} leagueName={league.name} />
+        )}
+      </div>
 
       <div className="mt-6 rounded border border-black/10 p-4 text-sm dark:border-white/10">
         <p className="text-zinc-500">Roster composition (locked)</p>
