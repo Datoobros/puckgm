@@ -51,14 +51,22 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
             {activeSlots.length} / {cap} active roster spots
           </p>
         </div>
-        {isOwner && (
+        <div className="flex items-center gap-2">
           <Link
-            href={`/leagues/${leagueId}/players`}
+            href={`/leagues/${leagueId}/teams/${teamId}/lineup`}
             className="rounded-full border border-black/10 px-4 py-1.5 text-sm font-medium hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
           >
-            + Add
+            Lineup
           </Link>
-        )}
+          {isOwner && (
+            <Link
+              href={`/leagues/${leagueId}/players`}
+              className="rounded-full border border-black/10 px-4 py-1.5 text-sm font-medium hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+            >
+              + Add
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="mt-6">

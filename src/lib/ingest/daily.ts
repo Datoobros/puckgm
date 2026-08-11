@@ -4,19 +4,7 @@
 // schedules, since a daily job only needs one day's slate.
 
 import { ingestGame } from "@/lib/ingest/games";
-
-interface NhlDaySchedule {
-  gameWeek: {
-    date: string;
-    games: {
-      id: number;
-      gameType: number;
-      gameState: string;
-      awayTeam: { abbrev: string };
-      homeTeam: { abbrev: string };
-    }[];
-  }[];
-}
+import { getDaySchedule } from "@/lib/nhl/schedule";
 
 export interface DailyIngestResult {
   date: string;
@@ -32,10 +20,7 @@ export interface DailyIngestResult {
 
 /** date must be "YYYY-MM-DD". */
 export async function ingestDate(date: string): Promise<DailyIngestResult> {
-  const res = await fetch(`https://api-web.nhle.com/v1/schedule/${date}`);
-  if (!res.ok) throw new Error(`NHL schedule API ${res.status} for ${date}`);
-  const data = (await res.json()) as NhlDaySchedule;
-  const games = data.gameWeek.find((d) => d.date === date)?.games ?? [];
+  const games = await getDaySchedule(date);
 
   let gamesIngested = 0;
   let gamesSkipped = 0;
