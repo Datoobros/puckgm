@@ -1,9 +1,9 @@
-// Shared between the players page and the home dashboard — both need "top
-// players by fantasy points." One Postgres GROUP BY across all stat lines,
-// returning one row per player, not every raw game row. See engine.ts's
-// computeFantasyPointsFromTotals for why the scoring weights stay in one
-// place rather than duplicated into this SQL.
+// Shared between the players page and the home dashboard. One Postgres
+// GROUP BY across all stat lines, returning one row per player, not every
+// raw game row. See engine.ts's computeFantasyPointsFromTotals for why the
+// scoring weights stay in one place rather than duplicated into this SQL.
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { computeFantasyPointsFromTotals, STARTER_SCORING } from "@/lib/scoring/engine";
 
@@ -27,7 +27,27 @@ export interface PlayerAggregateRow {
   shutouts: number;
 }
 
-export async function topPlayersByPoints(limit: number) {
+export interface PlayerStatsRow extends PlayerAggregateRow {
+  points: number;
+}
+
+/**
+ * playerIds omitted -> every player in the pool (~1091 rows, ~1.5s, all in
+ * one query — see git history for the timing check before this shipped).
+ * playerIds provided -> just those (used for name search results, which
+ * must stay exhaustive across all players regardless of any display cap
+ * applied elsewhere).
+ */
+export async function getPlayerStatsAggregate(opts?: {
+  playerIds?: string[];
+  limit?: number;
+}): Promise<PlayerStatsRow[]> {
+  if (opts?.playerIds && opts.playerIds.length === 0) return [];
+
+  const whereClause = opts?.playerIds
+    ? Prisma.sql`WHERE p.id IN (${Prisma.join(opts.playerIds)})`
+    : Prisma.empty;
+
   const rows = await prisma.$queryRaw<PlayerAggregateRow[]>`
     SELECT
       p.id,
@@ -49,6 +69,7 @@ export async function topPlayersByPoints(limit: number) {
       COALESCE(SUM(CASE WHEN g."statsJson"->>'decision' = 'W' AND (g."statsJson"->>'goalsAgainst')::numeric = 0 THEN 1 ELSE 0 END), 0)::int AS shutouts
     FROM "Player" p
     LEFT JOIN "GameStatLine" g ON g."playerId" = p.id
+    ${whereClause}
     GROUP BY p.id
   `;
 
@@ -57,5 +78,5 @@ export async function topPlayersByPoints(limit: number) {
     points: computeFantasyPointsFromTotals(r, STARTER_SCORING),
   }));
   withPoints.sort((a, b) => b.points - a.points);
-  return withPoints.slice(0, limit);
+  return opts?.limit ? withPoints.slice(0, opts.limit) : withPoints;
 }

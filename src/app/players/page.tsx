@@ -1,29 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { computePlayerPoints, STARTER_SCORING } from "@/lib/scoring/engine";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
-import { topPlayersByPoints } from "@/lib/players/rankings";
-import { addPlayerAction } from "./actions";
-
-async function searchResults(query: string) {
-  const players = await prisma.player.findMany({
-    where: { fullName: { contains: query, mode: "insensitive" } },
-    take: 20,
-    orderBy: { careerNhlGp: "desc" },
-  });
-
-  const withStats = await Promise.all(
-    players.map(async (p) => {
-      const [gamesIngested, points] = await Promise.all([
-        prisma.gameStatLine.count({ where: { playerId: p.id } }),
-        computePlayerPoints(p.id, STARTER_SCORING),
-      ]);
-      return { ...p, gamesIngested, points };
-    }),
-  );
-
-  return withStats.sort((a, b) => b.points - a.points);
-}
+import { getPlayerStatsAggregate } from "@/lib/players/rankings";
+import { PlayerStatsTable } from "./PlayerStatsTable";
 
 interface RosterContext {
   leagueId: string;
@@ -42,6 +21,13 @@ async function resolveRosterContext(
   return { leagueId, teamId, isMyTeam: team.managerUserId === userId };
 }
 
+// Displayed pool is capped at 300 (by points) rather than shipping all
+// ~1091 players to the client on every load — sort/filter/pagination all
+// happen client-side against whatever's loaded, so this caps payload size,
+// not functionality. Name search stays exhaustive across every player
+// regardless of this cap, since it's a separate server-side query.
+const DEFAULT_POOL_SIZE = 300;
+
 export default async function PlayersPage(props: PageProps<"/players">) {
   const { userId } = await auth.protect();
 
@@ -53,21 +39,31 @@ export default async function PlayersPage(props: PageProps<"/players">) {
     userId,
   );
 
-  const results = query ? await searchResults(query) : null;
-  const topByPoints = query ? null : await topPlayersByPoints(50);
+  let rows;
+  if (query) {
+    const matches = await prisma.player.findMany({
+      where: { fullName: { contains: query, mode: "insensitive" } },
+      select: { id: true },
+      take: 50,
+    });
+    rows = await getPlayerStatsAggregate({ playerIds: matches.map((m) => m.id) });
+  } else {
+    rows = await getPlayerStatsAggregate({ limit: DEFAULT_POOL_SIZE });
+  }
 
-  const shownIds = (results ?? topByPoints ?? []).map((p) => p.id);
-  const ownership = rosterContext
-    ? await getLeagueOwnershipMap(rosterContext.leagueId, shownIds)
+  const ownershipMap = rosterContext
+    ? await getLeagueOwnershipMap(rosterContext.leagueId, rows.map((r) => r.id))
     : new Map<string, string>();
+  const ownership = Object.fromEntries(ownershipMap);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-12">
+    <div className="mx-auto max-w-6xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
       <p className="mt-1 text-sm text-zinc-500">
-        2025-26 season, raw stats ingested from NHL&apos;s API. Points shown use a
-        starter scoring config (2/G, 1/A, 0.1/SOG, 4/W, 0.2/SV) — leagues will
-        set their own values later.
+        2025-26 season, raw stats ingested from NHL&apos;s API. Fantasy points
+        use a starter scoring config (2/G, 1/A, 0.1/SOG, 4/W, 0.2/SV) —
+        leagues will set their own values later.
+        {!query && ` Showing top ${DEFAULT_POOL_SIZE} by points — search finds anyone.`}
       </p>
       {rosterContext && (
         <p className="mt-2 text-sm text-zinc-500">
@@ -77,13 +73,13 @@ export default async function PlayersPage(props: PageProps<"/players">) {
         </p>
       )}
 
-      <form method="get" className="mt-6 flex gap-2">
+      <form method="get" className="mt-4 flex gap-2">
         <input
           type="text"
           name="q"
           defaultValue={query}
-          placeholder="Search a player..."
-          className="flex-1 rounded border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
+          placeholder="Player Name"
+          className="flex-1 max-w-sm rounded border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
         />
         {rosterContext && (
           <>
@@ -99,135 +95,9 @@ export default async function PlayersPage(props: PageProps<"/players">) {
         </button>
       </form>
 
-      <div className="mt-8">
-        {results && (
-          <>
-            <h2 className="mb-2 text-sm font-medium text-zinc-500">
-              {results.length} result{results.length === 1 ? "" : "s"} for &ldquo;{query}&rdquo;
-            </h2>
-            <PlayerTable
-              rows={results.map((p) => ({
-                id: p.id,
-                fullName: p.fullName,
-                position: p.primaryPosition,
-                org: p.currentNhlOrg,
-                careerNhlGp: p.careerNhlGp,
-                gamesIngested: p.gamesIngested,
-                points: p.points,
-              }))}
-              rosterContext={rosterContext}
-              ownership={ownership}
-            />
-          </>
-        )}
-
-        {topByPoints && (
-          <>
-            <h2 className="mb-2 text-sm font-medium text-zinc-500">
-              Top players (2025-26 fantasy points)
-            </h2>
-            <PlayerTable
-              rows={topByPoints.map((p) => ({
-                id: p.id,
-                fullName: p.fullName,
-                position: p.primaryPosition,
-                org: p.currentNhlOrg,
-                careerNhlGp: p.careerNhlGp,
-                gamesIngested: p.gamesIngested,
-                points: p.points,
-              }))}
-              rosterContext={rosterContext}
-              ownership={ownership}
-            />
-          </>
-        )}
+      <div className="mt-6">
+        <PlayerStatsTable rows={rows} rosterContext={rosterContext} ownership={ownership} />
       </div>
     </div>
-  );
-}
-
-interface PlayerRow {
-  id: string;
-  fullName: string;
-  position: string | null;
-  org: string | null;
-  careerNhlGp: number;
-  gamesIngested: number | null;
-  points: number | null;
-}
-
-function PlayerTable({
-  rows,
-  rosterContext,
-  ownership,
-}: {
-  rows: PlayerRow[];
-  rosterContext: RosterContext | null;
-  ownership: Map<string, string>;
-}) {
-  if (rows.length === 0) {
-    return <p className="text-sm text-zinc-500">No players found.</p>;
-  }
-
-  return (
-    <table className="w-full border-collapse text-sm">
-      <thead>
-        <tr className="border-b border-black/10 text-left text-zinc-500 dark:border-white/10">
-          <th className="py-2 font-medium">Name</th>
-          <th className="py-2 font-medium">Pos</th>
-          <th className="py-2 font-medium">Org</th>
-          <th className="py-2 font-medium text-right">Career GP</th>
-          {rows[0].points !== null && (
-            <>
-              <th className="py-2 font-medium text-right">2025-26 GP</th>
-              <th className="py-2 font-medium text-right">Pts</th>
-            </>
-          )}
-          {rosterContext && <th className="py-2" />}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((p) => (
-          <tr key={p.id} className="border-b border-black/5 dark:border-white/5">
-            <td className="py-2">{p.fullName}</td>
-            <td className="py-2 text-zinc-500">{p.position ?? "—"}</td>
-            <td className="py-2 text-zinc-500">{p.org ?? "—"}</td>
-            <td className="py-2 text-right tabular-nums">{p.careerNhlGp}</td>
-            {p.points !== null && (
-              <>
-                <td className="py-2 text-right tabular-nums">{p.gamesIngested}</td>
-                <td className="py-2 text-right font-medium tabular-nums">
-                  {p.points.toFixed(1)}
-                </td>
-              </>
-            )}
-            {rosterContext && (
-              <td className="py-2 text-right">
-                {ownership.has(p.id) ? (
-                  <span className="text-xs text-zinc-500">
-                    {ownership.get(p.id)}
-                  </span>
-                ) : rosterContext.isMyTeam ? (
-                  <form
-                    action={addPlayerAction.bind(
-                      null,
-                      rosterContext.leagueId,
-                      rosterContext.teamId,
-                      p.id,
-                    )}
-                  >
-                    <button type="submit" className="text-xs underline">
-                      Add
-                    </button>
-                  </form>
-                ) : (
-                  <span className="text-xs text-zinc-500">—</span>
-                )}
-              </td>
-            )}
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }

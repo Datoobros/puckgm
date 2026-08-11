@@ -3,14 +3,14 @@ import { Show } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
 import { getTeamsForUser, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getRosterCounts } from "@/lib/rosters/mutations";
-import { topPlayersByPoints } from "@/lib/players/rankings";
+import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 import { Card, SectionLabel } from "@/components/Card";
 
 export default async function Home() {
   const user = await currentUser();
   const teams = user ? await getTeamsForUser(user.id) : [];
   const rosterCounts = user ? await getRosterCounts(teams.map((t) => t.id)) : new Map<string, number>();
-  const topPlayers = user ? await topPlayersByPoints(5) : [];
+  const topPlayers = user ? await getPlayerStatsAggregate({ limit: 5 }) : [];
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
