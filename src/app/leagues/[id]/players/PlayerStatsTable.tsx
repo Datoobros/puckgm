@@ -14,7 +14,10 @@ interface RosterContext {
 
 type PositionFilter = "SKATERS" | "F" | "D" | "G";
 
-const FORWARD_POSITIONS = new Set(["C", "LW", "RW"]);
+// Player.primaryPosition is stored as NHL's single-letter positionCode
+// ("C"/"L"/"R"/"D"/"G"), not "LW"/"RW" — see src/lib/lineups/mutations.ts
+// for the same discrepancy.
+const FORWARD_POSITIONS = new Set(["C", "L", "R"]);
 
 function matchesPosition(pos: string | null, filter: PositionFilter): boolean {
   if (filter === "SKATERS") return pos !== "G";
