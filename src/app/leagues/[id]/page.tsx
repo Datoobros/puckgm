@@ -3,9 +3,11 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getRosterCounts } from "@/lib/rosters/mutations";
-import { createTeamAction } from "@/app/leagues/actions";
+import { createTeamAction, generateScheduleAction } from "@/app/leagues/actions";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
 import { Card, SectionLabel } from "@/components/Card";
+import { prisma } from "@/lib/db";
+import { CURRENT_SCHEDULE_SEASON, DEFAULT_SEASON_START } from "@/lib/matchups/constants";
 
 export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">) {
   const { userId } = await auth.protect();
@@ -19,6 +21,8 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
   const commissioner = await getLeagueCommissioner(id);
   const rosterCounts = await getRosterCounts(league.teams.map((t) => t.id));
   const cap = Object.values(settings.rosterComposition).reduce((s, n) => s + n, 0);
+  const hasSchedule =
+    (await prisma.matchupPeriod.count({ where: { leagueId: id, season: CURRENT_SCHEDULE_SEASON } })) > 0;
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -102,7 +106,51 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
             <div className="mt-4">
               <SectionLabel>Commissioner Tools</SectionLabel>
               <Card>
-                <DeleteLeagueButton leagueId={league.id} leagueName={league.name} />
+                {hasSchedule ? (
+                  <p className="text-sm text-zinc-500">
+                    {CURRENT_SCHEDULE_SEASON}-{(CURRENT_SCHEDULE_SEASON + 1) % 100} schedule generated —
+                    see Scoreboard / Standings.
+                  </p>
+                ) : (
+                  <form action={generateScheduleAction.bind(null, league.id)} className="space-y-2">
+                    <p className="text-xs text-zinc-500">
+                      Generate a round-robin schedule for the {CURRENT_SCHEDULE_SEASON}-
+                      {(CURRENT_SCHEDULE_SEASON + 1) % 100} season. One-time — can&apos;t be regenerated
+                      once created.
+                    </p>
+                    <input type="hidden" name="season" value={CURRENT_SCHEDULE_SEASON} />
+                    <label className="block text-xs text-zinc-500">
+                      Start date
+                      <input
+                        type="date"
+                        name="startDate"
+                        defaultValue={DEFAULT_SEASON_START}
+                        required
+                        className="mt-1 block w-full rounded border border-black/10 bg-white px-2 py-1 text-sm text-black dark:border-white/15"
+                      />
+                    </label>
+                    <label className="block text-xs text-zinc-500">
+                      Weeks
+                      <input
+                        type="number"
+                        name="weekCount"
+                        defaultValue={24}
+                        min={1}
+                        required
+                        className="mt-1 block w-full rounded border border-black/10 bg-transparent px-2 py-1 text-sm dark:border-white/15"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      className="mt-1 rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                    >
+                      Generate Schedule
+                    </button>
+                  </form>
+                )}
+                <div className="mt-3 border-t border-black/10 pt-3 dark:border-white/10">
+                  <DeleteLeagueButton leagueId={league.id} leagueName={league.name} />
+                </div>
               </Card>
             </div>
           )}

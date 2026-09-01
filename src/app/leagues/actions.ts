@@ -1,8 +1,10 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { createLeague, createTeam, deleteLeague, type RosterComposition } from "@/lib/leagues/mutations";
+import { generateSchedule } from "@/lib/matchups/mutations";
 
 function parseRosterComposition(formData: FormData): RosterComposition {
   const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
@@ -58,4 +60,20 @@ export async function deleteLeagueAction(leagueId: string) {
   const { userId } = await auth.protect();
   await deleteLeague(leagueId, userId);
   redirect("/leagues");
+}
+
+export async function generateScheduleAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+
+  const season = Number(formData.get("season") ?? 0);
+  const startDate = String(formData.get("startDate") ?? "");
+  const weekCount = Number(formData.get("weekCount") ?? 0);
+  if (!season || !startDate || !weekCount) {
+    throw new Error("Season, start date, and week count are required.");
+  }
+
+  await generateSchedule({ leagueId, season, startDate, weekCount, callerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}`);
+  revalidatePath(`/leagues/${leagueId}/standings`);
+  revalidatePath(`/leagues/${leagueId}/scoreboard`);
 }

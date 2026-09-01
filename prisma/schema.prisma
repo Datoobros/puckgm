@@ -123,6 +123,8 @@ model Team {
   faBids            FaBid[]
   waiverClaims      WaiverClaim[]
   lineupEntries     LineupEntry[]
+  homeMatchups      Matchup[]          @relation("MatchupHomeTeam")
+  awayMatchups      Matchup[]          @relation("MatchupAwayTeam")
 
   @@index([leagueId])
 }
@@ -289,7 +291,26 @@ model MatchupPeriod {
   startDate DateTime
   endDate   DateTime
 
+  matchups Matchup[]
+
   @@unique([leagueId, season, periodNo])
+}
+
+// Team-vs-team pairing within a matchup period. No score fields here —
+// like fantasy points (DESIGN.md §4.1), a matchup's score is always
+// computed on read from LineupEntry + GameStatLine, never persisted, so a
+// retroactive stat correction can't desync a stored result from reality.
+// See src/lib/matchups/standings.ts.
+model Matchup {
+  id              String        @id @default(cuid())
+  matchupPeriodId String
+  matchupPeriod   MatchupPeriod @relation(fields: [matchupPeriodId], references: [id])
+  homeTeamId      String
+  homeTeam        Team          @relation("MatchupHomeTeam", fields: [homeTeamId], references: [id])
+  awayTeamId      String
+  awayTeam        Team          @relation("MatchupAwayTeam", fields: [awayTeamId], references: [id])
+
+  @@index([matchupPeriodId])
 }
 
 // Lineups are pre-set and freely editable, no weekly lock — only a per-game

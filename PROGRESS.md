@@ -141,6 +141,49 @@ are written to be read later, not just at merge time.
   dropdown** on the team page doesn't — it'll show honest zeros for a season bucket with no
   data yet, which is correct but could look broken without this context.
 
+**Matchups and standings** (DESIGN.md §2.4, new `Matchup` model — `MatchupPeriod` existed but
+had no team-vs-team pairing table until now)
+- Regular season only, no playoff bracket (explicit product decision — a follow-up, not
+  forgotten). Targets the **2026-27 season** specifically (also explicit — real season, so
+  scores read honest 0-0 until it actually starts in ~late September 2026, rather than
+  generating against the already-completed 2025-26 season just to have numbers to show).
+- **Schedule generation is a one-time commissioner action**, not automatic: a form in the
+  League page's Commissioner Tools card (`src/lib/matchups/mutations.ts`'s
+  `generateSchedule`) takes a start date and week count, circle-method round-robins the
+  league's teams (bye each week for odd team counts — leGM has 5 teams, so 4 play each week
+  and 1 sits out), and refuses to run again once a schedule exists for that season. Start
+  date defaults to **2026-09-29**, confirmed against the live NHL schedule API as the real
+  first regular-season date — not a guess.
+- **Scores are never persisted** — same DESIGN.md §4.1 philosophy as player points, now
+  extended to team totals. `getTeamScoreForPeriod` (`src/lib/matchups/standings.ts`) sums
+  fantasy points from `GameStatLine` for whichever players were actually **started**
+  (non-BE `LineupEntry`) within a period's date range — this is the first place the
+  Roster-vs-Lineup-vs-scoring chain actually connects end to end; a bench player really does
+  score 0 for the matchup now. `getStandings` only counts periods whose `endDate` has
+  passed (an in-progress week isn't a result yet); `getScoreboardForPeriod` shows any week,
+  live or historical, with a `final` flag.
+- New pages: `/leagues/[id]/standings` (W-L-T, PF/PA, sorted by win% then points) and
+  `/leagues/[id]/scoreboard` (prev/next week navigation), both linked from `LeagueNav` —
+  replacing its old comment explaining why they *couldn't* exist yet.
+- **Real regression found and fixed while verifying**: `deleteLeague` never accounted for
+  the new `Matchup`/`MatchupPeriod` rows — deleting a league with a generated schedule would
+  have hit a foreign-key violation (`Matchup` references both `Team` and `MatchupPeriod`,
+  neither cascades). Fixed by deleting `Matchup` → `MatchupPeriod` before the rest of the
+  existing teardown order.
+- **Real bug found and fixed on the Standings page**: `getStandings` always returns one row
+  per team, even with zero periods created — so `standings.length === 0` never triggered the
+  "no schedule yet" empty state; it silently rendered an all-zero table that looked like a
+  real season already in progress. Fixed by checking `MatchupPeriod` existence directly
+  instead of inferring it from the standings array.
+- Verified end-to-end in a disposable test league (5 teams, 6 weeks): round-robin produced
+  exactly the 10 unique pairings a 5-team season should have with zero repeats in the first
+  cycle, standings/scoreboard correctly showed nothing until a period actually ended, and
+  `getTeamScoreForPeriod` matched a known real per-game point total exactly (0.5, cross-
+  checked against McDavid's actual 2026-01-15 box score) when given a real `LineupEntry`.
+  Did **not** click "Generate Schedule" against the real leGM league — that's a one-time,
+  irreversible-via-UI commissioner action the user should trigger themselves with their own
+  choice of start date/week count, not something to commit on their behalf.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
@@ -153,9 +196,7 @@ are written to be read later, not just at merge time.
 
 ## Known gaps, deliberately not built (ask before building)
 
-- No matchups/scoring-against-an-opponent/standings — league home has no scores to show.
-  Lineups are built (see above) but nothing reads them yet — a bench player and a starter
-  score identically today since there's no matchup to differentiate "played" from "started."
+- No playoff bracket — matchups/standings are regular-season only for now (see above).
 - No draft, trades, FAAB, or waiver claims
 - No farm/IR assignment (see above)
 - Health/injury data, Watch List, schedule/"next game" column, stat projections — all

@@ -142,9 +142,12 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   }
 
   // Same deletion order used throughout the test-cleanup scripts this
-  // session — RosterSlot and Team both have real FK constraints back to
-  // League with no cascade configured, so children go first.
+  // session — every child here has a real FK constraint back to League or
+  // Team with no cascade configured, so children go first. Matchup
+  // references both MatchupPeriod and Team, so it has to go before either.
   await prisma.$transaction([
+    prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
+    prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
     prisma.transactionLog.deleteMany({ where: { leagueId } }),
     prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } }),
     prisma.team.deleteMany({ where: { leagueId } }),

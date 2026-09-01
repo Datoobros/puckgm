@@ -3,17 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Deliberately just these three — Standings/Scoreboard need a matchup system
-// that doesn't exist yet (same reasoning as elsewhere in this app: no faking
-// data we don't have), and Opposing Teams/LM Tools would just duplicate what
-// the League page already shows (the team list, and the commissioner tools
-// card) rather than being real distinct destinations.
+// Opposing Teams/LM Tools would just duplicate what the League page already
+// shows (the team list, and the commissioner tools card) rather than being
+// real distinct destinations, so they're left out.
 export function LeagueNav({ leagueId, myTeamId }: { leagueId: string; myTeamId: string | null }) {
   const pathname = usePathname();
 
   const links = [
     myTeamId ? { href: `/leagues/${leagueId}/teams/${myTeamId}`, label: "My Team" } : null,
     { href: `/leagues/${leagueId}`, label: "League" },
+    { href: `/leagues/${leagueId}/scoreboard`, label: "Scoreboard" },
+    { href: `/leagues/${leagueId}/standings`, label: "Standings" },
     { href: `/leagues/${leagueId}/players`, label: "Players" },
   ].filter((l): l is { href: string; label: string } => l !== null);
 
