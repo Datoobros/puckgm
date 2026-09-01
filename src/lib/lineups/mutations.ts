@@ -18,6 +18,7 @@
 import { prisma } from "@/lib/db";
 import type { LeagueSettings, RosterComposition } from "@/lib/leagues/mutations";
 import { getTeamGamesForDate, isLocked } from "@/lib/lineups/schedule";
+import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
 const STARTER_ELIGIBILITY: Record<string, string[] | null> = {
   C: ["C"],
@@ -133,4 +134,145 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
       },
     }),
   ]);
+}
+
+// Position-specific slots first (each candidate matches at most one of
+// C/L/R/D/G, so processing order among these doesn't affect the outcome),
+// then UTIL absorbs whichever eligible skaters are left over. Ranking is by
+// career-to-date fantasy points — simple, uses data that's already computed,
+// and doesn't depend on which "season" today's calendar date happens to
+// bucket into (see src/lib/players/seasons.ts's caveat about that boundary).
+const AUTO_SET_POSITION_SLOTS = ["C", "L", "R", "D", "G"];
+
+export interface AutoSetLineupInput {
+  leagueId: string;
+  teamId: string;
+  dates: string[]; // "YYYY-MM-DD"[]
+  managerUserId: string;
+}
+
+export interface AutoSetLineupResult {
+  date: string;
+  started: { playerId: string; fullName: string; slot: string }[];
+  benched: { playerId: string; fullName: string }[];
+  skippedLocked: { playerId: string; fullName: string; slot: string }[];
+}
+
+/** Recomputes each given date's lineup from scratch for every unlocked
+ * active-roster player — including demoting anyone previously hand-picked
+ * who doesn't make the cut, matching "optimize lineup" semantics rather
+ * than only ever filling empty slots. Players already locked (their game
+ * has started) are left exactly as they are. */
+export async function autoSetLineup(input: AutoSetLineupInput): Promise<AutoSetLineupResult[]> {
+  const team = await prisma.team.findUnique({
+    where: { id: input.teamId },
+    include: { league: true },
+  });
+  if (!team || team.leagueId !== input.leagueId) {
+    throw new Error("Team not found in this league.");
+  }
+  if (team.managerUserId !== input.managerUserId) {
+    throw new Error("You don't manage this team.");
+  }
+  const settings = team.league.settingsJson as unknown as LeagueSettings;
+
+  const activeSlots = await prisma.rosterSlot.findMany({
+    where: { teamId: input.teamId, slotType: "ACTIVE", effectiveTo: null },
+    include: { player: true },
+  });
+  if (activeSlots.length === 0) return [];
+
+  const rankingRows = await getPlayerStatsAggregate({
+    playerIds: activeSlots.map((s) => s.playerId),
+    scoringConfig: settings.scoringConfig,
+  });
+  const pointsById = new Map(rankingRows.map((r) => [r.id, r.points]));
+
+  const results: AutoSetLineupResult[] = [];
+
+  for (const date of input.dates) {
+    const gameDate = parseGameDate(date);
+    const [existingEntries, teamGames] = await Promise.all([
+      prisma.lineupEntry.findMany({ where: { teamId: input.teamId, gameDate } }),
+      getTeamGamesForDate(date),
+    ]);
+    const entryByPlayer = new Map(existingEntries.map((e) => [e.playerId, e.lineupSlot]));
+
+    const remainingCap: Record<string, number> = {};
+    for (const slot of [...AUTO_SET_POSITION_SLOTS, "UTIL"]) {
+      remainingCap[slot] = capFor(slot, settings.rosterComposition) ?? 0;
+    }
+
+    const skippedLocked: AutoSetLineupResult["skippedLocked"] = [];
+    const candidates: { s: (typeof activeSlots)[number]; points: number }[] = [];
+
+    for (const s of activeSlots) {
+      const game = s.player.currentNhlOrg ? teamGames.get(s.player.currentNhlOrg) : undefined;
+      const locked = game ? isLocked(game) : false;
+      const existingSlot = entryByPlayer.get(s.playerId) ?? "BE";
+
+      if (locked) {
+        if (existingSlot !== "BE" && remainingCap[existingSlot] !== undefined) {
+          remainingCap[existingSlot] = Math.max(0, remainingCap[existingSlot] - 1);
+        }
+        skippedLocked.push({ playerId: s.playerId, fullName: s.player.fullName, slot: existingSlot });
+        continue;
+      }
+
+      if (!game) continue; // no game that date — nothing to start him for
+      candidates.push({ s, points: pointsById.get(s.playerId) ?? 0 });
+    }
+
+    candidates.sort((a, b) => b.points - a.points);
+
+    const assigned = new Map<string, string>(); // playerId -> slot
+    for (const slot of AUTO_SET_POSITION_SLOTS) {
+      let cap = remainingCap[slot] ?? 0;
+      if (cap <= 0) continue;
+      for (const c of candidates) {
+        if (cap <= 0) break;
+        if (assigned.has(c.s.playerId)) continue;
+        if (!eligibleSlotsForPosition(c.s.player.primaryPosition).includes(slot)) continue;
+        assigned.set(c.s.playerId, slot);
+        cap -= 1;
+      }
+    }
+    {
+      let cap = remainingCap.UTIL ?? 0;
+      for (const c of candidates) {
+        if (cap <= 0) break;
+        if (assigned.has(c.s.playerId)) continue;
+        if (!eligibleSlotsForPosition(c.s.player.primaryPosition).includes("UTIL")) continue;
+        assigned.set(c.s.playerId, "UTIL");
+        cap -= 1;
+      }
+    }
+
+    const started: AutoSetLineupResult["started"] = [];
+    const benched: AutoSetLineupResult["benched"] = [];
+
+    for (const s of activeSlots) {
+      if (skippedLocked.some((l) => l.playerId === s.playerId)) continue;
+
+      const slot = assigned.get(s.playerId) ?? "BE";
+      const currentSlot = entryByPlayer.get(s.playerId) ?? "BE";
+      if (slot !== currentSlot) {
+        await setLineupSlot({
+          leagueId: input.leagueId,
+          teamId: input.teamId,
+          playerId: s.playerId,
+          date,
+          slot,
+          managerUserId: input.managerUserId,
+        });
+      }
+
+      if (slot === "BE") benched.push({ playerId: s.playerId, fullName: s.player.fullName });
+      else started.push({ playerId: s.playerId, fullName: s.player.fullName, slot });
+    }
+
+    results.push({ date, started, benched, skippedLocked });
+  }
+
+  return results;
 }

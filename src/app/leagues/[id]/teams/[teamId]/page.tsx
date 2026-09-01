@@ -13,6 +13,7 @@ import { Card, SectionLabel } from "@/components/Card";
 import { dropPlayerAction } from "./actions";
 import { LineupSlotSelect, type SlotOption } from "./LineupSlotSelect";
 import { ViewControls } from "./ViewControls";
+import { AutoSetLineupButton } from "./AutoSetLineupButton";
 
 const SLOT_LABELS: Record<string, string> = { C: "C", L: "L", R: "R", D: "D", G: "G", UTIL: "UTIL", BE: "Bench" };
 
@@ -123,6 +124,8 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
     .filter((s) => s.player.primaryPosition === "G")
     .sort((a, b) => slotSortRank(lineupFor(a).currentSlot, GOALIE_SLOT_ORDER) - slotSortRank(lineupFor(b).currentSlot, GOALIE_SLOT_ORDER));
 
+  const weekDates = Array.from({ length: 7 }, (_, i) => shiftDate(todayUTC(), i));
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <Link href={`/leagues/${leagueId}`} className="text-sm text-zinc-500 hover:underline">
@@ -171,6 +174,24 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         </div>
         <ViewControls leagueId={leagueId} teamId={teamId} date={date} view={view} />
       </div>
+      {isOwner && (
+        <div className="mt-3 flex items-center gap-2">
+          <AutoSetLineupButton
+            leagueId={leagueId}
+            teamId={teamId}
+            dates={[todayUTC()]}
+            label="Auto-Set Today"
+            confirmText="Auto-set today's lineup? This replaces any manual picks for unlocked players with the best-ranked eligible starters."
+          />
+          <AutoSetLineupButton
+            leagueId={leagueId}
+            teamId={teamId}
+            dates={weekDates}
+            label="Auto-Set This Week"
+            confirmText="Auto-set this week's lineup (today through the next 6 days)? This replaces any manual picks for unlocked players with the best-ranked eligible starters."
+          />
+        </div>
+      )}
       <p className="mt-1 text-xs text-zinc-500">
         Lineups are freely editable until a player&apos;s own game starts.
       </p>

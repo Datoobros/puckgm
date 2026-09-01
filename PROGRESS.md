@@ -112,6 +112,34 @@ are written to be read later, not just at merge time.
 - Nothing consumes lineups for scoring yet — a bench player and a starter score identically
   today since there's no matchup to differentiate "played" from "started." Real work for
   whenever matchups get built (see gaps below).
+- **Row order and a Today shortcut** (feedback round after the first ship): Skaters/goalies
+  rows sort by each player's *current lineup slot* — C block, then L, then R, then D, then
+  UTIL, then Bench (G then Bench for goalies) — instead of roster-add order, so putting
+  someone in a slot visibly moves them into that group. A "Today" link sits next to
+  Prev/Next, hidden when already viewing today. Both `<select>` controls (the stats-view
+  dropdown and the per-player slot picker) are forced to `bg-white text-black` — the native
+  option popup ignores the app's dark theme and renders on the OS's own white background,
+  so theme-driven white text was invisible against it.
+- **Auto-set lineup** (`autoSetLineup` in `mutations.ts`, two buttons on the team page,
+  owner-only, each behind a `confirm()` since it can silently overwrite a manually-curated
+  lineup): recomputes a date's lineup from scratch for every *unlocked* active-roster
+  player — ranks by **career-to-date fantasy points** (not season-scoped; sidesteps the
+  season-boundary edge case below), fills C/L/R/D/G with the best-ranked eligible player who
+  actually has a game that date, overflows the next-best remaining eligible skater into
+  UTIL, and explicitly benches everyone else — including someone who was previously
+  hand-picked into a slot but loses it to a higher-ranked player. Locked players (game
+  already started) are left untouched and still count against that slot's capacity. "Auto-
+  Set Today" always targets real today regardless of which date is being viewed; "Auto-Set
+  This Week" targets today through +6 days. Verified against real data (not just seeded) on
+  a safe future date with a real published NHL schedule — ranking, capacity, no-game
+  exclusion, and UTIL overflow all came out correct; cleaned up by exact date afterward.
+- **Known rough edge, not fixed**: `src/lib/players/seasons.ts` buckets seasons by calendar
+  year (Aug 1 → Jul 31), so "today" can fall inside a season bucket that has zero ingested
+  games yet (the *next* NHL season hasn't started) well before the real season begins. A
+  strict "season points so far" ranking would go all-zero in that window; auto-set sidesteps
+  it by ranking on the full career aggregate instead, but the **Daily/season stats-view
+  dropdown** on the team page doesn't — it'll show honest zeros for a season bucket with no
+  data yet, which is correct but could look broken without this context.
 
 ## Recent, worth knowing
 
