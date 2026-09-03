@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
 import { syncTeamsRosters } from "@/lib/players/sync";
 import { syncInjuryStatuses } from "@/lib/players/injuries";
+import { processExpiredWaivers } from "@/lib/waivers/mutations";
 
 // Vercel Hobby allows up to 60s per serverless function (default is much
 // lower). The first production run of this route did a full 32-team roster
@@ -32,6 +33,10 @@ export async function GET(request: Request) {
   // API call plus a handful of player lookups; cheap enough not to bother
   // scoping.
   const injuryResult = await syncInjuryStatuses();
+  // Vercel Hobby allows only one cron trigger/day, so this is where "48
+  // hours" (the demotion-waiver claim window) actually gets checked and
+  // resolved — see src/lib/waivers/mutations.ts's file header.
+  const waiverResults = await processExpiredWaivers();
 
   const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
   const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
@@ -41,5 +46,6 @@ export async function GET(request: Request) {
     ingest: ingestResult,
     rosterSync: { teams: ingestResult.teamsInvolved, synced: rosterSynced, failed: rosterFailed },
     injurySync: injuryResult,
+    waivers: waiverResults,
   });
 }

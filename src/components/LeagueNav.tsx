@@ -14,6 +14,7 @@ export function LeagueNav({ leagueId, myTeamId }: { leagueId: string; myTeamId: 
     { href: `/leagues/${leagueId}`, label: "League" },
     { href: `/leagues/${leagueId}/scoreboard`, label: "Scoreboard" },
     { href: `/leagues/${leagueId}/standings`, label: "Standings" },
+    { href: `/leagues/${leagueId}/waivers`, label: "Waivers" },
     { href: `/leagues/${leagueId}/players`, label: "Players" },
   ].filter((l): l is { href: string; label: string } => l !== null);
 

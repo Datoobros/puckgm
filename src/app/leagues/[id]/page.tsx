@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getRosterCounts } from "@/lib/rosters/mutations";
+import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { createTeamAction, generateScheduleAction } from "@/app/leagues/actions";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
 import { Card, SectionLabel } from "@/components/Card";
@@ -20,6 +21,7 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
   const yourTeam = league.teams.find((t) => t.managerUserId === userId);
   const commissioner = await getLeagueCommissioner(id);
   const rosterCounts = await getRosterCounts(league.teams.map((t) => t.id));
+  const waiverPriority = await getOrInitWaiverPriority(id);
   const cap = Object.values(settings.rosterComposition).reduce((s, n) => s + n, 0);
   const hasSchedule =
     (await prisma.matchupPeriod.count({ where: { leagueId: id, season: CURRENT_SCHEDULE_SEASON } })) > 0;
@@ -42,6 +44,7 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
             {league.teams.map((team) => {
               const isYou = team.managerUserId === userId;
               const rosterCount = rosterCounts.get(team.id) ?? 0;
+              const priorityIdx = waiverPriority.indexOf(team.id);
               return (
                 <Link key={team.id} href={`/leagues/${league.id}/teams/${team.id}`}>
                   <Card
@@ -59,6 +62,9 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
                     </div>
                     <p className="mt-2 text-xs text-zinc-500">
                       {rosterCount} / {cap} roster spots
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Waiver priority: {priorityIdx === -1 ? "not yet ranked" : `#${priorityIdx + 1}`}
                     </p>
                   </Card>
                 </Link>

@@ -260,6 +260,14 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                       <span className="ml-2 text-xs text-zinc-500">
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
+                      {s.waiverExpiresAt && s.waiverExpiresAt > new Date() && (
+                        <span
+                          title="Another team can claim him until this passes — see the Waivers page"
+                          className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                        >
+                          claimable until {s.waiverExpiresAt.toLocaleString()}
+                        </span>
+                      )}
                     </span>
                     <span className="flex items-center gap-3">
                       {played && (

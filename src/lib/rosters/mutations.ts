@@ -1,11 +1,10 @@
 // Roster ownership (who owns which player) — distinct from lineups (who
 // starts tonight, src/lib/lineups/mutations.ts). This file also covers
 // Farm/IR movement (DESIGN.md §2.3/§2.6): add/drop to ACTIVE, send-down to
-// FARM, callup back to ACTIVE, and IR placement/activation. Waiver *claims*
-// on a demoted 80+ GP player are explicitly not built — sendToFarm only
-// flags that exposure (`waiverExposed`), nothing processes an actual claim
-// yet. That's a distinct follow-up feature (DESIGN.md §2.9's "demotion
-// waivers", backed by the already-schema'd but unused WaiverClaim model).
+// FARM, callup back to ACTIVE, and IR placement/activation. sendToFarm flags
+// demotion-waiver exposure (`waiverExposed`) and opens a claim window;
+// claim submission/resolution itself lives in src/lib/waivers/mutations.ts
+// (DESIGN.md §2.9's "demotion waivers").
 //
 // First real use of TransactionLog (DESIGN.md §4.1) — every add/drop writes
 // an immutable row. That's the append-only history "why does this team own
@@ -14,6 +13,7 @@
 
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
+import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 
 function activeRosterCap(settings: LeagueSettings): number {
   return Object.values(settings.rosterComposition).reduce((sum, n) => sum + n, 0);
@@ -147,10 +147,17 @@ export interface SendToFarmInput {
   managerUserId: string;
 }
 
+const WAIVER_CLAIM_WINDOW_MS = 48 * 60 * 60 * 1000;
+const WAIVER_EXEMPTION_WINDOW_MS = 48 * 60 * 60 * 1000;
+
 /** Free — doesn't count against the weekly callup limit (DESIGN.md §2.5:
  * only callups are capped, "send-downs are already priced by demotion
- * waivers"). `waiverExposed` just flags that pricing; nothing processes an
- * actual claim yet — see the file header. */
+ * waivers"). `waiverExposed` flags that pricing and — see
+ * src/lib/waivers/mutations.ts — opens a 48h claim window (`waiverExpiresAt`)
+ * that other teams can act on. A player claimed off waivers in the last 48h
+ * is exempt from re-triggering exposure if his new team immediately sends
+ * him back down — he was just claimed, re-flagging him would be double
+ * jeopardy. */
 export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExposed: boolean }> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
@@ -170,11 +177,20 @@ export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExpose
     throw new Error(`Farm is full (${settings.farmSlots} max).`);
   }
 
-  const waiverExposed = slot.player.careerNhlGp >= settings.waiverGpThreshold;
+  const recentlyClaimed =
+    !!slot.waiverClaimedAt && Date.now() - slot.waiverClaimedAt.getTime() < WAIVER_EXEMPTION_WINDOW_MS;
+  const waiverExposed = !recentlyClaimed && slot.player.careerNhlGp >= settings.waiverGpThreshold;
 
   await prisma.$transaction([
     prisma.rosterSlot.update({ where: { id: slot.id }, data: { effectiveTo: new Date() } }),
-    prisma.rosterSlot.create({ data: { teamId: input.teamId, playerId: input.playerId, slotType: "FARM" } }),
+    prisma.rosterSlot.create({
+      data: {
+        teamId: input.teamId,
+        playerId: input.playerId,
+        slotType: "FARM",
+        waiverExpiresAt: waiverExposed ? new Date(Date.now() + WAIVER_CLAIM_WINDOW_MS) : null,
+      },
+    }),
     prisma.transactionLog.create({
       data: {
         leagueId: input.leagueId,
@@ -231,6 +247,11 @@ export async function callUpToActive(input: CallUpInput): Promise<void> {
       },
     }),
   ]);
+
+  // He's no longer sitting in a waiver window (the FARM slot just closed) —
+  // any claims other teams had in flight on him are moot. See
+  // src/lib/waivers/mutations.ts.
+  await voidPendingClaimsForPlayer(input.playerId);
 }
 
 export interface PlaceOnIrInput {

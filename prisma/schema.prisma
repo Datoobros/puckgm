@@ -81,6 +81,15 @@ model League {
   // for those. Always set going forward (createLeague sets it to the
   // creating manager).
   commissionerUserId String?
+  // Waiver claim priority queue — ordered array of team IDs, index 0 = next
+  // to win a contested claim (src/lib/waivers/mutations.ts). Nullable and
+  // lazily initialized on first use, same pattern as commissionerUserId.
+  // Seeded as reverse team-creation order: there's no draft feature yet to
+  // seed this from real draft order (DESIGN.md §2.3 says "reverse
+  // standings", but the user overrode that — no season data exists yet
+  // either — in favor of a rotating queue that's the permanent mechanic,
+  // not just a bootstrap). Winning a claim sends that team to the back.
+  waiverPriorityJson Json?
 
   teams            Team[]
   settingsLog      LeagueSettingsLog[]
@@ -148,6 +157,15 @@ model RosterSlot {
   slotType       RosterSlotType
   effectiveFrom  DateTime       @default(now())
   effectiveTo    DateTime?
+  // Demotion waivers (DESIGN.md §2.3/§2.9, src/lib/waivers/mutations.ts). Set
+  // only on a FARM slot created by sendToFarm when the demoted player is
+  // waiver-exposed — presence + effectiveTo: null + not yet past this time
+  // means "currently claimable." Cleared or the slot closes once processed.
+  waiverExpiresAt DateTime?
+  // Set on the new ACTIVE slot created when a waiver claim is awarded. Lets
+  // sendToFarm exempt a just-claimed player from immediately re-triggering
+  // waiverExposed if his new team sends him right back down.
+  waiverClaimedAt DateTime?
 
   @@index([teamId, slotType])
   @@index([playerId])

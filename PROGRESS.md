@@ -254,6 +254,51 @@ had no team-vs-team pairing table until now)
   fixed by adding it to the teardown order. Both caught by the same disposable-test-league
   verification pattern used throughout this session, not by inspection.
 
+**Waiver claims** (DESIGN.md §2.3/§2.9, `src/lib/waivers/mutations.ts`) — the other half of
+demotion waivers; `sendToFarm` already flagged `waiverExposed`, nothing processed a claim
+until now.
+- `RosterSlot` gained two nullable fields: `waiverExpiresAt` (set on a FARM slot when
+  `sendToFarm` demotes an 80+ GP player — presence + not-yet-past = "currently claimable")
+  and `waiverClaimedAt` (set on the winning ACTIVE slot at award time, so a re-demotion
+  within 48h of being claimed doesn't re-trigger `waiverExposed` — double jeopardy).
+  `League` gained `waiverPriorityJson`, an ordered array of team IDs.
+- **Explicit deviation from DESIGN.md §2.3's "reverse standings, updated weekly"** — the
+  user overrode this directly. There's no draft feature yet to seed a real draft order from,
+  and no season data yet to compute real standings from either. Instead: a rotating queue,
+  seeded once per league as **reverse team-creation order** (a placeholder for the *seed*
+  only — winning a claim sending that team to the back is the permanent mechanic going
+  forward, not a fallback to be replaced later). `getOrInitWaiverPriority` lazily initializes
+  it, same nullable-with-fallback pattern as `commissionerUserId`.
+- **Claim window: 48 hours.** Resolution is cron-driven (`processExpiredWaivers`, called from
+  the existing daily ingest route) rather than instant — **Vercel Hobby allows only one cron
+  trigger per project per day**, so in practice a claim resolves at the next daily tick after
+  48 hours have elapsed, up to ~24h of slop. Stated here plainly rather than promising
+  precision the hosting plan can't deliver.
+- **Award lands the player on the winning team's ACTIVE roster even if it's already at cap**
+  — deliberate temporary overflow, confirmed with the user. Matches this app's existing
+  IR-48h-deadline pattern: the constraint is real (shown in the UI) but nothing forcibly
+  enforces it on a timer; a manager sorts out the overflow (send someone down) on their own
+  time, same philosophy as every other roster change in this app being manager-initiated.
+- New page `/leagues/[id]/waivers`: every currently-claimable player league-wide with a
+  countdown and a Claim button (hidden for the team that just demoted him), plus the current
+  priority order. A manager's own pending claim shows "Claim pending · Cancel" instead. The
+  team page's Farm section got a small "claimable until `<time>`" badge for the same data,
+  informational only — the actual claim action lives on the hub page, not scattered across
+  every other team's roster page.
+- A callup back to ACTIVE before a player's window expires voids any pending claims on him
+  immediately (`voidPendingClaimsForPlayer` in `src/lib/rosters/mutations.ts`'s
+  `callUpToActive`) — he's no longer sitting in limbo, so a claim against him is moot.
+- Verified end-to-end in a disposable test league (3 teams): seed order, the "can't claim
+  your own demotion" guard, two competing claims resolving to the higher-priority team even
+  with that team's active roster already at cap, the losing claim clearing, priority
+  rotating the winner to the back, the no-re-exposure exemption on an immediate
+  re-demotion, a callup voiding a pending claim, and the organic-clear path (no claims —
+  player just clears, no roster change). `scripts/waiver-claim-check.ts` keeps this as a
+  runnable regression check, matching `roster-action-check.ts`'s pattern. Also checked both
+  new UI surfaces in a real browser against a second disposable league, using the
+  established `// TEMP:` hardcoded-userId technique to get past `auth.protect()` locally,
+  reverted before commit (`grep -rn "TEMP:" src/` clean).
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
@@ -265,9 +310,8 @@ had no team-vs-team pairing table until now)
 ## Known gaps, deliberately not built (ask before building)
 
 - No playoff bracket — matchups/standings are regular-season only for now (see above).
-- No draft, trades, or FAAB. **Waiver claims specifically** now have a real trigger
-  (`sendToFarm`'s `waiverExposed` flag) but no claim/priority/award processing — see Farm/IR
-  above.
+- No draft, trades, or FAAB/"the wire" (picking up an *unowned* player) — distinct from
+  demotion waiver claims, which are now fully built (see below).
 - Watch List, schedule/"next game" column, stat projections — still no backing data or
   feature built for any of these. (Injury/IR status is now real, via ESPN — see above; this
   line used to include it.)
