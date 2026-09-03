@@ -224,15 +224,43 @@ had no team-vs-team pairing table until now)
   Did not exercise this against the real leGM roster beyond a read-only render check — no
   destructive clicks against real team state.
 
+**League settings editing** (DESIGN.md §2.10, `/leagues/[id]/settings`, commissioner-only)
+- Exposes exactly the "between seasons, by vote" mutability tier: farm slots, IR slots,
+  waiver GP threshold, callups/week, and the 13 scoring values `computeFantasyPoints`
+  actually uses. The "locked at creation" tier (roster composition, league size, scoring
+  format) is shown read-only on the same page with no inputs at all — there still isn't an
+  edit path for those anywhere, which is what keeps "locked" true.
+  `powerPlayPoints`/`shorthandedPoints` are deliberately left off the form even though
+  they're real `ScoringConfig` fields — the engine documents them as a no-op (no data
+  source yet), so exposing an input for them would let a commissioner set a value that
+  silently does nothing.
+- **No real voting system exists**, so "by vote" isn't enforced — access is commissioner-
+  only (same as every other commissioner action in this app) and the page says outright
+  that nothing stops a unilateral mid-season change; that's on the league, not enforced in
+  code. Honest about the gap rather than pretending consent was collected.
+- First real use of the `LeagueSettingsLog` model, which existed in the schema from the
+  start of this project but nothing ever wrote to it. Each changed field gets its own row
+  (`farmSlots`, `irSlots`, `waiverGpThreshold`, `callupsPerWeek`, or `scoringConfig.<field>`
+  per changed scoring value) — only fields that actually changed value get logged, verified
+  by submitting a no-op update and confirming zero new rows.
+- **Two real regressions found and fixed while verifying, both the same shape as bugs found
+  earlier this session**: (1) validation required every editable scoring field to be a
+  present number, but the merge logic already treated `scoringConfig` as a partial update —
+  `STARTER_SCORING` itself doesn't set `giveaways`/`takeaways`, so a legitimate partial
+  config failed validation; fixed by only validating fields the caller actually supplied.
+  (2) `deleteLeague` still didn't account for `LeagueSettingsLog` rows (the matchup-related
+  version of this exact bug was fixed earlier in this session) — deleting a league with any
+  settings-change history now hits a foreign-key violation instead of silently cascading;
+  fixed by adding it to the teardown order. Both caught by the same disposable-test-league
+  verification pattern used throughout this session, not by inspection.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
   param. League players page and team roster page both pass their league's own
-  `settings.scoringConfig`. Numbers are identical to before *today* because every league
-  is currently seeded with `STARTER_SCORING` at creation — but the wiring is real now, not
-  just modeled. This is the first point where per-league scoring customization (DESIGN.md
-  §2.4/§2.10) would actually show up if a league changed its config. No UI exists yet to
-  *change* a league's scoring config after creation.
+  `settings.scoringConfig`. This is the first point where per-league scoring customization
+  (DESIGN.md §2.4/§2.10) would actually show up if a league changed its config — and now a
+  league can, via `/leagues/[id]/settings` (see above).
 
 ## Known gaps, deliberately not built (ask before building)
 

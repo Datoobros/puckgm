@@ -3,8 +3,9 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
-import { createLeague, createTeam, deleteLeague, type RosterComposition } from "@/lib/leagues/mutations";
+import { createLeague, createTeam, deleteLeague, updateLeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
 import { generateSchedule } from "@/lib/matchups/mutations";
+import { EDITABLE_SCORING_FIELDS, type ScoringConfig } from "@/lib/scoring/engine";
 
 function parseRosterComposition(formData: FormData): RosterComposition {
   const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
@@ -76,4 +77,26 @@ export async function generateScheduleAction(leagueId: string, formData: FormDat
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/standings`);
   revalidatePath(`/leagues/${leagueId}/scoreboard`);
+}
+
+export async function updateLeagueSettingsAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+
+  const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
+  const scoringConfig: ScoringConfig = {};
+  for (const { key } of EDITABLE_SCORING_FIELDS) {
+    scoringConfig[key] = Number(formData.get(`scoring_${key}`) ?? 0);
+  }
+
+  await updateLeagueSettings({
+    leagueId,
+    callerUserId: userId,
+    farmSlots: num("farmSlots"),
+    irSlots: num("irSlots"),
+    waiverGpThreshold: num("waiverGpThreshold"),
+    callupsPerWeek: num("callupsPerWeek"),
+    scoringConfig,
+  });
+  revalidatePath(`/leagues/${leagueId}`);
+  revalidatePath(`/leagues/${leagueId}/settings`);
 }

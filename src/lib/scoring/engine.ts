@@ -36,6 +36,27 @@ export interface ScoringConfig {
   shorthandedPoints?: number;
 }
 
+// The fields computeFantasyPoints actually uses, with display labels — the
+// settings-edit UI (src/app/leagues/[id]/settings) exposes only these.
+// Exposing powerPlayPoints/shorthandedPoints there would let a commissioner
+// set a value that silently does nothing, which is exactly the kind of
+// dishonest-looking control this app avoids elsewhere.
+export const EDITABLE_SCORING_FIELDS: { key: keyof ScoringConfig; label: string }[] = [
+  { key: "goals", label: "Goals" },
+  { key: "assists", label: "Assists" },
+  { key: "sog", label: "Shots on Goal" },
+  { key: "hits", label: "Hits" },
+  { key: "blockedShots", label: "Blocked Shots" },
+  { key: "pim", label: "Penalty Minutes" },
+  { key: "plusMinus", label: "+/-" },
+  { key: "giveaways", label: "Giveaways" },
+  { key: "takeaways", label: "Takeaways" },
+  { key: "wins", label: "Wins (G)" },
+  { key: "shutouts", label: "Shutouts (G)" },
+  { key: "saves", label: "Saves (G)" },
+  { key: "goalsAgainst", label: "Goals Against (G)" },
+];
+
 interface RawStatLine {
   position?: string;
   decision?: "W" | "L" | "O";
