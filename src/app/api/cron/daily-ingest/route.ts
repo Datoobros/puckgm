@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
 import { syncTeamsRosters } from "@/lib/players/sync";
+import { syncInjuryStatuses } from "@/lib/players/injuries";
 
 // Vercel Hobby allows up to 60s per serverless function (default is much
 // lower). The first production run of this route did a full 32-team roster
@@ -26,6 +27,11 @@ export async function GET(request: Request) {
   const date = yesterdayUTC();
   const ingestResult = await ingestDate(date);
   const rosterResults = await syncTeamsRosters(ingestResult.teamsInvolved);
+  // Not scoped to teamsInvolved like the roster sync above — injuries aren't
+  // tied to who played last night, so this checks every team every day. One
+  // API call plus a handful of player lookups; cheap enough not to bother
+  // scoping.
+  const injuryResult = await syncInjuryStatuses();
 
   const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
   const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
@@ -34,5 +40,6 @@ export async function GET(request: Request) {
     ok: true,
     ingest: ingestResult,
     rosterSync: { teams: ingestResult.teamsInvolved, synced: rosterSynced, failed: rosterFailed },
+    injurySync: injuryResult,
   });
 }

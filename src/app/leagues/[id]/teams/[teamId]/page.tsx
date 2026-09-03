@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { getTeamRosterView } from "@/lib/rosters/mutations";
+import { getTeamRosterView, getCallupsUsedThisWeek } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate, getPlayerDailyStats, type PlayerStatsRow } from "@/lib/players/rankings";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import { seasonByValue } from "@/lib/players/seasons";
@@ -10,7 +10,7 @@ import { getLineupForDate, capFor, eligibleSlotsForPosition } from "@/lib/lineup
 import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/schedule";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { Card, SectionLabel } from "@/components/Card";
-import { dropPlayerAction } from "./actions";
+import { dropPlayerAction, sendToFarmAction, callUpAction, placeOnIrAction, activateFromIrAction } from "./actions";
 import { LineupSlotSelect, type SlotOption } from "./LineupSlotSelect";
 import { ViewControls } from "./ViewControls";
 import { AutoSetLineupButton } from "./AutoSetLineupButton";
@@ -70,9 +70,10 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const allSlots = await getTeamRosterView(teamId);
   const activeSlots = allSlots.filter((s) => s.slotType === "ACTIVE");
   const farmSlots = allSlots.filter((s) => s.slotType === "FARM");
+  const irSlots = allSlots.filter((s) => s.slotType === "IR");
   const playerIds = allSlots.map((s) => s.playerId);
 
-  const [statsById, lineupEntries, teamGames] = await Promise.all([
+  const [statsById, lineupEntries, teamGames, callupsUsed] = await Promise.all([
     view === "daily"
       ? getPlayerDailyStats(playerIds, date, settings.scoringConfig)
       : getPlayerStatsAggregate({
@@ -82,6 +83,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         }).then((rows) => new Map(rows.map((r) => [r.id, r] as [string, PlayerStatsRow]))),
     getLineupForDate(teamId, date),
     getTeamGamesForDate(date),
+    getCallupsUsedThisWeek(teamId, leagueId),
   ]);
 
   const lineupBySlot = new Map(lineupEntries.map((e) => [e.playerId, e.lineupSlot]));
@@ -208,6 +210,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           date={date}
           isOwner={isOwner}
           lineupFor={lineupFor}
+          waiverGpThreshold={settings.waiverGpThreshold}
           emptyText="No skaters rostered yet."
         />
       </div>
@@ -224,12 +227,20 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           date={date}
           isOwner={isOwner}
           lineupFor={lineupFor}
+          waiverGpThreshold={settings.waiverGpThreshold}
           emptyText="No goalies rostered yet."
         />
       </div>
 
       <div className="mt-6">
-        <SectionLabel>Farm ({farmSlots.length} / {settings.farmSlots})</SectionLabel>
+        <SectionLabel>
+          Farm ({farmSlots.length} / {settings.farmSlots})
+          {isOwner && (
+            <span className="ml-2 normal-case text-zinc-400">
+              · {callupsUsed} / {settings.callupsPerWeek} callups used this week
+            </span>
+          )}
+        </SectionLabel>
         {farmSlots.length === 0 ? (
           <Card>
             <p className="text-sm text-zinc-500">No players on the farm.</p>
@@ -240,6 +251,8 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
               {farmSlots.map((s) => {
                 const stats = statsById.get(s.playerId);
                 const played = stats && stats.gamesIngested > 0;
+                const activeFull = activeSlots.length >= cap;
+                const callupLimitReached = callupsUsed >= settings.callupsPerWeek;
                 return (
                   <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
                     <span>
@@ -248,10 +261,79 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
                     </span>
-                    {played && (
-                      <span className="text-xs text-zinc-500">
-                        {stats.gamesIngested} GP · {stats.points.toFixed(1)} pts
+                    <span className="flex items-center gap-3">
+                      {played && (
+                        <span className="text-xs text-zinc-500">
+                          {stats.gamesIngested} GP · {stats.points.toFixed(1)} pts
+                        </span>
+                      )}
+                      {isOwner && (
+                        <form action={callUpAction.bind(null, leagueId, teamId, s.playerId)}>
+                          <button
+                            type="submit"
+                            disabled={activeFull || callupLimitReached}
+                            title={
+                              activeFull
+                                ? "Active roster is full"
+                                : callupLimitReached
+                                  ? "Weekly callup limit reached"
+                                  : undefined
+                            }
+                            className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] disabled:opacity-30 dark:border-white/15 dark:hover:bg-white/[.05]"
+                          >
+                            ↑ Call Up
+                          </button>
+                        </form>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+        )}
+      </div>
+
+      <div className="mt-6">
+        <SectionLabel>IR ({irSlots.length} / {settings.irSlots})</SectionLabel>
+        {irSlots.length === 0 ? (
+          <Card>
+            <p className="text-sm text-zinc-500">No players on IR.</p>
+          </Card>
+        ) : (
+          <Card className="!p-0 overflow-hidden">
+            <ul className="divide-y divide-black/5 dark:divide-white/5">
+              {irSlots.map((s) => {
+                const stillIr = s.player.officialRosterStatus === "IR" || s.player.officialRosterStatus === "LTIR";
+                const activeFull = activeSlots.length >= cap;
+                return (
+                  <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
+                    <span>
+                      {s.player.fullName}
+                      <span className="ml-2 text-xs text-zinc-500">
+                        {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
+                      <span className="ml-2 rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-white/10">
+                        {s.player.officialRosterStatus ?? "IR"}
+                      </span>
+                    </span>
+                    {isOwner && (
+                      <form action={activateFromIrAction.bind(null, leagueId, teamId, s.playerId)}>
+                        <button
+                          type="submit"
+                          disabled={stillIr || activeFull}
+                          title={
+                            stillIr
+                              ? "Still officially on IR"
+                              : activeFull
+                                ? "Active roster is full — send someone down first"
+                                : undefined
+                          }
+                          className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] disabled:opacity-30 dark:border-white/15 dark:hover:bg-white/[.05]"
+                        >
+                          Activate
+                        </button>
+                      </form>
                     )}
                   </li>
                 );
@@ -283,6 +365,7 @@ function RosterTable({
   date,
   isOwner,
   lineupFor,
+  waiverGpThreshold,
   emptyText,
 }: {
   slots: RosterSlotWithPlayer[];
@@ -294,6 +377,7 @@ function RosterTable({
   date: string;
   isOwner: boolean;
   lineupFor: (s: RosterSlotWithPlayer) => LineupInfo;
+  waiverGpThreshold: number;
   emptyText: string;
 }) {
   if (slots.length === 0) {
@@ -347,6 +431,19 @@ function RosterTable({
                       {eligible.join("/")}
                     </span>
                   )}
+                  {player.careerNhlGp >= waiverGpThreshold && (
+                    <span
+                      title={`${player.careerNhlGp} career GP — sending him to farm exposes him to demotion waivers`}
+                      className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                    >
+                      {waiverGpThreshold}+ GP
+                    </span>
+                  )}
+                  {(player.officialRosterStatus === "IR" || player.officialRosterStatus === "LTIR") && (
+                    <span className="ml-2 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400">
+                      {player.officialRosterStatus}
+                    </span>
+                  )}
                   <span className="ml-2 text-xs text-zinc-500">{player.currentNhlOrg ?? "—"}</span>
                 </td>
                 <td className="py-2 pr-2 text-zinc-500">
@@ -379,14 +476,34 @@ function RosterTable({
                 ))}
                 {isOwner && (
                   <td className="py-2 pr-4 text-right">
-                    <form action={dropPlayerAction.bind(null, leagueId, teamId, playerId)}>
-                      <button
-                        type="submit"
-                        className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
-                      >
-                        − Drop
-                      </button>
-                    </form>
+                    <div className="flex justify-end gap-1.5">
+                      {(player.officialRosterStatus === "IR" || player.officialRosterStatus === "LTIR") && (
+                        <form action={placeOnIrAction.bind(null, leagueId, teamId, playerId)}>
+                          <button
+                            type="submit"
+                            className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                          >
+                            → IR
+                          </button>
+                        </form>
+                      )}
+                      <form action={sendToFarmAction.bind(null, leagueId, teamId, playerId)}>
+                        <button
+                          type="submit"
+                          className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                        >
+                          → Farm
+                        </button>
+                      </form>
+                      <form action={dropPlayerAction.bind(null, leagueId, teamId, playerId)}>
+                        <button
+                          type="submit"
+                          className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                        >
+                          − Drop
+                        </button>
+                      </form>
+                    </div>
                   </td>
                 )}
               </tr>

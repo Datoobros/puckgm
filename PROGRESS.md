@@ -43,10 +43,7 @@ are written to be read later, not just at merge time.
 - Add/drop players to a team's **active** roster only (`src/lib/rosters/mutations.ts`).
   Enforces the roster size cap and one-team-per-player exclusivity within a league. First
   real use of the append-only `TransactionLog`.
-- **Farm and IR are schema-ready but have no assignment mechanism.** `RosterSlot.slotType`
-  supports ACTIVE/FARM/IR; nothing ever creates a FARM or IR row. Building "move to farm"
-  needs the 80-GP waiver-exemption rule from DESIGN.md §2.3 — flagged to the user
-  explicitly rather than bolted on as a naive toggle. Still undecided/unbuilt.
+- **Farm and IR assignment is built** — see the dedicated section below.
 
 **UI**
 - Dark app-chrome header, global nav is just Home/Leagues.
@@ -57,8 +54,8 @@ are written to be read later, not just at merge time.
   anymore**, on purpose: scoring is league-specific. Sortable ESPN-style stats table
   (every column clickable), position tabs, Pro Team filter, Available/All filter.
 - Team roster page is now the **ESPN-style "main screen"** — see Lineups below;
-  Skaters/Goalies tables carry lineup controls and stat-view switching directly, Farm
-  section unchanged (always empty right now — see above).
+  Skaters/Goalies tables carry lineup controls, stat-view switching, and Farm/IR movement
+  directly, plus a Farm section and an IR section (both interactive now — see below).
 
 **Lineups** (DESIGN.md §2.4) — built directly into the team roster page, not a separate route
 - `LineupEntry` read/write path: `src/lib/lineups/mutations.ts`, rendered inline on
@@ -184,6 +181,49 @@ had no team-vs-team pairing table until now)
   irreversible-via-UI commissioner action the user should trigger themselves with their own
   choice of start date/week count, not something to commit on their behalf.
 
+**Farm and IR assignment** (DESIGN.md §2.3/§2.6, `src/lib/rosters/mutations.ts`)
+- Four moves: `sendToFarm` (ACTIVE→FARM, free/uncapped by the weekly limit), `callUpToActive`
+  (FARM→ACTIVE, capped by `callupsPerWeek` and requires an open active slot), `placeOnIR`
+  (ACTIVE→IR, capped by `irSlots`), `activateFromIR` (IR→ACTIVE, requires an open active
+  slot — matches DESIGN.md's own worked example where activation is blocked until you send
+  someone down first). All four gate on real ownership/roster-slot state and write a
+  `TransactionLog` row (`SEND_DOWN` / `CALLUP` / `IR_MOVE`), same as every other roster
+  mutation in this app.
+- **Waiver claims are explicitly not built** — `sendToFarm` returns/logs `waiverExposed:
+  true` when the demoted player has `careerNhlGp >= waiverGpThreshold` (80 by default) and
+  the UI shows an "80+ GP" badge on eligible players, but nothing actually processes a claim
+  from another team. That's DESIGN.md §2.9's distinct "demotion waivers" subsystem
+  (`WaiverClaim` model already exists, still unused) — deliberately deferred so this pass
+  stayed focused on the roster mechanic everything else depends on.
+- **IR eligibility gates on real data, not a checkbox** — `Player.officialRosterStatus`
+  used to be schema-only with nothing populating it. Investigated whether a reliable free
+  source exists before building anything (the NHL's own public API has no injury/IR field
+  at all): found ESPN's unofficial injuries feed
+  (`site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries`), which reports a literal
+  `"Injured Reserve"` status distinct from vaguer ones (`"Out"`, `"Suspension"`) — close to
+  what DESIGN.md wants (gate on the real transaction, never on severity/prognosis).
+  `src/lib/nhl/espn.ts` fetches it; `src/lib/players/injuries.ts`'s `syncInjuryStatuses()`
+  matches entries onto existing players by **name + team** (ESPN gives no ID crosswalk to
+  our NHL-sourced player IDs — team resolution goes through ESPN's numeric team id, since
+  ESPN's own abbreviations differ from ours: `LA`/`NJ`/`SJ`/`TB`/`UTAH` vs our
+  `LAK`/`NJD`/`SJS`/`TBL`/`UTA`). Recomputed every run, not hand-maintained — a player IR
+  last run who isn't in this run's list gets cleared back to healthy, same philosophy as
+  `careerNhlGp`/`currentNhlOrg`. Wired into the existing daily cron, unscoped (checks every
+  team daily — one API call, cheap enough not to bother scoping to who played).
+- **LTIR isn't distinguished from IR** — ESPN's feed doesn't carry that distinction, so both
+  values gate the same way rather than inventing a fake distinction from unreliable data.
+- **The 48h IR activation deadline (DESIGN.md §2.6) isn't auto-enforced** — deliberately.
+  Activation is *possible* once official status clears; nothing forcibly moves a player off
+  a manager's roster on a timer. Matches this app's existing pattern of every roster change
+  being manager-initiated, not automated pressure.
+- Verified end-to-end in a disposable test league against a **real** ESPN-flagged IR player
+  (Evan Rodrigues): placing a healthy player on IR correctly threw, placing the real IR
+  player succeeded, activating him while still officially IR correctly threw. Also verified
+  farm capacity, the weekly callup limit (blocks a 3rd callup once the 2-per-week default is
+  used), and the waiver-exposure flag (true for an 80+ GP fixture, false for a 0-GP one).
+  Did not exercise this against the real leGM roster beyond a read-only render check — no
+  destructive clicks against real team state.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
@@ -197,11 +237,12 @@ had no team-vs-team pairing table until now)
 ## Known gaps, deliberately not built (ask before building)
 
 - No playoff bracket — matchups/standings are regular-season only for now (see above).
-- No draft, trades, FAAB, or waiver claims
-- No farm/IR assignment (see above)
-- Health/injury data, Watch List, schedule/"next game" column, stat projections — all
-  explicitly skipped when building the players table; real ESPN features, no backing data
-  or feature built for any of them here
+- No draft, trades, or FAAB. **Waiver claims specifically** now have a real trigger
+  (`sendToFarm`'s `waiverExposed` flag) but no claim/priority/award processing — see Farm/IR
+  above.
+- Watch List, schedule/"next game" column, stat projections — still no backing data or
+  feature built for any of these. (Injury/IR status is now real, via ESPN — see above; this
+  line used to include it.)
 - Contracts — explicitly deferred in the original DESIGN.md, revisit later or never
 
 ## Working conventions established this session

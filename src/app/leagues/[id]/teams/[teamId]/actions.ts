@@ -2,12 +2,42 @@
 
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
-import { dropPlayerFromRoster } from "@/lib/rosters/mutations";
+import {
+  dropPlayerFromRoster,
+  sendToFarm,
+  callUpToActive,
+  placeOnIR,
+  activateFromIR,
+} from "@/lib/rosters/mutations";
 import { setLineupSlot, autoSetLineup } from "@/lib/lineups/mutations";
 
 export async function dropPlayerAction(leagueId: string, teamId: string, playerId: string) {
   const { userId } = await auth.protect();
   await dropPlayerFromRoster({ teamId, playerId, managerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
+}
+
+export async function sendToFarmAction(leagueId: string, teamId: string, playerId: string) {
+  const { userId } = await auth.protect();
+  await sendToFarm({ leagueId, teamId, playerId, managerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
+}
+
+export async function callUpAction(leagueId: string, teamId: string, playerId: string) {
+  const { userId } = await auth.protect();
+  await callUpToActive({ leagueId, teamId, playerId, managerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
+}
+
+export async function placeOnIrAction(leagueId: string, teamId: string, playerId: string) {
+  const { userId } = await auth.protect();
+  await placeOnIR({ leagueId, teamId, playerId, managerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
+}
+
+export async function activateFromIrAction(leagueId: string, teamId: string, playerId: string) {
+  const { userId } = await auth.protect();
+  await activateFromIR({ leagueId, teamId, playerId, managerUserId: userId });
   revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
 }
 
