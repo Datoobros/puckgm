@@ -9,6 +9,8 @@ import { Card, SectionLabel } from "@/components/Card";
 export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]/settings">) {
   const { userId } = await auth.protect();
   const { id: leagueId } = await props.params;
+  const sp = await props.searchParams;
+  const justSaved = (Array.isArray(sp.saved) ? sp.saved[0] : sp.saved) === "1";
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -29,6 +31,12 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         ← {league.name}
       </Link>
       <h1 className="mt-1 text-2xl font-semibold tracking-tight">League Settings</h1>
+
+      {justSaved && (
+        <Card className="mt-4 !bg-emerald-500/10 !border-emerald-500/20">
+          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Settings saved.</p>
+        </Card>
+      )}
 
       <Card className="mt-4 !bg-amber-500/5 !border-amber-500/20">
         <p className="text-xs text-amber-700 dark:text-amber-400">

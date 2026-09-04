@@ -105,4 +105,5 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
   });
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/settings`);
+  redirect(`/leagues/${leagueId}/settings?saved=1`);
 }
