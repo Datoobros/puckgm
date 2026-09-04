@@ -30,17 +30,26 @@ export async function getOrInitFaabBudget(teamId: string, season: number, starti
 }
 
 /** The real spendable ceiling — remaining budget minus everything already
- * committed to other PENDING bids. Budget is only ever debited from
- * `remaining` at award time, never escrowed at submission, so this is what
- * stops a team placing simultaneous bids that would jointly blow their
- * budget if more than one won the same night. */
+ * committed to other PENDING bids, minus FAAB promised away as the sending
+ * side of any of this team's own open trades (src/lib/trades/mutations.ts —
+ * a trade doesn't escrow FAAB either, so this is what stops a team
+ * double-committing the same budget to a bid and a trade at once). Budget is
+ * only ever debited from `remaining` at award/trade-processing time, never
+ * escrowed at submission. */
 export async function getAvailableBudget(teamId: string, season: number, startingAmount: number): Promise<number> {
   const budget = await getOrInitFaabBudget(teamId, season, startingAmount);
-  const pending = await prisma.faBid.aggregate({
-    where: { teamId, result: "PENDING" },
-    _sum: { amount: true },
-  });
-  return budget.remaining - (pending._sum.amount ?? 0);
+  const [pendingBids, pendingTradeFaab] = await Promise.all([
+    prisma.faBid.aggregate({ where: { teamId, result: "PENDING" }, _sum: { amount: true } }),
+    prisma.tradeItem.aggregate({
+      where: {
+        fromTeamId: teamId,
+        itemType: "FAAB",
+        trade: { state: { in: ["PROPOSED", "UNDER_REVIEW"] } },
+      },
+      _sum: { faabAmount: true },
+    }),
+  ]);
+  return budget.remaining - (pendingBids._sum.amount ?? 0) - (pendingTradeFaab._sum.faabAmount ?? 0);
 }
 
 export interface SubmitFaBidInput {

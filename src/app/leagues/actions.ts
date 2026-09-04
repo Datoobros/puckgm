@@ -89,6 +89,8 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
   }
 
   const faabMaxBidRaw = String(formData.get("faabMaxBid") ?? "").trim();
+  const tradeVetoModeRaw = String(formData.get("tradeVetoMode") ?? "COMMISSIONER");
+  const tradeDeadlineRaw = String(formData.get("tradeDeadline") ?? "").trim();
 
   await updateLeagueSettings({
     leagueId,
@@ -102,6 +104,8 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
     faabBudget: num("faabBudget"),
     faabMinBid: num("faabMinBid"),
     faabMaxBid: faabMaxBidRaw === "" ? null : Math.max(0, Number(faabMaxBidRaw) | 0),
+    tradeVetoMode: tradeVetoModeRaw === "VOTE" ? "VOTE" : "COMMISSIONER",
+    tradeDeadline: tradeDeadlineRaw === "" ? null : tradeDeadlineRaw,
   });
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/settings`);

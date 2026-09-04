@@ -43,6 +43,8 @@ async function main() {
     faabBudget: 100,
     faabMinBid: 2,
     faabMaxBid: 60,
+    tradeVetoMode: "COMMISSIONER",
+    tradeDeadline: null,
   });
 
   let threw = false;

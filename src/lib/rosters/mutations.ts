@@ -15,7 +15,7 @@ import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 
-function activeRosterCap(settings: LeagueSettings): number {
+export function activeRosterCap(settings: LeagueSettings): number {
   return Object.values(settings.rosterComposition).reduce((sum, n) => sum + n, 0);
 }
 
@@ -154,15 +154,16 @@ export interface SendToFarmInput {
 
 const WAIVER_CLAIM_WINDOW_MS = 48 * 60 * 60 * 1000;
 const WAIVER_EXEMPTION_WINDOW_MS = 48 * 60 * 60 * 1000;
+const TRADE_EXEMPTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Free — doesn't count against the weekly callup limit (DESIGN.md §2.5:
  * only callups are capped, "send-downs are already priced by demotion
  * waivers"). `waiverExposed` flags that pricing and — see
  * src/lib/waivers/mutations.ts — opens a 48h claim window (`waiverExpiresAt`)
- * that other teams can act on. A player claimed off waivers in the last 48h
- * is exempt from re-triggering exposure if his new team immediately sends
- * him back down — he was just claimed, re-flagging him would be double
- * jeopardy. */
+ * that other teams can act on. A player claimed off waivers in the last 48h,
+ * or traded in the last 24h (src/lib/trades/mutations.ts), is exempt from
+ * re-triggering exposure if his new team immediately sends him back down —
+ * he was just acquired, re-flagging him would be double jeopardy. */
 export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExposed: boolean }> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
@@ -184,7 +185,9 @@ export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExpose
 
   const recentlyClaimed =
     !!slot.waiverClaimedAt && Date.now() - slot.waiverClaimedAt.getTime() < WAIVER_EXEMPTION_WINDOW_MS;
-  const waiverExposed = !recentlyClaimed && slot.player.careerNhlGp >= settings.waiverGpThreshold;
+  const recentlyTraded =
+    !!slot.tradeAcquiredAt && Date.now() - slot.tradeAcquiredAt.getTime() < TRADE_EXEMPTION_WINDOW_MS;
+  const waiverExposed = !recentlyClaimed && !recentlyTraded && slot.player.careerNhlGp >= settings.waiverGpThreshold;
 
   await prisma.$transaction([
     prisma.rosterSlot.update({ where: { id: slot.id }, data: { effectiveTo: new Date() } }),

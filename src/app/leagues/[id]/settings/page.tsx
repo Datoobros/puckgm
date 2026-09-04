@@ -157,6 +157,43 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         </div>
 
         <div>
+          <SectionLabel>Trades</SectionLabel>
+          <Card>
+            <label className="block">
+              <span className="text-xs text-zinc-500">Who can veto a trade</span>
+              <select
+                name="tradeVetoMode"
+                defaultValue={settings.tradeVetoMode}
+                className="mt-1 block w-full max-w-xs rounded border border-black/10 bg-white px-2 py-1.5 text-sm text-black dark:border-white/15"
+              >
+                <option value="COMMISSIONER">Commissioner only</option>
+                <option value="VOTE">League vote (majority of managers not in the trade)</option>
+              </select>
+            </label>
+          </Card>
+        </div>
+
+        <div>
+          <SectionLabel>Trade deadline</SectionLabel>
+          <p className="mb-3 text-xs text-zinc-500">
+            DESIGN.md §2.10 treats this as an &quot;anytime&quot; setting, not a between-seasons
+            one — the commissioner can move it whenever. It only blocks new proposals after the
+            date; trades already in flight aren&apos;t affected.
+          </p>
+          <Card>
+            <label className="block max-w-xs">
+              <span className="text-xs text-zinc-500">No new trades after (blank = no deadline)</span>
+              <input
+                name="tradeDeadline"
+                type="date"
+                defaultValue={settings.tradeDeadline ?? ""}
+                className="mt-1 w-full rounded border border-black/10 bg-white px-2 py-1.5 text-sm text-black dark:border-white/15"
+              />
+            </label>
+          </Card>
+        </div>
+
+        <div>
           <SectionLabel>Scoring</SectionLabel>
           <Card className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {EDITABLE_SCORING_FIELDS.map(({ key, label }) => (

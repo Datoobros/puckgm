@@ -128,6 +128,8 @@ model Team {
   draftPicksOrig    DraftPick[]        @relation("OriginalOwner")
   tradeItemsFrom    TradeItem[]        @relation("FromTeam")
   tradeItemsTo      TradeItem[]        @relation("ToTeam")
+  tradesProposed    Trade[]            @relation("TradeProposedBy")
+  tradeVetoesCast   TradeVeto[]
   faabBudgets       FaabBudget[]
   faBids            FaBid[]
   waiverClaims      WaiverClaim[]
@@ -166,6 +168,10 @@ model RosterSlot {
   // sendToFarm exempt a just-claimed player from immediately re-triggering
   // waiverExposed if his new team sends him right back down.
   waiverClaimedAt DateTime?
+  // Same exemption idea as waiverClaimedAt, but for a trade (src/lib/trades/
+  // mutations.ts) — 24h, not 48h, and tracked separately since the two
+  // acquisition paths have different grace windows.
+  tradeAcquiredAt DateTime?
 
   @@index([teamId, slotType])
   @@index([playerId])
@@ -204,19 +210,44 @@ enum TradeState {
   VETOED
   PROCESSED
   CANCELLED
+  DECLINED
 }
 
 model Trade {
-  id           String     @id @default(cuid())
-  leagueId     String
-  league       League     @relation(fields: [leagueId], references: [id])
-  proposedAt   DateTime   @default(now())
-  reviewEndsAt DateTime
-  state        TradeState @default(PROPOSED)
+  id               String     @id @default(cuid())
+  leagueId         String
+  league           League     @relation(fields: [leagueId], references: [id])
+  proposedAt       DateTime   @default(now())
+  // Who initiated — the counterparty is derived at runtime from the distinct
+  // team ids on this trade's TradeItems (src/lib/trades/mutations.ts scopes
+  // this to exactly two teams for now, though the schema doesn't enforce it).
+  proposedByTeamId String
+  proposedByTeam   Team       @relation("TradeProposedBy", fields: [proposedByTeamId], references: [id])
+  // Set only once the counterparty accepts — null while still PROPOSED.
+  respondedAt      DateTime?
+  // The 24h review window's end; null until respondedAt is set.
+  reviewEndsAt     DateTime?
+  state            TradeState @default(PROPOSED)
 
   items TradeItem[]
+  vetoes TradeVeto[]
 
   @@index([leagueId, state])
+}
+
+// One row per team that has cast a veto vote on a trade — works for both
+// governance models (LeagueSettings.tradeVetoMode): a single row from the
+// commissioner's team is decisive in COMMISSIONER mode; rows are counted
+// against the eligible-voter majority in VOTE mode. See castTradeVeto.
+model TradeVeto {
+  id        String   @id @default(cuid())
+  tradeId   String
+  trade     Trade    @relation(fields: [tradeId], references: [id])
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([tradeId, teamId])
 }
 
 enum TradeItemType {

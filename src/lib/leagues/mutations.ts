@@ -39,6 +39,13 @@ export interface LeagueSettings {
   faabBudget: number; // starting/reset amount each season
   faabMinBid: number;
   faabMaxBid: number | null; // null = no cap beyond remaining budget
+  // Trades (DESIGN.md §2.11, src/lib/trades/mutations.ts). tradeVetoMode is
+  // "between seasons, by vote" tier (changing governance mid-season feels
+  // like changing the rules mid-game); tradeDeadline is DESIGN.md §2.10's
+  // "anytime" tier — a commissioner can move it whenever, it just blocks new
+  // proposals after that date, it doesn't touch trades already in flight.
+  tradeVetoMode: "COMMISSIONER" | "VOTE";
+  tradeDeadline: string | null; // ISO date, null = no deadline
 }
 
 export interface CreateLeagueInput {
@@ -65,6 +72,8 @@ export async function createLeague(input: CreateLeagueInput): Promise<{ leagueId
     faabBudget: 100,
     faabMinBid: 1,
     faabMaxBid: null,
+    tradeVetoMode: "COMMISSIONER",
+    tradeDeadline: null,
   };
 
   const league = await prisma.league.create({
@@ -160,6 +169,8 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   // FaBid/FaabBudget (added with FAAB) reference Team the same way
   // RosterSlot does — same shape of bug as the Matchup/LeagueSettingsLog
   // ones found earlier, fixed proactively here instead of waiting to hit it.
+  // TradeVeto/TradeItem/Trade/DraftPick (added with trades) are the same
+  // shape again — TradeItem/TradeVeto reference Trade, so they go first.
   await prisma.$transaction([
     prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
     prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
@@ -167,6 +178,10 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
     prisma.transactionLog.deleteMany({ where: { leagueId } }),
     prisma.faBid.deleteMany({ where: { team: { leagueId } } }),
     prisma.faabBudget.deleteMany({ where: { team: { leagueId } } }),
+    prisma.tradeVeto.deleteMany({ where: { trade: { leagueId } } }),
+    prisma.tradeItem.deleteMany({ where: { trade: { leagueId } } }),
+    prisma.trade.deleteMany({ where: { leagueId } }),
+    prisma.draftPick.deleteMany({ where: { leagueId } }),
     prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } }),
     prisma.team.deleteMany({ where: { leagueId } }),
     prisma.league.delete({ where: { id: leagueId } }),
@@ -185,6 +200,8 @@ export interface UpdateLeagueSettingsInput {
   faabBudget: number;
   faabMinBid: number;
   faabMaxBid: number | null;
+  tradeVetoMode: "COMMISSIONER" | "VOTE";
+  tradeDeadline: string | null;
 }
 
 // DESIGN.md §2.10: farm/IR slots, scoring values, and the waiver GP
@@ -219,6 +236,12 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
   if (input.faabMaxBid !== null && (!Number.isInteger(input.faabMaxBid) || input.faabMaxBid < input.faabMinBid)) {
     throw new Error("faabMaxBid must be a whole number no smaller than faabMinBid, or left unset.");
   }
+  if (input.tradeVetoMode !== "COMMISSIONER" && input.tradeVetoMode !== "VOTE") {
+    throw new Error("tradeVetoMode must be COMMISSIONER or VOTE.");
+  }
+  if (input.tradeDeadline !== null && Number.isNaN(Date.parse(input.tradeDeadline))) {
+    throw new Error("tradeDeadline must be a valid date, or left unset.");
+  }
   // scoringConfig is a partial update merged onto the current config below
   // (STARTER_SCORING itself leaves giveaways/takeaways unset) — only
   // validate fields the caller actually supplied, not every editable field.
@@ -241,6 +264,8 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
     faabBudget: input.faabBudget,
     faabMinBid: input.faabMinBid,
     faabMaxBid: input.faabMaxBid,
+    tradeVetoMode: input.tradeVetoMode,
+    tradeDeadline: input.tradeDeadline,
   };
 
   const logs: Prisma.LeagueSettingsLogCreateManyInput[] = [];
@@ -273,6 +298,24 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
       field: "faabMaxBid",
       oldValue: current.faabMaxBid ?? Prisma.JsonNull,
       newValue: next.faabMaxBid ?? Prisma.JsonNull,
+      changedBy: input.callerUserId,
+    });
+  }
+  if (current.tradeVetoMode !== next.tradeVetoMode) {
+    logs.push({
+      leagueId: input.leagueId,
+      field: "tradeVetoMode",
+      oldValue: current.tradeVetoMode,
+      newValue: next.tradeVetoMode,
+      changedBy: input.callerUserId,
+    });
+  }
+  if (current.tradeDeadline !== next.tradeDeadline) {
+    logs.push({
+      leagueId: input.leagueId,
+      field: "tradeDeadline",
+      oldValue: current.tradeDeadline ?? Prisma.JsonNull,
+      newValue: next.tradeDeadline ?? Prisma.JsonNull,
       changedBy: input.callerUserId,
     });
   }

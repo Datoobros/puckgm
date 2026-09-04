@@ -348,6 +348,69 @@ player acquisition path, distinct from demotion waiver claims (which only ever a
   `// TEMP:` hardcoded-userId technique, reverted before commit
   (`grep -rn "TEMP:" src/` clean).
 
+**Trades** (DESIGN.md §2.11, `src/lib/trades/mutations.ts`) — two-team only for this pass
+(`TradeItem`'s per-item `fromTeamId`/`toTeamId` already generalizes to more, but the
+proposer UI and validation don't yet).
+- **Flow: propose → accept/decline → 24h review → process.** Proposing moves nothing — the
+  counterparty must explicitly accept before a fixed 24-hour review window even starts.
+  During that window the league's chosen governance model can veto it immediately, without
+  waiting for the window to end.
+- **Veto governance is a per-league setting** (`tradeVetoMode`): `COMMISSIONER` (matches
+  every other governance action already in this app) or `VOTE` (any manager **not** party to
+  the trade; a **strict majority** of those eligible voters vetoes it — confirmed with the
+  user that the two trading managers never get to vote on their own trade).
+- **Trade deadline is a per-league setting** (`tradeDeadline`) — DESIGN.md §2.10's "anytime"
+  tier, not "between seasons": the commissioner can move it whenever, it just blocks *new*
+  proposals after that date and doesn't touch trades already in flight. Called out with its
+  own framing on the settings page rather than lumped in with the between-seasons warning
+  the rest of the form carries.
+- **Roster room is enforced, not bypassed**, unlike every other acquisition path in this app
+  (waiver claims, FAAB) — an explicit user decision. If either side lacks room for what it's
+  receiving when the window elapses, **the trade stays `UNDER_REVIEW` and is retried on every
+  later cron run** rather than failing outright. Either trading manager, or the commissioner,
+  can cancel a stuck trade at any time (`cancelTrade`) as the escape hatch — verified this
+  actually un-sticks a trade in `scripts/trades-check.ts`.
+- **The commissioner can force an already-accepted trade through immediately**
+  (`forceProcessTrade`) — skips both the remaining review time and the room check (same
+  overflow-allowed treatment as a waiver-claim/FAAB award), but only once the counterparty
+  has actually accepted (`UNDER_REVIEW`, never a still-`PROPOSED` trade nobody agreed to).
+- **A traded player keeps his current roster tier** (Active/Farm/IR) on arrival, checked
+  against the matching cap on the receiving side — the room check (`wouldFitAfterTrade`) is
+  the first mutation in this app to compute a net capacity delta across more than one team
+  and more than one item at once; every prior cap check was single-team, single-item.
+- **No re-exposure penalty within 24h of a trade** — same "just acquired, don't
+  double-jeopardy him" logic already built for waiver-claim/FAAB awards
+  (`RosterSlot.waiverClaimedAt`, 48h), now a second independent field/window
+  (`tradeAcquiredAt`, 24h) checked by the same `sendToFarm` exemption logic.
+- **Picks are tradeable now**, even though no league has any real `DraftPick` rows yet (no
+  draft feature exists) — confirmed with the user to build it anyway. The mechanism is real
+  (verified against a synthetic `DraftPick` fixture in `scripts/trades-check.ts`) but has
+  nothing to select in the real UI until the draft ships. Being honest about that rather than
+  claiming this is "tested against real picks."
+- **`ORPHAN_FROZEN` is checked but not actually reachable yet** — `proposeTrade` blocks a
+  trade involving an orphaned team per DESIGN.md §2.11, but nothing anywhere in this app ever
+  sets a team to that state (confirmed zero references before this feature). The guard is
+  real code, just inert until orphan-team detection itself gets built.
+- `getAvailableBudget` (`src/lib/faab/mutations.ts`) now also subtracts FAAB promised away as
+  the sending side of a team's own open trades, on top of pending `FaBid` amounts — otherwise
+  a team could commit the same budget to a bid and a trade simultaneously. Verified in
+  `scripts/trades-check.ts`.
+- New page `/leagues/[id]/trades`: a propose-trade builder (pick a counterparty, two columns
+  of checkboxes for players/picks/FAAB built from `getTradeableAssets`), "needs your
+  response," "waiting on a response," "pending" (with Cancel/Veto/Force-through-now as
+  applicable), and a resolved-trades history list.
+- Verified end-to-end in a disposable 3-team test league (`scripts/trades-check.ts`):
+  decline is terminal and moves nothing; a single non-participant veto in a 3-team `VOTE`
+  league is already a majority and resolves instantly with no cron; a full trade (player +
+  pick + FAAB) processes cleanly with slot types preserved and `tradeAcquiredAt` stamped; a
+  room conflict stays pending instead of failing and completes once room opens up; cancel
+  un-sticks a pending trade; commissioner force-process bypasses a full roster; the
+  waiver-exemption window holds on a freshly-traded player; and FAAB double-commitment
+  across a bid and a trade is blocked. Also checked the full UI flow in a real browser
+  (propose as one manager, accept as the other via the `// TEMP:` technique, force-process as
+  commissioner, settings page's new Trades card) — reverted before commit
+  (`grep -rn "TEMP:" src/` clean).
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
@@ -359,8 +422,9 @@ player acquisition path, distinct from demotion waiver claims (which only ever a
 ## Known gaps, deliberately not built (ask before building)
 
 - No playoff bracket — matchups/standings are regular-season only for now (see above).
-- No draft or trades. FAAB/"the wire" is now built but per-league opt-in, default off (see
-  below) — a league that hasn't turned it on still uses free instant add exactly as before.
+- No draft. FAAB/"the wire" and trades are both now built — FAAB is per-league opt-in,
+  default off (a league that hasn't turned it on still uses free instant add exactly as
+  before); trades are always on (see below).
 - Watch List, schedule/"next game" column, stat projections — still no backing data or
   feature built for any of these. (Injury/IR status is now real, via ESPN — see above; this
   line used to include it.)
