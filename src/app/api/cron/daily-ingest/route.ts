@@ -3,6 +3,7 @@ import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
 import { syncTeamsRosters } from "@/lib/players/sync";
 import { syncInjuryStatuses } from "@/lib/players/injuries";
 import { processExpiredWaivers } from "@/lib/waivers/mutations";
+import { processFaabBids } from "@/lib/faab/mutations";
 
 // Vercel Hobby allows up to 60s per serverless function (default is much
 // lower). The first production run of this route did a full 32-team roster
@@ -37,6 +38,7 @@ export async function GET(request: Request) {
   // hours" (the demotion-waiver claim window) actually gets checked and
   // resolved — see src/lib/waivers/mutations.ts's file header.
   const waiverResults = await processExpiredWaivers();
+  const faabResults = await processFaabBids();
 
   const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
   const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
@@ -47,5 +49,6 @@ export async function GET(request: Request) {
     rosterSync: { teams: ingestResult.teamsInvolved, synced: rosterSynced, failed: rosterFailed },
     injurySync: injuryResult,
     waivers: waiverResults,
+    faab: faabResults,
   });
 }

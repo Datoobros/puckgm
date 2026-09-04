@@ -103,6 +103,52 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         </div>
 
         <div>
+          <SectionLabel>FAAB / the wire</SectionLabel>
+          <Card>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="faabEnabled" defaultChecked={settings.faabEnabled} className="h-4 w-4" />
+              Use FAAB for free-agent pickups
+            </label>
+            <p className="mt-1 text-xs text-zinc-500">
+              Off by default — with no draft feature yet, free instant Add is how a new league
+              builds its roster. Turn this on once your league wants pickups to cost a bid instead.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <label className="block">
+                <span className="text-xs text-zinc-500">Budget (per season)</span>
+                <input
+                  name="faabBudget"
+                  type="number"
+                  min={0}
+                  defaultValue={settings.faabBudget}
+                  className="mt-1 w-full rounded border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-zinc-500">Minimum bid</span>
+                <input
+                  name="faabMinBid"
+                  type="number"
+                  min={0}
+                  defaultValue={settings.faabMinBid}
+                  className="mt-1 w-full rounded border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-zinc-500">Maximum bid (blank = no cap)</span>
+                <input
+                  name="faabMaxBid"
+                  type="number"
+                  min={0}
+                  defaultValue={settings.faabMaxBid ?? ""}
+                  className="mt-1 w-full rounded border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
+                />
+              </label>
+            </div>
+          </Card>
+        </div>
+
+        <div>
           <SectionLabel>Scoring</SectionLabel>
           <Card className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {EDITABLE_SCORING_FIELDS.map(({ key, label }) => (

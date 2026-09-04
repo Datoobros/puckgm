@@ -69,6 +69,11 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
     throw new Error("You don't manage this team.");
   }
 
+  const settingsForFaab = team.league.settingsJson as unknown as LeagueSettings;
+  if (settingsForFaab.faabEnabled) {
+    throw new Error("This league uses FAAB — bid on the wire from the Players page instead.");
+  }
+
   const alreadyRostered = await prisma.rosterSlot.findFirst({
     where: {
       playerId: input.playerId,

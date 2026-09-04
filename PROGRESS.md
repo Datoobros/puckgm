@@ -299,6 +299,55 @@ until now.
   established `// TEMP:` hardcoded-userId technique to get past `auth.protect()` locally,
   reverted before commit (`grep -rn "TEMP:" src/` clean).
 
+**FAAB / the wire** (DESIGN.md §2.7/§2.9, `src/lib/faab/mutations.ts`) — the other unowned-
+player acquisition path, distinct from demotion waiver claims (which only ever apply to an
+*already-rostered* 80+ GP player someone just demoted).
+- **Per-league opt-in, default off** (`LeagueSettings.faabEnabled`) — puckGM still has no
+  draft, so the existing instant, free `+ Add` (`addPlayerToRoster`) is the only way a new
+  league builds a roster at all. Every existing league keeps working exactly as before;
+  nothing changes until a commissioner deliberately turns FAAB on for their league
+  (`/leagues/[id]/settings`, new "FAAB / the wire" card). Turning it on blocks the instant
+  path — `addPlayerToRoster` now throws if `faabEnabled` is true, pointing the manager at
+  bidding instead. Dropping a player stays free/instant regardless, per DESIGN.md §2.5/§2.8
+  — FAAB only ever gates the *pickup*, never the disposal.
+- **Minimum and maximum bid are both per-league settings** (`faabMinBid`/`faabMaxBid`,
+  `faabMaxBid` nullable = no cap beyond remaining budget) — this replaces DESIGN.md's
+  original "$0 bids allowed" line, changed by explicit user direction earlier this session
+  so a pickup always costs something real and no single bid can blow a team's whole budget
+  unless the league chooses to allow that.
+- **No schema migration needed** — `FaabBudget` and `FaBid` existed in the schema, unused,
+  since the initial migration.
+- Budget is only ever debited from `FaabBudget.remaining` at **award** time, never escrowed
+  at submission. What actually gates a new bid is `getAvailableBudget` (`remaining` minus
+  the sum of that team's other PENDING bids) — stops a manager placing simultaneous bids
+  that would jointly exceed their budget if more than one won the same night.
+- **Resolution is cron-driven**, piggybacked on the same daily route as
+  `processExpiredWaivers` (Vercel Hobby's one-cron-trigger/day limit — same reasoning
+  already documented for waivers). A bid has no expiry window like a waiver claim's 48h; it
+  simply waits for the next daily tick, whenever that happens to be.
+- **Ties broken by the current waiver priority order** (`getOrInitWaiverPriority`, reused as
+  the one shared "priority" concept in this app) — but a FAAB win does **not** rotate that
+  queue the way a waiver-claim win does. It's a read-only tie-break here, not the same
+  mutating mechanic.
+- **Award bypasses the roster cap**, same overflow-allowed philosophy as a waiver-claim
+  award — confirmed with the user, consistent with this app's existing un-auto-enforced
+  IR-48h-deadline pattern. Verified in `scripts/faab-check.ts`: a winning bid landed on a
+  team's ACTIVE roster that was already at the 8-player league cap, taking it to 9.
+- **Real regression found and fixed while verifying**: `deleteLeague` didn't account for
+  `FaBid`/`FaabBudget` rows (they reference `Team` with no cascade, same shape as the
+  Matchup/LeagueSettingsLog bugs found earlier this project) — deleting a league with any
+  FAAB history would have hit a foreign-key violation. Fixed proactively by adding both to
+  the teardown order before this ever hit a real league.
+- Verified end-to-end in a disposable test league (`scripts/faab-check.ts`): instant add
+  still works with FAAB off (no regression), throws once enabled, min/max bid enforcement,
+  available-budget-blocks-overcommitment, higher bid wins a contested player, loser's
+  budget untouched, cancel-before-processing needs no refund logic (nothing was ever
+  debited), and the roster-cap-overflow case above. Also checked both new UI surfaces in a
+  real browser (settings page FAAB card, Players page bid controls/available-budget
+  strip/pending-bids list) against a second disposable league, using the established
+  `// TEMP:` hardcoded-userId technique, reverted before commit
+  (`grep -rn "TEMP:" src/` clean).
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
@@ -310,8 +359,8 @@ until now.
 ## Known gaps, deliberately not built (ask before building)
 
 - No playoff bracket — matchups/standings are regular-season only for now (see above).
-- No draft, trades, or FAAB/"the wire" (picking up an *unowned* player) — distinct from
-  demotion waiver claims, which are now fully built (see below).
+- No draft or trades. FAAB/"the wire" is now built but per-league opt-in, default off (see
+  below) — a league that hasn't turned it on still uses free instant add exactly as before.
 - Watch List, schedule/"next game" column, stat projections — still no backing data or
   feature built for any of these. (Injury/IR status is now real, via ESPN — see above; this
   line used to include it.)

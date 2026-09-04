@@ -3,13 +3,19 @@
 import { useMemo, useState } from "react";
 import { NHL_TEAM_ABBREVS } from "@/lib/nhl/client";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
-import { addPlayerAction } from "./actions";
+import { addPlayerAction, submitFaBidAction } from "./actions";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
 
 interface RosterContext {
   leagueId: string;
   teamId: string;
   isMyTeam: boolean;
+}
+
+interface FaabContext {
+  minBid: number;
+  maxBid: number | null;
+  pendingPlayerIds: string[];
 }
 
 type PositionFilter = "SKATERS" | "F" | "D" | "G";
@@ -34,10 +40,12 @@ export function PlayerStatsTable({
   rows,
   rosterContext,
   ownership,
+  faab = null,
 }: {
   rows: PlayerStatsRow[];
   rosterContext: RosterContext | null;
   ownership: Record<string, string>;
+  faab?: FaabContext | null;
 }) {
   const [position, setPosition] = useState<PositionFilter>("SKATERS");
   const [proTeam, setProTeam] = useState("ALL");
@@ -184,7 +192,39 @@ export function PlayerStatsTable({
                   <td className="py-2 text-right">
                     {ownership[r.id] ? (
                       <span className="text-xs text-zinc-500">{ownership[r.id]}</span>
-                    ) : rosterContext.isMyTeam ? (
+                    ) : !rosterContext.isMyTeam ? (
+                      <span className="text-xs text-zinc-500">—</span>
+                    ) : faab ? (
+                      faab.pendingPlayerIds.includes(r.id) ? (
+                        <span className="text-xs text-zinc-500">Bid pending</span>
+                      ) : (
+                        <form
+                          action={submitFaBidAction.bind(null, rosterContext.leagueId, r.id)}
+                          className="flex items-center justify-end gap-1"
+                        >
+                          <input
+                            name="amount"
+                            type="number"
+                            min={faab.minBid}
+                            max={faab.maxBid ?? undefined}
+                            defaultValue={faab.minBid}
+                            required
+                            className="w-14 rounded border border-black/10 bg-white px-1 py-0.5 text-xs text-black dark:border-white/15"
+                          />
+                          <select
+                            name="targetSlot"
+                            defaultValue="ACTIVE"
+                            className="rounded border border-black/10 bg-white px-1 py-0.5 text-xs text-black dark:border-white/15"
+                          >
+                            <option value="ACTIVE">Active</option>
+                            <option value="FARM">Farm</option>
+                          </select>
+                          <button type="submit" className="text-xs underline">
+                            Bid
+                          </button>
+                        </form>
+                      )
+                    ) : (
                       <form
                         action={addPlayerAction.bind(
                           null,
@@ -197,8 +237,6 @@ export function PlayerStatsTable({
                           Add
                         </button>
                       </form>
-                    ) : (
-                      <span className="text-xs text-zinc-500">—</span>
                     )}
                   </td>
                 )}

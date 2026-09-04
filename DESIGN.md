@@ -161,7 +161,10 @@ special "swap" transaction.
 > a hot goalie in November costs you the deadline pickup in March.
 
 - **Daily processing** (~4am ET) — hockey locks daily; weekly is far too slow
-- $0 bids allowed, so unclaimed players stay effectively free
+- **Minimum and maximum bid are both per-league settings** (not $0-bids-allowed as originally
+  drafted — changed by explicit user direction so picking up a free agent always costs
+  something real, and so no single pickup can blow a team's entire budget without the
+  league choosing to allow that)
 - Budget resets each season
 - **FAAB is tradeable** ("my 2029 3rd for $30 of your budget")
 
@@ -194,7 +197,7 @@ change mid-season.**
 | Tier | Settings | Who / when |
 |---|---|---|
 | **Locked at creation** | League size, scoring format, **active roster composition** | Never changes |
-| **Between seasons, by vote** | Farm slots, IR slots, roster size, scoring values, 80-GP threshold, FAAB budget | League vote, offseason only |
+| **Between seasons, by vote** | Farm slots, IR slots, roster size, scoring values, 80-GP threshold, FAAB budget, **FAAB minimum bid, FAAB maximum bid** | League vote, offseason only |
 | **Anytime** | Trade deadline date, FAAB processing time, cosmetics | LM alone |
 
 > **Why:** if a league votes in year 3 to cut farm slots 8 → 6, it retroactively destroys

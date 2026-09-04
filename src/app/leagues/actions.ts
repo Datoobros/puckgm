@@ -88,6 +88,8 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
     scoringConfig[key] = Number(formData.get(`scoring_${key}`) ?? 0);
   }
 
+  const faabMaxBidRaw = String(formData.get("faabMaxBid") ?? "").trim();
+
   await updateLeagueSettings({
     leagueId,
     callerUserId: userId,
@@ -96,6 +98,10 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
     waiverGpThreshold: num("waiverGpThreshold"),
     callupsPerWeek: num("callupsPerWeek"),
     scoringConfig,
+    faabEnabled: formData.get("faabEnabled") === "on",
+    faabBudget: num("faabBudget"),
+    faabMinBid: num("faabMinBid"),
+    faabMaxBid: faabMaxBidRaw === "" ? null : Math.max(0, Number(faabMaxBidRaw) | 0),
   });
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/settings`);

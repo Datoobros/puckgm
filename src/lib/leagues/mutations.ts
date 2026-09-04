@@ -4,7 +4,7 @@
 // throughout the ingestion code: keep the actual logic importable and
 // scriptable, keep the framework glue thin.
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { STARTER_SCORING, EDITABLE_SCORING_FIELDS, type ScoringConfig } from "@/lib/scoring/engine";
 
@@ -31,6 +31,14 @@ export interface LeagueSettings {
   waiverGpThreshold: number; // DESIGN.md §2.3 — 80 GP default
   callupsPerWeek: number;
   scoringConfig: typeof STARTER_SCORING;
+  // FAAB / "the wire" (DESIGN.md §2.7/§2.9, src/lib/faab/mutations.ts) — a
+  // per-league opt-in, default off. There's no draft yet, so free instant
+  // add (addPlayerToRoster) has to keep working for leagues that don't turn
+  // this on; enabling it blocks that path and requires a bid instead.
+  faabEnabled: boolean;
+  faabBudget: number; // starting/reset amount each season
+  faabMinBid: number;
+  faabMaxBid: number | null; // null = no cap beyond remaining budget
 }
 
 export interface CreateLeagueInput {
@@ -53,6 +61,10 @@ export async function createLeague(input: CreateLeagueInput): Promise<{ leagueId
     waiverGpThreshold: 80,
     callupsPerWeek: 2,
     scoringConfig: STARTER_SCORING,
+    faabEnabled: false,
+    faabBudget: 100,
+    faabMinBid: 1,
+    faabMaxBid: null,
   };
 
   const league = await prisma.league.create({
@@ -145,11 +157,16 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   // session — every child here has a real FK constraint back to League or
   // Team with no cascade configured, so children go first. Matchup
   // references both MatchupPeriod and Team, so it has to go before either.
+  // FaBid/FaabBudget (added with FAAB) reference Team the same way
+  // RosterSlot does — same shape of bug as the Matchup/LeagueSettingsLog
+  // ones found earlier, fixed proactively here instead of waiting to hit it.
   await prisma.$transaction([
     prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
     prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
     prisma.leagueSettingsLog.deleteMany({ where: { leagueId } }),
     prisma.transactionLog.deleteMany({ where: { leagueId } }),
+    prisma.faBid.deleteMany({ where: { team: { leagueId } } }),
+    prisma.faabBudget.deleteMany({ where: { team: { leagueId } } }),
     prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } }),
     prisma.team.deleteMany({ where: { leagueId } }),
     prisma.league.delete({ where: { id: leagueId } }),
@@ -164,6 +181,10 @@ export interface UpdateLeagueSettingsInput {
   waiverGpThreshold: number;
   callupsPerWeek: number;
   scoringConfig: ScoringConfig;
+  faabEnabled: boolean;
+  faabBudget: number;
+  faabMinBid: number;
+  faabMaxBid: number | null;
 }
 
 // DESIGN.md §2.10: farm/IR slots, scoring values, and the waiver GP
@@ -188,10 +209,15 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
     irSlots: input.irSlots,
     waiverGpThreshold: input.waiverGpThreshold,
     callupsPerWeek: input.callupsPerWeek,
+    faabBudget: input.faabBudget,
+    faabMinBid: input.faabMinBid,
   })) {
     if (!Number.isInteger(val) || val < 0) {
       throw new Error(`${key} must be a non-negative whole number.`);
     }
+  }
+  if (input.faabMaxBid !== null && (!Number.isInteger(input.faabMaxBid) || input.faabMaxBid < input.faabMinBid)) {
+    throw new Error("faabMaxBid must be a whole number no smaller than faabMinBid, or left unset.");
   }
   // scoringConfig is a partial update merged onto the current config below
   // (STARTER_SCORING itself leaves giveaways/takeaways unset) — only
@@ -211,6 +237,10 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
     waiverGpThreshold: input.waiverGpThreshold,
     callupsPerWeek: input.callupsPerWeek,
     scoringConfig: { ...current.scoringConfig, ...input.scoringConfig },
+    faabEnabled: input.faabEnabled,
+    faabBudget: input.faabBudget,
+    faabMinBid: input.faabMinBid,
+    faabMaxBid: input.faabMaxBid,
   };
 
   const logs: Prisma.LeagueSettingsLogCreateManyInput[] = [];
@@ -223,8 +253,28 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
   trackScalar("irSlots", current.irSlots, next.irSlots);
   trackScalar("waiverGpThreshold", current.waiverGpThreshold, next.waiverGpThreshold);
   trackScalar("callupsPerWeek", current.callupsPerWeek, next.callupsPerWeek);
+  trackScalar("faabBudget", current.faabBudget, next.faabBudget);
+  trackScalar("faabMinBid", current.faabMinBid, next.faabMinBid);
   for (const { key } of EDITABLE_SCORING_FIELDS) {
     trackScalar(`scoringConfig.${key}`, current.scoringConfig[key] ?? 0, next.scoringConfig[key] ?? 0);
+  }
+  if (current.faabEnabled !== next.faabEnabled) {
+    logs.push({
+      leagueId: input.leagueId,
+      field: "faabEnabled",
+      oldValue: current.faabEnabled,
+      newValue: next.faabEnabled,
+      changedBy: input.callerUserId,
+    });
+  }
+  if (current.faabMaxBid !== next.faabMaxBid) {
+    logs.push({
+      leagueId: input.leagueId,
+      field: "faabMaxBid",
+      oldValue: current.faabMaxBid ?? Prisma.JsonNull,
+      newValue: next.faabMaxBid ?? Prisma.JsonNull,
+      changedBy: input.callerUserId,
+    });
   }
 
   await prisma.$transaction([

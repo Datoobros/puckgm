@@ -4,7 +4,10 @@ import { prisma } from "@/lib/db";
 import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
+import { getAvailableBudget, getMyPendingBids } from "@/lib/faab/mutations";
+import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 import { PlayerStatsTable } from "./PlayerStatsTable";
+import { cancelFaBidAction } from "./actions";
 
 // Displayed pool is capped rather than shipping every player to the client
 // on every load — sort/filter/pagination all happen client-side against
@@ -45,6 +48,14 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
   const ownership = Object.fromEntries(ownershipMap);
   const rosterContext = myTeam ? { leagueId, teamId: myTeam.id, isMyTeam: true } : null;
 
+  const [availableFaab, myPendingBids] =
+    myTeam && settings.faabEnabled
+      ? await Promise.all([
+          getAvailableBudget(myTeam.id, CURRENT_SCHEDULE_SEASON, settings.faabBudget),
+          getMyPendingBids(leagueId, myTeam.id),
+        ])
+      : [null, []];
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
@@ -74,8 +85,45 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
         </button>
       </form>
 
+      {settings.faabEnabled && myTeam && (
+        <div className="mt-4 rounded-lg border border-black/10 bg-black/[.02] p-4 text-sm dark:border-white/10 dark:bg-white/[.03]">
+          <p>
+            FAAB available: <span className="font-medium">${availableFaab}</span>
+            {settings.faabMaxBid !== null && (
+              <span className="text-zinc-500"> · max bid ${settings.faabMaxBid}</span>
+            )}
+            <span className="text-zinc-500"> · min bid ${settings.faabMinBid}</span>
+          </p>
+          {myPendingBids.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {myPendingBids.map((bid) => (
+                <li key={bid.id} className="flex items-center justify-between text-xs text-zinc-500">
+                  <span>
+                    ${bid.amount} on {bid.playerName} → {bid.targetSlot === "ACTIVE" ? "Active" : "Farm"}
+                  </span>
+                  <form action={cancelFaBidAction.bind(null, leagueId, bid.id)}>
+                    <button type="submit" className="underline hover:text-foreground">
+                      Cancel
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="mt-6">
-        <PlayerStatsTable rows={rows} rosterContext={rosterContext} ownership={ownership} />
+        <PlayerStatsTable
+          rows={rows}
+          rosterContext={rosterContext}
+          ownership={ownership}
+          faab={
+            settings.faabEnabled
+              ? { minBid: settings.faabMinBid, maxBid: settings.faabMaxBid, pendingPlayerIds: myPendingBids.map((b) => b.playerId) }
+              : null
+          }
+        />
       </div>
     </div>
   );
