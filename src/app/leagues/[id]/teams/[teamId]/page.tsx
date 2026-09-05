@@ -141,12 +141,20 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           </p>
         </div>
         {isOwner && (
-          <Link
-            href={`/leagues/${leagueId}/players`}
-            className="rounded-full border border-border px-4 py-1.5 text-sm font-medium hover:bg-surface-tint"
-          >
-            + Add
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/leagues/${leagueId}/trades`}
+              className="rounded-full bg-navy px-4 py-1.5 text-sm font-medium text-navy-foreground hover:opacity-90"
+            >
+              Propose Trade
+            </Link>
+            <Link
+              href={`/leagues/${leagueId}/players`}
+              className="rounded-full border border-border px-4 py-1.5 text-sm font-medium hover:bg-surface-tint"
+            >
+              + Add
+            </Link>
+          </div>
         )}
       </div>
 
