@@ -5,6 +5,7 @@ import { syncInjuryStatuses } from "@/lib/players/injuries";
 import { processExpiredWaivers } from "@/lib/waivers/mutations";
 import { processFaabBids } from "@/lib/faab/mutations";
 import { processDueTrades } from "@/lib/trades/mutations";
+import { processDuePlayoffs } from "@/lib/matchups/playoffs";
 
 // Vercel Hobby allows up to 60s per serverless function (default is much
 // lower). The first production run of this route did a full 32-team roster
@@ -41,6 +42,7 @@ export async function GET(request: Request) {
   const waiverResults = await processExpiredWaivers();
   const faabResults = await processFaabBids();
   const tradeResults = await processDueTrades();
+  await processDuePlayoffs();
 
   const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
   const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);

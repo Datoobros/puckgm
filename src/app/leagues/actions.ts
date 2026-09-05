@@ -69,11 +69,12 @@ export async function generateScheduleAction(leagueId: string, formData: FormDat
   const season = Number(formData.get("season") ?? 0);
   const startDate = String(formData.get("startDate") ?? "");
   const weekCount = Number(formData.get("weekCount") ?? 0);
+  const playoffTeams = Number(formData.get("playoffTeams") ?? 0);
   if (!season || !startDate || !weekCount) {
     throw new Error("Season, start date, and week count are required.");
   }
 
-  await generateSchedule({ leagueId, season, startDate, weekCount, callerUserId: userId });
+  await generateSchedule({ leagueId, season, startDate, weekCount, playoffTeams, callerUserId: userId });
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/standings`);
   revalidatePath(`/leagues/${leagueId}/scoreboard`);

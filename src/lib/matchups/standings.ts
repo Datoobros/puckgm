@@ -9,6 +9,20 @@
 import { prisma } from "@/lib/db";
 import { computeFantasyPoints, type ScoringConfig } from "@/lib/scoring/engine";
 
+/** "Championship" / "Semifinal" / "Quarterfinal" for the last three rounds
+ * of a bracket, else a plain "Round N" (unreachable in practice — brackets
+ * are capped at 8 teams / 3 rounds in src/lib/matchups/playoffs.ts, kept
+ * here for safety). roundIndex is 0-based from the start of the bracket.
+ * Lives here rather than in playoffs.ts to avoid a circular import — that
+ * file already imports getStandings/getTeamScoreForPeriod from here. */
+export function playoffRoundLabel(totalRounds: number, roundIndex: number): string {
+  const fromEnd = totalRounds - roundIndex;
+  if (fromEnd === 1) return "Championship";
+  if (fromEnd === 2) return "Semifinal";
+  if (fromEnd === 3) return "Quarterfinal";
+  return `Round ${roundIndex + 1}`;
+}
+
 export async function getTeamScoreForPeriod(
   teamId: string,
   start: Date,
@@ -47,7 +61,7 @@ export async function getStandings(
 ): Promise<StandingsRow[]> {
   const teams = await prisma.team.findMany({ where: { leagueId } });
   const periods = await prisma.matchupPeriod.findMany({
-    where: { leagueId, season, endDate: { lte: new Date() } },
+    where: { leagueId, season, endDate: { lte: new Date() }, isPlayoffs: false },
     include: { matchups: true },
     orderBy: { periodNo: "asc" },
   });
@@ -102,9 +116,11 @@ export interface ScoreboardMatchup {
   homeTeamId: string;
   homeTeamName: string;
   homeScore: number;
+  homeSeed: number | null;
   awayTeamId: string;
   awayTeamName: string;
   awayScore: number;
+  awaySeed: number | null;
   final: boolean;
 }
 
@@ -113,6 +129,8 @@ export interface ScoreboardPeriod {
   periodNo: number;
   startDate: Date;
   endDate: Date;
+  isPlayoffs: boolean;
+  roundLabel: string | null;
   matchups: ScoreboardMatchup[];
 }
 
@@ -157,19 +175,26 @@ export async function getScoreboardForPeriod(
         homeTeamId: m.homeTeamId,
         homeTeamName: m.homeTeam.name,
         homeScore,
+        homeSeed: m.homeSeed,
         awayTeamId: m.awayTeamId,
         awayTeamName: m.awayTeam.name,
         awayScore,
+        awaySeed: m.awaySeed,
         final,
       };
     }),
   );
+
+  const playoffPeriods = periods.filter((p) => p.isPlayoffs);
+  const roundIndex = playoffPeriods.findIndex((p) => p.id === target.id);
 
   return {
     periodId: target.id,
     periodNo: target.periodNo,
     startDate: target.startDate,
     endDate: target.endDate,
+    isPlayoffs: target.isPlayoffs,
+    roundLabel: roundIndex === -1 ? null : playoffRoundLabel(playoffPeriods.length, roundIndex),
     matchups: results,
   };
 }

@@ -249,15 +249,28 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                 />
               </label>
               <label className="block text-xs text-muted">
-                Weeks
+                Regular season weeks
                 <input
                   type="number"
                   name="weekCount"
-                  defaultValue={24}
+                  defaultValue={21}
                   min={1}
                   required
                   className="mt-1 block w-full rounded border border-border bg-transparent px-2 py-1 text-sm"
                 />
+              </label>
+              <label className="block text-xs text-muted">
+                Playoff bracket (right after the regular season — round count follows from bracket size)
+                <select
+                  name="playoffTeams"
+                  defaultValue={0}
+                  className="mt-1 block w-full rounded border border-border bg-white px-2 py-1 text-sm text-black"
+                >
+                  <option value={0}>None</option>
+                  <option value={2}>2 teams (1 round — Championship)</option>
+                  <option value={4}>4 teams (2 rounds — Semifinal, Championship)</option>
+                  <option value={8}>8 teams (3 rounds — Quarterfinal, Semifinal, Championship)</option>
+                </select>
               </label>
               <button
                 type="submit"

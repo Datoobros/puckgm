@@ -3,9 +3,9 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getLeague } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
-import { getStandings } from "@/lib/matchups/standings";
+import { getStandings, getScoreboardForPeriod } from "@/lib/matchups/standings";
 import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
-import { Card } from "@/components/Card";
+import { Card, SectionLabel } from "@/components/Card";
 
 export default async function StandingsPage(props: PageProps<"/leagues/[id]/standings">) {
   await auth.protect();
@@ -18,6 +18,14 @@ export default async function StandingsPage(props: PageProps<"/leagues/[id]/stan
   const hasSchedule =
     (await prisma.matchupPeriod.count({ where: { leagueId, season: CURRENT_SCHEDULE_SEASON } })) > 0;
   const standings = hasSchedule ? await getStandings(leagueId, CURRENT_SCHEDULE_SEASON, settings.scoringConfig) : [];
+
+  const playoffPeriods = await prisma.matchupPeriod.findMany({
+    where: { leagueId, season: CURRENT_SCHEDULE_SEASON, isPlayoffs: true },
+    orderBy: { periodNo: "asc" },
+  });
+  const playoffRounds = await Promise.all(
+    playoffPeriods.map((p) => getScoreboardForPeriod(leagueId, CURRENT_SCHEDULE_SEASON, settings.scoringConfig, p.periodNo)),
+  );
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -67,7 +75,56 @@ export default async function StandingsPage(props: PageProps<"/leagues/[id]/stan
       </div>
       <p className="mt-3 text-xs text-muted">
         Only completed weeks count toward the record — a week in progress isn&apos;t final yet.
+        Playoff results don&apos;t affect this table.
       </p>
+
+      {playoffRounds.length > 0 && (
+        <div className="mt-8">
+          <SectionLabel>Playoffs</SectionLabel>
+          <div className="space-y-4">
+            {playoffRounds.map((round) =>
+              round ? (
+                <div key={round.periodId}>
+                  <p className="mb-2 text-sm font-medium text-gold">
+                    {round.roundLabel}
+                    {round.matchups.length > 0 && !round.matchups.some((m) => m.final) && (
+                      <span className="ml-2 text-xs font-normal text-muted">in progress</span>
+                    )}
+                  </p>
+                  {round.matchups.length === 0 ? (
+                    <Card>
+                      <p className="text-sm text-muted">
+                        Waiting on the previous round to finish.
+                      </p>
+                    </Card>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {round.matchups.map((m) => (
+                        <Card key={m.matchupId}>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className={m.homeScore >= m.awayScore ? "font-semibold" : ""}>
+                              {m.homeSeed !== null && <span className="text-muted">({m.homeSeed}) </span>}
+                              {m.homeTeamName}
+                            </span>
+                            <span className="tabular-nums">{m.homeScore.toFixed(1)}</span>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between text-sm">
+                            <span className={m.awayScore >= m.homeScore ? "font-semibold" : ""}>
+                              {m.awaySeed !== null && <span className="text-muted">({m.awaySeed}) </span>}
+                              {m.awayTeamName}
+                            </span>
+                            <span className="tabular-nums">{m.awayScore.toFixed(1)}</span>
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null,
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

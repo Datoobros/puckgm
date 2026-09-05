@@ -411,6 +411,54 @@ proposer UI and validation don't yet).
   commissioner, settings page's new Trades card) — reverted before commit
   (`grep -rn "TEMP:" src/` clean).
 
+## Playoff bracket
+
+Started as "change how generating schedule works a little bit" — turned out to be a real
+playoff bracket, folded into the existing one-time schedule-generation action rather than a
+separate step.
+
+- **Commissioner picks a bracket size at generation time**: None, 2, 4, or 8 teams.
+  Deliberately scoped to powers of 2 — a non-power-of-2 bracket would need bye seeding, out
+  of scope for this pass. Round count is *derived* (log2 of bracket size), not a separate
+  input that could drift out of sync — "playoffs are the last 3 weeks" (the user's own
+  framing) is what naturally falls out of picking an 8-team bracket, not a knob of its own.
+- `generateSchedule` (`src/lib/matchups/mutations.ts`) appends that many extra
+  `MatchupPeriod` rows (`isPlayoffs: true`) immediately after the regular season, created
+  **empty** — there's nothing to pair until the regular season actually finishes.
+- New `src/lib/matchups/playoffs.ts` fills them in round by round, **cron-driven** like
+  every other once-daily mechanic in this app (waiver claims, FAAB, trades):
+  `advancePlayoffsForLeague` seeds round 1 from final standings once the regular season
+  ends (standard fixed bracket — `standardSeedOrder`'s recursive algorithm gives the real
+  seeding pairs, e.g. 1v8/4v5/2v7/3v6 for an 8-team bracket, keeping 1 and 2 apart until the
+  final), then advances each subsequent round from the previous round's winners once *that*
+  period ends. A tied playoff matchup (impossible to leave unresolved, unlike the regular
+  season) goes to the better seed — free, since the home team is always the better seed by
+  construction. The loop self-heals through several rounds in one call if the cron was ever
+  down for a stretch, rather than requiring one call per missed round.
+- `getStandings` now excludes `isPlayoffs` periods — a playoff result must never count
+  toward the regular-season win/loss record used for seeding.
+- `getScoreboardForPeriod`/the Scoreboard page needed no structural change — playoff
+  `Matchup` rows render through the exact same generic path as regular-season ones. It just
+  gained a round label ("Quarterfinal"/"Semifinal"/"Championship") and seed numbers next to
+  team names for playoff weeks. The Standings page gained a "Playoffs" card showing every
+  round's matchups/scores in one place instead of clicking through individual weeks.
+- **Two more real regressions found and fixed while verifying, same shape as before**:
+  `deleteLeague` didn't account for `WaiverClaim` (missed when that feature shipped, before
+  the FK-teardown pattern was established) or `LineupEntry` (missed since *lineups
+  themselves* were built, near the start of this project — the oldest gap of this kind
+  found yet). Both caught by real test-script cleanups hitting the FK violation, not by
+  inspection, and both fixed in the same teardown order as every prior instance of this bug.
+- Verified in `scripts/playoffs-check.ts` against the real DB: `standardSeedOrder` for
+  n=2/4/8 against known-correct pairings; a 4-team bracket seeds correctly from a
+  controlled, opponent-independent-scoring regular season (1v4, 2v3); a forced tie in one
+  semifinal correctly advances the better seed, not the actual "loser" by matchup structure;
+  the championship is built from the two winners with seeds carried forward, correctly
+  waiting for the semifinal period to actually end first; `getStandings` never counts the
+  playoff games. Also checked all three UI touchpoints in a real browser (the new bracket
+  selector on Commissioner Settings, a playoff round's label and seeds on the Scoreboard
+  page, the Standings page's new Playoffs card) and re-ran the waiver/FAAB/trades regression
+  scripts afterward to confirm nothing else broke.
+
 ## UI re-theme + nav/league-home restructure
 
 Full visual identity pass, requested because the app "looked black and ugly" — plus a
@@ -479,8 +527,8 @@ nav-order and information-architecture change specified directly by the user.
 
 ## Known gaps, deliberately not built (ask before building)
 
-- No playoff bracket — matchups/standings are regular-season only for now (see above).
-- No draft. FAAB/"the wire" and trades are both now built — FAAB is per-league opt-in,
+- No draft. Playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in
+  per schedule generation (see below); FAAB is per-league opt-in,
   default off (a league that hasn't turned it on still uses free instant add exactly as
   before); trades are always on (see below).
 - Watch List, schedule/"next game" column, stat projections — still no backing data or

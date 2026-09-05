@@ -332,13 +332,18 @@ model WaiverClaim {
 // ---------------------------------------------------------------------------
 
 model MatchupPeriod {
-  id        String   @id @default(cuid())
-  leagueId  String
-  league    League   @relation(fields: [leagueId], references: [id])
-  season    Int
-  periodNo  Int
-  startDate DateTime
-  endDate   DateTime
+  id         String   @id @default(cuid())
+  leagueId   String
+  league     League   @relation(fields: [leagueId], references: [id])
+  season     Int
+  periodNo   Int
+  startDate  DateTime
+  endDate    DateTime
+  // Playoff bracket (src/lib/matchups/playoffs.ts). Playoff periods are
+  // created empty at schedule-generation time — nothing to pair until the
+  // regular season actually finishes — and get their Matchup rows filled in
+  // round by round by the daily cron.
+  isPlayoffs Boolean  @default(false)
 
   matchups Matchup[]
 
@@ -358,6 +363,13 @@ model Matchup {
   homeTeam        Team          @relation("MatchupHomeTeam", fields: [homeTeamId], references: [id])
   awayTeamId      String
   awayTeam        Team          @relation("MatchupAwayTeam", fields: [awayTeamId], references: [id])
+  // Playoff bracket only — null for regular-season matchups. Seeds are set
+  // once from final regular-season standings and carried forward round to
+  // round; bracketSlot is the round-relative pairing index used purely for
+  // advancement (round N's slot i is built from round N-1's slots 2i/2i+1).
+  homeSeed        Int?
+  awaySeed        Int?
+  bracketSlot     Int?
 
   @@index([matchupPeriodId])
 }

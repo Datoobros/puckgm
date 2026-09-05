@@ -173,7 +173,12 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   // shape again — TradeItem/TradeVeto reference Trade, so they go first.
   // WaiverClaim (added with waiver claims, before FAAB/trades existed) was
   // actually missed originally — same bug, caught here by a real cleanup
-  // script hitting the FK violation rather than by inspection.
+  // script hitting the FK violation rather than by inspection. LineupEntry
+  // is the same shape again — it's existed since near the start of this
+  // project (predates this teardown list entirely) and was never added;
+  // caught the same way, by a playoff-bracket test script's cleanup hitting
+  // the FK violation, not by inspection. A real league with any lineup
+  // history would have hit this on delete too.
   await prisma.$transaction([
     prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
     prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
@@ -186,6 +191,7 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
     prisma.tradeItem.deleteMany({ where: { trade: { leagueId } } }),
     prisma.trade.deleteMany({ where: { leagueId } }),
     prisma.draftPick.deleteMany({ where: { leagueId } }),
+    prisma.lineupEntry.deleteMany({ where: { team: { leagueId } } }),
     prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } }),
     prisma.team.deleteMany({ where: { leagueId } }),
     prisma.league.delete({ where: { id: leagueId } }),

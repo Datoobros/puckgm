@@ -44,6 +44,7 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
               ← Prev
             </Link>
             <span className="text-sm text-muted">
+              {scoreboard.isPlayoffs && <span className="font-medium text-gold">{scoreboard.roundLabel} · </span>}
               Week {scoreboard.periodNo} of {periodCount}
               {" · "}
               {scoreboard.startDate.toISOString().slice(0, 10)} – {scoreboard.endDate.toISOString().slice(0, 10)}
@@ -69,11 +70,17 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
               scoreboard.matchups.map((m) => (
                 <Card key={m.matchupId}>
                   <div className="flex items-center justify-between text-sm">
-                    <span className={m.homeScore >= m.awayScore ? "font-semibold" : ""}>{m.homeTeamName}</span>
+                    <span className={m.homeScore >= m.awayScore ? "font-semibold" : ""}>
+                      {m.homeSeed !== null && <span className="text-muted">({m.homeSeed}) </span>}
+                      {m.homeTeamName}
+                    </span>
                     <span className="tabular-nums">{m.homeScore.toFixed(1)}</span>
                   </div>
                   <div className="mt-1 flex items-center justify-between text-sm">
-                    <span className={m.awayScore >= m.homeScore ? "font-semibold" : ""}>{m.awayTeamName}</span>
+                    <span className={m.awayScore >= m.homeScore ? "font-semibold" : ""}>
+                      {m.awaySeed !== null && <span className="text-muted">({m.awaySeed}) </span>}
+                      {m.awayTeamName}
+                    </span>
                     <span className="tabular-nums">{m.awayScore.toFixed(1)}</span>
                   </div>
                 </Card>
