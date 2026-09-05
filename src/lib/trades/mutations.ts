@@ -21,7 +21,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
-import { getLeagueCommissioner } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner } from "@/lib/leagues/mutations";
 import { activeRosterCap } from "@/lib/rosters/mutations";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
 
@@ -107,6 +107,12 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
     input.give.playerIds.length + input.give.pickIds.length + (input.give.faabAmount > 0 ? 1 : 0) +
     input.receive.playerIds.length + input.receive.pickIds.length + (input.receive.faabAmount > 0 ? 1 : 0);
   if (totalItems === 0) throw new Error("A trade needs at least one asset on one side.");
+
+  // Missing on settingsJson predates this feature — treat as the true
+  // default (on), same convention as leagueType/positionMode elsewhere.
+  if (settings.draftPickTradingEnabled === false && (input.give.pickIds.length > 0 || input.receive.pickIds.length > 0)) {
+    throw new Error("Draft pick trading is turned off in this league.");
+  }
 
   await assertOwnsAssets(input.proposingTeamId, input.give);
   await assertOwnsAssets(input.counterpartyTeamId, input.receive);
@@ -230,15 +236,15 @@ export async function cancelTrade(input: CancelTradeInput): Promise<void> {
   }
 
   const counterpartyTeamId = getCounterpartyTeamId(trade);
-  const [proposerTeam, counterpartyTeam, commissioner] = await Promise.all([
+  const [proposerTeam, counterpartyTeam, isCommissioner] = await Promise.all([
     prisma.team.findUnique({ where: { id: trade.proposedByTeamId } }),
     prisma.team.findUnique({ where: { id: counterpartyTeamId } }),
-    getLeagueCommissioner(trade.leagueId),
+    isLeagueCommissioner(trade.leagueId, input.callerUserId),
   ]);
   const allowed =
     proposerTeam?.managerUserId === input.callerUserId ||
     counterpartyTeam?.managerUserId === input.callerUserId ||
-    commissioner === input.callerUserId;
+    isCommissioner;
   if (!allowed) throw new Error("You aren't part of this trade.");
 
   await prisma.$transaction([
@@ -285,8 +291,15 @@ export async function castTradeVeto(input: CastTradeVetoInput): Promise<void> {
   const counterpartyTeamId = getCounterpartyTeamId(trade);
 
   if (settings.tradeVetoMode === "COMMISSIONER") {
-    const commissioner = await getLeagueCommissioner(trade.leagueId);
-    if (input.managerUserId !== commissioner) throw new Error("Only the commissioner can veto trades in this league.");
+    if (!(await isLeagueCommissioner(trade.leagueId, input.managerUserId))) {
+      throw new Error("Only the commissioner can veto trades in this league.");
+    }
+    // A co-commissioner who's a party to this specific trade can't be the
+    // one deciding it — same conflict-of-interest exclusion VOTE mode
+    // already applies below, just for the commissioner-veto path instead.
+    if (callerTeam.id === trade.proposedByTeamId || callerTeam.id === counterpartyTeamId) {
+      throw new Error("You can't veto a trade you're part of, even as commissioner.");
+    }
   } else {
     if (callerTeam.id === trade.proposedByTeamId || callerTeam.id === counterpartyTeamId) {
       throw new Error("You can't vote to veto a trade you're part of.");
@@ -428,10 +441,16 @@ export interface ForceProcessTradeInput {
 }
 
 export async function forceProcessTrade(input: ForceProcessTradeInput): Promise<void> {
-  const trade = await prisma.trade.findUnique({ where: { id: input.tradeId } });
+  const trade = await prisma.trade.findUnique({ where: { id: input.tradeId }, include: { items: true } });
   if (!trade) throw new Error("Trade not found.");
-  const commissioner = await getLeagueCommissioner(trade.leagueId);
-  if (commissioner !== input.callerUserId) throw new Error("Only the commissioner can force a trade through.");
+  if (!(await isLeagueCommissioner(trade.leagueId, input.callerUserId))) {
+    throw new Error("Only the commissioner can force a trade through.");
+  }
+  const callerTeam = await prisma.team.findFirst({ where: { leagueId: trade.leagueId, managerUserId: input.callerUserId } });
+  const counterpartyTeamId = getCounterpartyTeamId(trade);
+  if (callerTeam && (callerTeam.id === trade.proposedByTeamId || callerTeam.id === counterpartyTeamId)) {
+    throw new Error("You can't force-process a trade you're part of, even as commissioner.");
+  }
   if (trade.state !== "UNDER_REVIEW") throw new Error("Only an accepted (under-review) trade can be forced through.");
 
   await executeTradeTransfers(input.tradeId, { bypassRoomCheck: true });

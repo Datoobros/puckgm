@@ -65,6 +65,7 @@ export async function submitFaBid(input: SubmitFaBidInput): Promise<void> {
     include: { league: true },
   });
   if (!team) throw new Error("You don't manage a team in this league.");
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't submit a FAAB bid.");
 
   const settings = team.league.settingsJson as unknown as LeagueSettings;
   if (!settings.faabEnabled) throw new Error("This league doesn't use FAAB.");
@@ -179,13 +180,21 @@ export async function processFaabBids(): Promise<FaabProcessResult[]> {
       continue;
     }
 
+    // A team frozen (ORPHAN_FROZEN) after bidding but before this runs must
+    // not still win — filtered out of eligibility, resolved as LOST below.
+    const eligible = bids.filter((b) => b.team.state === "ACTIVE");
+    if (eligible.length === 0) {
+      await prisma.faBid.updateMany({ where: { id: { in: bids.map((b) => b.id) } }, data: { result: "LOST" } });
+      continue;
+    }
+
     const leagueId = bids[0].team.leagueId;
     const priority = await getOrInitWaiverPriority(leagueId);
     const rank = (teamId: string) => {
       const idx = priority.indexOf(teamId);
       return idx === -1 ? priority.length : idx;
     };
-    const winner = bids.reduce((best, b) => {
+    const winner = eligible.reduce((best, b) => {
       if (b.amount > best.amount) return b;
       if (b.amount === best.amount && rank(b.teamId) < rank(best.teamId)) return b;
       return best;

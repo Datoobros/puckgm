@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getTradesForLeague, getTradeableAssets, type TradeDetail } from "@/lib/trades/mutations";
 import { Card, SectionLabel } from "@/components/Card";
 import { TradeBuilder } from "./TradeBuilder";
@@ -41,8 +41,7 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
   if (!league) notFound();
   const settings = league.settingsJson as unknown as LeagueSettings;
   const myTeam = league.teams.find((t) => t.managerUserId === userId) ?? null;
-  const commissioner = await getLeagueCommissioner(leagueId);
-  const isCommissioner = commissioner === userId;
+  const isCommissioner = await isLeagueCommissioner(leagueId, userId);
 
   const trades = await getTradesForLeague(leagueId, myTeam?.id ?? null);
 
@@ -54,11 +53,16 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
 
   function canVeto(t: TradeDetail): boolean {
     if (t.state !== "UNDER_REVIEW") return false;
-    if (settings.tradeVetoMode === "COMMISSIONER") return isCommissioner;
+    // A commissioner who's a party to this specific trade can't decide it,
+    // same conflict-of-interest exclusion VOTE mode already applies.
+    if (settings.tradeVetoMode === "COMMISSIONER") return isCommissioner && !isParticipant(t);
     return !!myTeam && !isParticipant(t) && !t.hasVetoed;
   }
   function canCancel(t: TradeDetail): boolean {
     return (t.state === "PROPOSED" || t.state === "UNDER_REVIEW") && (isParticipant(t) || isCommissioner);
+  }
+  function canForceProcess(t: TradeDetail): boolean {
+    return isCommissioner && !isParticipant(t);
   }
 
   let builderSection = null;
@@ -171,7 +175,7 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
                         </button>
                       </form>
                     )}
-                    {isCommissioner && (
+                    {canForceProcess(t) && (
                       <form action={forceProcessTradeAction.bind(null, leagueId, t.id)}>
                         <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                           Force through now

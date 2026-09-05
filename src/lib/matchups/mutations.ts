@@ -6,7 +6,7 @@
 // pair until the regular season actually finishes.
 
 import { prisma } from "@/lib/db";
-import { getLeagueCommissioner } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner } from "@/lib/leagues/mutations";
 
 interface RoundPair {
   home: string;
@@ -56,9 +56,29 @@ export interface GenerateScheduleResult {
   playoffPeriodsCreated: number;
 }
 
+/** Deletes an entire season's schedule so generateSchedule can be called
+ * again — for "I set this up wrong before anyone's played," not mid-season
+ * redos. Refuses if any period's endDate has already passed: standings are
+ * computed live from stored Matchup pairings with no separate results
+ * table, so a completed week's history would simply vanish, not reset. */
+export async function resetSchedule(leagueId: string, callerUserId: string, season: number): Promise<void> {
+  if (!(await isLeagueCommissioner(leagueId, callerUserId))) {
+    throw new Error("Only the league commissioner can reset the schedule.");
+  }
+  const periods = await prisma.matchupPeriod.findMany({ where: { leagueId, season } });
+  if (periods.length === 0) throw new Error(`No schedule exists for the ${season} season.`);
+  if (periods.some((p) => p.endDate < new Date())) {
+    throw new Error("At least one week has already completed — resetting would erase real results, not just start over.");
+  }
+
+  await prisma.$transaction([
+    prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId, season } } }),
+    prisma.matchupPeriod.deleteMany({ where: { leagueId, season } }),
+  ]);
+}
+
 export async function generateSchedule(input: GenerateScheduleInput): Promise<GenerateScheduleResult> {
-  const commissioner = await getLeagueCommissioner(input.leagueId);
-  if (!commissioner || commissioner !== input.callerUserId) {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can generate the schedule.");
   }
 

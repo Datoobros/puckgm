@@ -8,12 +8,21 @@ import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from 
 import { seasonByValue } from "@/lib/players/seasons";
 import { getLineupForDate, capFor, eligibleSlotsForPosition } from "@/lib/lineups/mutations";
 import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/schedule";
-import type { LeagueSettings } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { Card, SectionLabel } from "@/components/Card";
-import { dropPlayerAction, sendToFarmAction, callUpAction, placeOnIrAction, activateFromIrAction } from "./actions";
+import {
+  dropPlayerAction,
+  sendToFarmAction,
+  callUpAction,
+  placeOnIrAction,
+  activateFromIrAction,
+  commissionerDropPlayerAction,
+  commissionerMovePlayerAction,
+} from "./actions";
 import { LineupSlotSelect, type SlotOption } from "./LineupSlotSelect";
 import { ViewControls } from "./ViewControls";
 import { AutoSetLineupButton } from "./AutoSetLineupButton";
+import { CommissionerAddPlayerBox } from "./CommissionerAddPlayerBox";
 
 const SLOT_LABELS: Record<string, string> = { C: "C", L: "L", R: "R", F: "F", D: "D", G: "G", UTIL: "UTIL", BE: "Bench" };
 
@@ -66,6 +75,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const settings = team.league.settingsJson as unknown as LeagueSettings;
   const cap = activeRosterCap(settings);
   const isOwner = team.managerUserId === userId;
+  const isCommissionerViewing = !isOwner && (await isLeagueCommissioner(leagueId, userId));
 
   const allSlots = await getTeamRosterView(teamId);
   const activeSlots = allSlots.filter((s) => s.slotType === "ACTIVE");
@@ -206,6 +216,18 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         Lineups are freely editable until a player&apos;s own game starts.
       </p>
 
+      {isCommissionerViewing && (
+        <div className="mt-6">
+          <SectionLabel>Commissioner controls</SectionLabel>
+          <Card>
+            <p className="mb-2 text-xs text-muted">
+              Full override — bypasses roster cap, waiver exemption, and FAAB checks.
+            </p>
+            <CommissionerAddPlayerBox leagueId={leagueId} teamId={teamId} />
+          </Card>
+        </div>
+      )}
+
       <div className="mt-6">
         <SectionLabel>Skaters</SectionLabel>
         <RosterTable
@@ -217,6 +239,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           teamId={teamId}
           date={date}
           isOwner={isOwner}
+          isCommissionerViewing={isCommissionerViewing}
           lineupFor={lineupFor}
           waiverGpThreshold={settings.waiverGpThreshold}
           positionMode={settings.rosterComposition.positionMode}
@@ -236,6 +259,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           teamId={teamId}
           date={date}
           isOwner={isOwner}
+          isCommissionerViewing={isCommissionerViewing}
           lineupFor={lineupFor}
           waiverGpThreshold={settings.waiverGpThreshold}
           positionMode={settings.rosterComposition.positionMode}
@@ -305,6 +329,25 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                           </button>
                         </form>
                       )}
+                      {!isOwner && isCommissionerViewing && (
+                        <span className="flex items-center gap-1.5">
+                          <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "ACTIVE")}>
+                            <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                              → Active
+                            </button>
+                          </form>
+                          <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "IR")}>
+                            <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                              → IR
+                            </button>
+                          </form>
+                          <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, s.playerId)}>
+                            <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
+                              − Drop
+                            </button>
+                          </form>
+                        </span>
+                      )}
                     </span>
                   </li>
                 );
@@ -355,6 +398,25 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                         </button>
                       </form>
                     )}
+                    {!isOwner && isCommissionerViewing && (
+                      <span className="flex items-center gap-1.5">
+                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "ACTIVE")}>
+                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                            → Active
+                          </button>
+                        </form>
+                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "FARM")}>
+                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                            → Farm
+                          </button>
+                        </form>
+                        <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, s.playerId)}>
+                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
+                            − Drop
+                          </button>
+                        </form>
+                      </span>
+                    )}
                   </li>
                 );
               })}
@@ -384,6 +446,7 @@ function RosterTable({
   teamId,
   date,
   isOwner,
+  isCommissionerViewing,
   lineupFor,
   waiverGpThreshold,
   positionMode,
@@ -398,6 +461,7 @@ function RosterTable({
   teamId: string;
   date: string;
   isOwner: boolean;
+  isCommissionerViewing: boolean;
   lineupFor: (s: RosterSlotWithPlayer) => LineupInfo;
   waiverGpThreshold: number;
   positionMode: "SEPARATE" | "COMBINED";
@@ -427,7 +491,7 @@ function RosterTable({
                 {col.label}
               </th>
             ))}
-            {isOwner && <th className="py-2 pr-4" />}
+            {(isOwner || isCommissionerViewing) && <th className="py-2 pr-4" />}
           </tr>
         </thead>
         <tbody>
@@ -526,6 +590,38 @@ function RosterTable({
                           type="submit"
                           className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
                         >
+                          − Drop
+                        </button>
+                      </form>
+                    </div>
+                  </td>
+                )}
+                {!isOwner && isCommissionerViewing && (
+                  <td className="py-2 pr-4 text-right">
+                    <div className="flex justify-end gap-1.5">
+                      {s.slotType !== "ACTIVE" && (
+                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "ACTIVE")}>
+                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                            → Active
+                          </button>
+                        </form>
+                      )}
+                      {s.slotType !== "FARM" && (
+                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "FARM")}>
+                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                            → Farm
+                          </button>
+                        </form>
+                      )}
+                      {s.slotType !== "IR" && (
+                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "IR")}>
+                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                            → IR
+                          </button>
+                        </form>
+                      )}
+                      <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, playerId)}>
+                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
                           − Drop
                         </button>
                       </form>

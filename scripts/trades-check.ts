@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { createLeague, createTeam, updateLeagueSettings, deleteLeague } from "@/lib/leagues/mutations";
+import { createLeague, createTeam, updateLeagueSettings, deleteLeague, setCoCommissioner } from "@/lib/leagues/mutations";
 import { addPlayerToRoster, dropPlayerFromRoster, sendToFarm, getTeamRosterView } from "@/lib/rosters/mutations";
 import { getOrInitFaabBudget, getAvailableBudget, submitFaBid } from "@/lib/faab/mutations";
 import {
@@ -77,6 +77,8 @@ async function main() {
     leagueId, callerUserId: "trade-test-A", farmSlots: 4, irSlots: 2, waiverGpThreshold: 80, callupsPerWeek: 2,
     scoringConfig: {}, faabEnabled: false, faabBudget: 100, faabMinBid: 1, faabMaxBid: null,
     tradeVetoMode: "VOTE", tradeDeadline: null,
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    draftPickTradingEnabled: true,
   });
   const { tradeId: voteId } = await proposeTrade({
     leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
@@ -93,6 +95,8 @@ async function main() {
     leagueId, callerUserId: "trade-test-A", farmSlots: 4, irSlots: 2, waiverGpThreshold: 80, callupsPerWeek: 2,
     scoringConfig: {}, faabEnabled: false, faabBudget: 100, faabMinBid: 1, faabMaxBid: null,
     tradeVetoMode: "COMMISSIONER", tradeDeadline: null,
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    draftPickTradingEnabled: true,
   });
 
   console.log("\n-- full trade: player + pick + FAAB, processes cleanly --");
@@ -163,6 +167,11 @@ async function main() {
   assert(!!h1StillA, "cancelled trade moved nothing");
 
   console.log("\n-- commissioner force-process bypasses the room check --");
+  // A commissioner who's a party to the trade can no longer force-process
+  // it (conflict-of-interest guard, added with co-commissioners) — grant
+  // Team C's manager co-commissioner status so a genuine non-party
+  // commissioner can do the forcing, same as the real feature intends.
+  await setCoCommissioner({ leagueId, teamId: teamC, callerUserId: "trade-test-A", isCoCommissioner: true });
   const { tradeId: e1Id } = await proposeTrade({
     leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
     give: { playerIds: [playerE1.id], pickIds: [], faabAmount: 0 },
@@ -170,7 +179,7 @@ async function main() {
   });
   await respondToTrade({ tradeId: e1Id, managerUserId: "trade-test-B", accept: true });
   await backdateReview(e1Id);
-  await forceProcessTrade({ tradeId: e1Id, callerUserId: "trade-test-A" });
+  await forceProcessTrade({ tradeId: e1Id, callerUserId: "trade-test-C" });
   const e1TradeState = await prisma.trade.findUniqueOrThrow({ where: { id: e1Id } });
   assert(e1TradeState.state === "PROCESSED", "force-process succeeds despite Team B being full");
   const bAfterForce = await getTeamRosterView(teamB);
@@ -194,6 +203,8 @@ async function main() {
     leagueId, callerUserId: "trade-test-A", farmSlots: 4, irSlots: 2, waiverGpThreshold: 80, callupsPerWeek: 2,
     scoringConfig: {}, faabEnabled: true, faabBudget: 100, faabMinBid: 1, faabMaxBid: null,
     tradeVetoMode: "COMMISSIONER", tradeDeadline: null,
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    draftPickTradingEnabled: true,
   });
   await proposeTrade({
     leagueId, proposingTeamId: teamA, counterpartyTeamId: teamC, managerUserId: "trade-test-A",

@@ -114,6 +114,7 @@ export async function submitWaiverClaim(input: SubmitWaiverClaimInput): Promise<
     where: { leagueId: input.leagueId, managerUserId: input.managerUserId },
   });
   if (!claimingTeam) throw new Error("You don't manage a team in this league.");
+  if (claimingTeam.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't submit a waiver claim.");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: {
@@ -208,10 +209,20 @@ export async function processExpiredWaivers(): Promise<ProcessResult[]> {
   for (const slot of expiredSlots) {
     const pending = await prisma.waiverClaim.findMany({
       where: { playerId: slot.playerId, result: "PENDING" },
+      include: { team: true },
     });
+    // A team frozen (ORPHAN_FROZEN) after submitting but before this runs
+    // must not still win — filtered out of eligibility, but still resolved
+    // (as a loser, below) rather than left PENDING forever.
+    const eligible = pending.filter((c) => c.team.state === "ACTIVE");
 
-    if (pending.length === 0) {
-      await prisma.rosterSlot.update({ where: { id: slot.id }, data: { waiverExpiresAt: null } });
+    if (eligible.length === 0) {
+      await prisma.$transaction([
+        prisma.rosterSlot.update({ where: { id: slot.id }, data: { waiverExpiresAt: null } }),
+        ...(pending.length > 0
+          ? [prisma.waiverClaim.updateMany({ where: { id: { in: pending.map((c) => c.id) } }, data: { result: "CLEARED" } })]
+          : []),
+      ]);
       results.push({ playerId: slot.playerId, outcome: "EXPIRED_UNCLAIMED" });
       continue;
     }
@@ -221,7 +232,7 @@ export async function processExpiredWaivers(): Promise<ProcessResult[]> {
       const idx = priority.indexOf(teamId);
       return idx === -1 ? priority.length : idx;
     };
-    const winner = pending.reduce((best, c) => (rank(c.teamId) < rank(best.teamId) ? c : best));
+    const winner = eligible.reduce((best, c) => (rank(c.teamId) < rank(best.teamId) ? c : best));
     const losers = pending.filter((c) => c.id !== winner.id);
 
     await prisma.$transaction([

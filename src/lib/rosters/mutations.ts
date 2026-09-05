@@ -13,6 +13,7 @@
 
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 
 export function activeRosterCap(settings: LeagueSettings): number {
@@ -72,6 +73,7 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
   if (team.managerUserId !== input.managerUserId) {
     throw new Error("You don't manage this team.");
   }
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't add players.");
 
   const settingsForFaab = team.league.settingsJson as unknown as LeagueSettings;
   if (settingsForFaab.faabEnabled) {
@@ -130,6 +132,7 @@ export async function dropPlayerFromRoster(input: DropPlayerInput): Promise<void
   if (team.managerUserId !== input.managerUserId) {
     throw new Error("You don't manage this team.");
   }
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't drop players.");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, effectiveTo: null },
@@ -172,6 +175,7 @@ export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExpose
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't send players down.");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE", effectiveTo: null },
@@ -227,6 +231,7 @@ export async function callUpToActive(input: CallUpInput): Promise<void> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't call up players.");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "FARM", effectiveTo: null },
@@ -282,6 +287,7 @@ export async function placeOnIR(input: PlaceOnIrInput): Promise<void> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't place a player on IR.");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE", effectiveTo: null },
@@ -331,6 +337,7 @@ export async function activateFromIR(input: ActivateFromIrInput): Promise<void> 
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't activate a player from IR.");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "IR", effectiveTo: null },
@@ -360,6 +367,104 @@ export async function activateFromIR(input: ActivateFromIrInput): Promise<void> 
         type: "IR_MOVE",
         actorTeamId: input.teamId,
         payload: { playerId: input.playerId, direction: "FROM_IR" },
+      },
+    }),
+  ]);
+}
+
+export interface CommissionerRosterInput {
+  leagueId: string;
+  teamId: string;
+  playerId: string;
+  callerUserId: string;
+}
+
+/** Commissioner-only direct roster edits — full override, matching the
+ * existing waiver-award/FAAB-win "overflow allowed" precedent: these skip
+ * the cap-check branch entirely rather than threading a bypass flag
+ * through the manager-facing functions above. Still blocked on a frozen
+ * (ORPHAN_FROZEN) team — reassign it first. */
+export async function commissionerAddPlayer(input: CommissionerRosterInput): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can directly edit another team's roster.");
+  }
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
+  if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  if (team.state === "ORPHAN_FROZEN") throw new Error("Reassign this orphaned team before editing its roster.");
+
+  const alreadyRostered = await prisma.rosterSlot.findFirst({
+    where: { playerId: input.playerId, effectiveTo: null, team: { leagueId: input.leagueId } },
+    include: { team: true },
+  });
+  if (alreadyRostered) {
+    throw new Error(
+      alreadyRostered.teamId === input.teamId
+        ? "This player is already on this roster."
+        : `This player is already rostered by ${alreadyRostered.team.name}.`,
+    );
+  }
+
+  await prisma.$transaction([
+    prisma.rosterSlot.create({ data: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE" } }),
+    prisma.transactionLog.create({
+      data: {
+        leagueId: input.leagueId,
+        type: "ROSTER_ADD",
+        actorTeamId: input.teamId,
+        payload: { playerId: input.playerId, slotType: "ACTIVE", commissionerOverride: true },
+      },
+    }),
+  ]);
+}
+
+export async function commissionerDropPlayer(input: CommissionerRosterInput): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can directly edit another team's roster.");
+  }
+  const slot = await prisma.rosterSlot.findFirst({
+    where: { teamId: input.teamId, playerId: input.playerId, effectiveTo: null },
+  });
+  if (!slot) throw new Error("Player is not on this roster.");
+
+  await prisma.$transaction([
+    prisma.rosterSlot.update({ where: { id: slot.id }, data: { effectiveTo: new Date() } }),
+    prisma.transactionLog.create({
+      data: {
+        leagueId: input.leagueId,
+        type: "ROSTER_DROP",
+        actorTeamId: input.teamId,
+        payload: { playerId: input.playerId, commissionerOverride: true },
+      },
+    }),
+  ]);
+}
+
+export interface CommissionerMovePlayerInput extends CommissionerRosterInput {
+  targetSlotType: "ACTIVE" | "FARM" | "IR";
+}
+
+/** Moves a player between ACTIVE/FARM/IR on their own team — no waiver
+ * exposure, no callup-limit check, no cap check. A full override, not a
+ * "free" version of sendToFarm/callUpToActive/placeOnIR/activateFromIR. */
+export async function commissionerMovePlayer(input: CommissionerMovePlayerInput): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can directly edit another team's roster.");
+  }
+  const slot = await prisma.rosterSlot.findFirst({
+    where: { teamId: input.teamId, playerId: input.playerId, effectiveTo: null },
+  });
+  if (!slot) throw new Error("Player is not on this roster.");
+  if (slot.slotType === input.targetSlotType) throw new Error("Player is already in that slot.");
+
+  await prisma.$transaction([
+    prisma.rosterSlot.update({ where: { id: slot.id }, data: { effectiveTo: new Date() } }),
+    prisma.rosterSlot.create({ data: { teamId: input.teamId, playerId: input.playerId, slotType: input.targetSlotType } }),
+    prisma.transactionLog.create({
+      data: {
+        leagueId: input.leagueId,
+        type: "COMMISSIONER_MOVE",
+        actorTeamId: input.teamId,
+        payload: { playerId: input.playerId, fromSlotType: slot.slotType, toSlotType: input.targetSlotType },
       },
     }),
   ]);

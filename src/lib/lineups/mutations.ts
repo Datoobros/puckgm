@@ -100,6 +100,7 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
   if (team.managerUserId !== input.managerUserId) {
     throw new Error("You don't manage this team.");
   }
+  if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — its lineup can't be edited.");
 
   const settingsForEligibility = team.league.settingsJson as unknown as LeagueSettings;
   const eligible = eligibilityFor(settingsForEligibility.rosterComposition.positionMode)[input.slot];

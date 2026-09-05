@@ -2,13 +2,17 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, getLeagueCommissioner, isLeagueCommissioner, teamHasHistory, type LeagueSettings } from "@/lib/leagues/mutations";
 import { EDITABLE_SCORING_FIELDS } from "@/lib/scoring/engine";
 import { updateLeagueSettingsAction, generateScheduleAction, regenerateInviteCodeAction } from "@/app/leagues/actions";
-import { startDraftAction } from "../draft/actions";
+import { startDraftAction, resetDraftPickOwnershipAction } from "../draft/actions";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
 import { StartNewSeasonButton } from "@/components/StartNewSeasonButton";
+import { ResetScheduleButton } from "@/components/ResetScheduleButton";
+import { ConfirmActionButton } from "@/components/ConfirmActionButton";
 import { DraftSetupForm } from "./DraftSetupForm";
+import { DraftSetupEditForm } from "./DraftSetupEditForm";
+import { TeamManagementCard } from "./TeamManagementCard";
 import { Card, SectionLabel } from "@/components/Card";
 import { prisma } from "@/lib/db";
 import { DEFAULT_SEASON_START } from "@/lib/matchups/constants";
@@ -21,10 +25,11 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
-  const commissioner = await getLeagueCommissioner(leagueId);
+  const primaryCommissioner = await getLeagueCommissioner(leagueId);
+  const isPrimaryCommissioner = primaryCommissioner === userId;
   const settings = league.settingsJson as unknown as LeagueSettings;
 
-  if (commissioner !== userId) {
+  if (!(await isLeagueCommissioner(leagueId, userId))) {
     return (
       <div className="mx-auto max-w-2xl px-6 py-12">
         <p className="text-sm text-muted">Only the league commissioner can view or change settings.</p>
@@ -37,10 +42,29 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
     (await prisma.matchupPeriod.count({ where: { leagueId, season: currentSeason } })) > 0;
 
   const drafts = await prisma.draft.findMany({ where: { leagueId }, orderBy: { createdAt: "desc" } });
+  const draftPickCounts = await prisma.draftPick.groupBy({
+    by: ["draftId"],
+    where: { draftId: { in: drafts.map((d) => d.id) } },
+    _count: { _all: true },
+  });
+  const pickCountByDraftId = new Map(draftPickCounts.map((g) => [g.draftId, g._count._all]));
 
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
   const inviteUrl = league.inviteCode ? `${origin}/invite/${league.inviteCode}` : null;
+
+  const teamsWithHistory = await Promise.all(
+    league.teams.map(async (t) => ({
+      id: t.id,
+      name: t.name,
+      managerUserId: t.managerUserId,
+      state: t.state,
+      isCoCommissioner: t.isCoCommissioner,
+      division: t.division,
+      claimCode: t.claimCode,
+      hasHistory: await teamHasHistory(t.id),
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
@@ -134,6 +158,53 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         </div>
 
         <div>
+          <SectionLabel>Roster composition</SectionLabel>
+          <p className="mb-3 text-xs text-muted">
+            No longer locked forever — forward position mode (separate vs. combined) still is,
+            everything else here can change between seasons.
+          </p>
+          <Card className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {settings.rosterComposition.positionMode === "SEPARATE" ? (
+              <>
+                <label className="block">
+                  <span className="text-xs text-muted">C</span>
+                  <input name="rosterC" type="number" min={0} defaultValue={settings.rosterComposition.C} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-muted">LW</span>
+                  <input name="rosterLW" type="number" min={0} defaultValue={settings.rosterComposition.LW} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-muted">RW</span>
+                  <input name="rosterRW" type="number" min={0} defaultValue={settings.rosterComposition.RW} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+                </label>
+              </>
+            ) : (
+              <label className="block">
+                <span className="text-xs text-muted">F</span>
+                <input name="rosterF" type="number" min={0} defaultValue={settings.rosterComposition.F} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+              </label>
+            )}
+            <label className="block">
+              <span className="text-xs text-muted">D</span>
+              <input name="rosterD" type="number" min={0} defaultValue={settings.rosterComposition.D} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">G</span>
+              <input name="rosterG" type="number" min={0} defaultValue={settings.rosterComposition.G} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">UTIL</span>
+              <input name="rosterUTIL" type="number" min={0} defaultValue={settings.rosterComposition.UTIL} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Bench</span>
+              <input name="rosterBENCH" type="number" min={0} defaultValue={settings.rosterComposition.BENCH} className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue" />
+            </label>
+          </Card>
+        </div>
+
+        <div>
           <SectionLabel>FAAB / the wire</SectionLabel>
           <Card>
             <label className="flex items-center gap-2 text-sm">
@@ -193,6 +264,15 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                 <option value="VOTE">League vote (majority of managers not in the trade)</option>
               </select>
             </label>
+            <label className="mt-4 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="draftPickTradingEnabled"
+                defaultChecked={settings.draftPickTradingEnabled !== false}
+                className="h-4 w-4"
+              />
+              Allow draft picks to be traded
+            </label>
           </Card>
         </div>
 
@@ -245,28 +325,47 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
           {drafts.length > 0 && (
             <ul className="mb-4 divide-y divide-border">
               {drafts.map((d) => (
-                <li key={d.id} className="flex items-center justify-between gap-3 py-2 first:pt-0">
-                  <span className="text-sm">
-                    {d.season} {d.type === "STARTUP" ? "Startup" : "Rookie"} draft —{" "}
-                    <span className="text-xs text-muted">{d.status.replace("_", " ")}</span>
-                  </span>
+                <li key={d.id} className="py-2 first:pt-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">
+                      {d.season} {d.type === "STARTUP" ? "Startup" : "Rookie"} draft —{" "}
+                      <span className="text-xs text-muted">{d.status.replace("_", " ")}</span>
+                    </span>
+                    {d.status === "SETUP" && (
+                      <form action={startDraftAction.bind(null, leagueId, d.id)}>
+                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                          Start Draft
+                        </button>
+                      </form>
+                    )}
+                    {d.status !== "SETUP" && (
+                      <Link href={`/leagues/${leagueId}/draft`} className="shrink-0 text-xs underline">
+                        Open room
+                      </Link>
+                    )}
+                  </div>
                   {d.status === "SETUP" && (
-                    <form action={startDraftAction.bind(null, leagueId, d.id)}>
-                      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                        Start Draft
-                      </button>
-                    </form>
-                  )}
-                  {d.status !== "SETUP" && (
-                    <Link href={`/leagues/${leagueId}/draft`} className="shrink-0 text-xs underline">
-                      Open room
-                    </Link>
+                    <DraftSetupEditForm
+                      leagueId={leagueId}
+                      draftId={d.id}
+                      teams={league.teams.map((t) => ({ id: t.id, name: t.name }))}
+                      currentRoundCount={(pickCountByDraftId.get(d.id) ?? league.teams.length) / Math.max(1, league.teams.length)}
+                      currentPickTimerSeconds={d.pickTimerSeconds}
+                    />
                   )}
                 </li>
               ))}
             </ul>
           )}
           <DraftSetupForm leagueId={leagueId} teams={league.teams.map((t) => ({ id: t.id, name: t.name }))} defaultSeason={currentSeason} />
+          <div className="mt-4 border-t border-border pt-3">
+            <ConfirmActionButton
+              action={resetDraftPickOwnershipAction.bind(null, leagueId)}
+              confirmText="Revert every traded, still-unused draft pick in this league back to its original owner? Already-drafted picks are untouched."
+              label="Reset draft pick ownership"
+              className="rounded-full border border-border px-3 py-1.5 text-xs hover:bg-surface-tint"
+            />
+          </div>
         </Card>
       </div>
 
@@ -274,10 +373,13 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         <SectionLabel>Schedule</SectionLabel>
         <Card>
           {hasSchedule ? (
-            <p className="text-sm text-muted">
-              {currentSeason}-{(currentSeason + 1) % 100} schedule generated —
-              see Scoreboard / Standings.
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-muted">
+                {currentSeason}-{(currentSeason + 1) % 100} schedule generated —
+                see Scoreboard / Standings.
+              </p>
+              <ResetScheduleButton leagueId={leagueId} season={currentSeason} />
+            </div>
           ) : (
             <form action={generateScheduleAction.bind(null, leagueId)} className="space-y-2">
               <p className="text-xs text-muted">
@@ -329,6 +431,17 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
             </form>
           )}
         </Card>
+      </div>
+
+      <div className="mt-10">
+        <SectionLabel>Teams &amp; managers</SectionLabel>
+        <p className="mb-3 text-xs text-muted">
+          Rename any team, group teams into divisions (display/standings only — schedule and
+          playoff seeding are unaffected), reassign or orphan a manager, add a placeholder team
+          and hand it off via claim link, {isPrimaryCommissioner ? "grant co-commissioner powers, " : ""}
+          or delete a team that has no real history yet.
+        </p>
+        <TeamManagementCard leagueId={leagueId} teams={teamsWithHistory} origin={origin} isPrimaryCommissioner={isPrimaryCommissioner} />
       </div>
 
       {settings.leagueType === "REDRAFT" && (

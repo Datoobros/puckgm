@@ -82,6 +82,8 @@ async function main() {
       faabMaxBid: null,
       tradeVetoMode: "COMMISSIONER",
       tradeDeadline: null,
+      rosterComposition: { positionMode: "COMBINED", C: 0, LW: 0, RW: 0, F: 2, D: 2, G: 1, UTIL: 1, BENCH: 3 },
+      draftPickTradingEnabled: true,
     });
   } catch {
     rejectedFarmEdit = true;

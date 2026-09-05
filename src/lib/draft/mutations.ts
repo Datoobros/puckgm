@@ -20,7 +20,7 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getLeagueCommissioner } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner } from "@/lib/leagues/mutations";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
@@ -36,8 +36,7 @@ export interface SetUpDraftInput {
 }
 
 export async function setUpDraft(input: SetUpDraftInput): Promise<{ draftId: string }> {
-  const commissioner = await getLeagueCommissioner(input.leagueId);
-  if (!commissioner || commissioner !== input.callerUserId) {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can set up a draft.");
   }
 
@@ -114,10 +113,137 @@ export async function setUpDraft(input: SetUpDraftInput): Promise<{ draftId: str
   return { draftId: draft.id };
 }
 
+async function assertNoPickEverTraded(draftId: string): Promise<void> {
+  const everTraded = await prisma.tradeItem.count({ where: { draftPick: { draftId } } });
+  if (everTraded > 0) {
+    throw new Error("A pick from this draft has been traded — its round count and order can no longer be edited.");
+  }
+}
+
+export interface UpdateDraftSetupInput {
+  draftId: string;
+  callerUserId: string;
+  roundCount?: number;
+  orderMode?: "RANDOM" | "MANUAL";
+  manualOrder?: string[];
+  pickTimerSeconds?: number;
+}
+
+/** Commissioner-only, SETUP-only. Diffs DraftPick rows in place (updates
+ * existing rows' round/team, adds/removes only the delta) rather than
+ * deleting and recreating — TradeItem.draftPickId has no cascade, so
+ * deleting a pick ever referenced by a TradeItem (any trade state, not just
+ * currently pending) would throw an FK violation. assertNoPickEverTraded
+ * blocks the whole edit outright in that case instead. */
+export async function updateDraftSetup(input: UpdateDraftSetupInput): Promise<void> {
+  const draft = await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } });
+  if (!(await isLeagueCommissioner(draft.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can edit a draft's setup.");
+  }
+  if (draft.status !== "SETUP") throw new Error("Only a not-yet-started draft can be edited.");
+  await assertNoPickEverTraded(draft.id);
+
+  const teams = await prisma.team.findMany({ where: { leagueId: draft.leagueId } });
+  const existingPicks = await prisma.draftPick.findMany({ where: { draftId: draft.id }, orderBy: { overallPick: "asc" } });
+  const currentRoundCount = existingPicks.length / teams.length;
+  const currentOrder = existingPicks.filter((p) => p.round === 1).map((p) => p.originalTeamId);
+
+  const roundCount = input.roundCount ?? currentRoundCount;
+  if (!Number.isInteger(roundCount) || roundCount < 1) throw new Error("Round count must be at least 1.");
+  const pickTimerSeconds = input.pickTimerSeconds ?? draft.pickTimerSeconds;
+  if (!Number.isInteger(pickTimerSeconds) || pickTimerSeconds < 10) throw new Error("Pick timer must be at least 10 seconds.");
+
+  let order: string[];
+  if (input.orderMode === undefined) {
+    order = currentOrder;
+  } else if (input.orderMode === "RANDOM") {
+    order = teams.map((t) => t.id);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+  } else {
+    const teamIds = new Set(teams.map((t) => t.id));
+    const given = input.manualOrder ?? currentOrder;
+    if (given.length !== teams.length || new Set(given).size !== teams.length || !given.every((id) => teamIds.has(id))) {
+      throw new Error("Manual order must list every team in the league exactly once.");
+    }
+    order = given;
+  }
+
+  const desired: { round: number; overallPick: number; teamId: string }[] = [];
+  let overallPick = 1;
+  for (let round = 1; round <= roundCount; round++) {
+    const roundOrder = round % 2 === 1 ? order : [...order].reverse();
+    for (const teamId of roundOrder) desired.push({ round, overallPick: overallPick++, teamId });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const d of desired) {
+      const existing = existingPicks.find((p) => p.overallPick === d.overallPick);
+      if (existing) {
+        await tx.draftPick.update({
+          where: { id: existing.id },
+          data: { round: d.round, originalTeamId: d.teamId, currentOwnerId: d.teamId },
+        });
+      } else {
+        await tx.draftPick.create({
+          data: {
+            leagueId: draft.leagueId,
+            season: draft.season,
+            round: d.round,
+            originalTeamId: d.teamId,
+            currentOwnerId: d.teamId,
+            overallPick: d.overallPick,
+            draftId: draft.id,
+          },
+        });
+      }
+    }
+    const desiredOveralls = new Set(desired.map((d) => d.overallPick));
+    const toRemove = existingPicks.filter((p) => !desiredOveralls.has(p.overallPick!));
+    if (toRemove.length > 0) {
+      await tx.draftPick.deleteMany({ where: { id: { in: toRemove.map((p) => p.id) } } });
+    }
+    await tx.draft.update({ where: { id: draft.id }, data: { pickTimerSeconds } });
+  });
+}
+
+/** Deletes a whole not-yet-started draft. Same trade-safety guard as
+ * updateDraftSetup — refuses if any pick has ever been traded. */
+export async function cancelDraftSetup(input: { draftId: string; callerUserId: string }): Promise<void> {
+  const draft = await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } });
+  if (!(await isLeagueCommissioner(draft.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can cancel a draft.");
+  }
+  if (draft.status !== "SETUP") throw new Error("Only a not-yet-started draft can be cancelled.");
+  await assertNoPickEverTraded(draft.id);
+
+  await prisma.$transaction([
+    prisma.draftPick.deleteMany({ where: { draftId: input.draftId } }),
+    prisma.draft.delete({ where: { id: input.draftId } }),
+  ]);
+}
+
+/** Reverts every traded-away, still-unused pick in the league back to its
+ * original owner. Already-drafted picks are history, not touched. */
+export async function resetDraftPickOwnership(leagueId: string, callerUserId: string): Promise<{ resetCount: number }> {
+  if (!(await isLeagueCommissioner(leagueId, callerUserId))) {
+    throw new Error("Only the league commissioner can reset draft pick ownership.");
+  }
+  const unusedPicks = await prisma.draftPick.findMany({ where: { leagueId, usedOnPlayerId: null } });
+  const moved = unusedPicks.filter((p) => p.currentOwnerId !== p.originalTeamId);
+  if (moved.length > 0) {
+    await prisma.$transaction(
+      moved.map((p) => prisma.draftPick.update({ where: { id: p.id }, data: { currentOwnerId: p.originalTeamId } })),
+    );
+  }
+  return { resetCount: moved.length };
+}
+
 export async function startDraft(input: { draftId: string; callerUserId: string }): Promise<void> {
   const draft = await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } });
-  const commissioner = await getLeagueCommissioner(draft.leagueId);
-  if (!commissioner || commissioner !== input.callerUserId) {
+  if (!(await isLeagueCommissioner(draft.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can start the draft.");
   }
   if (draft.status !== "SETUP") throw new Error("This draft has already started.");

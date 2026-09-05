@@ -47,6 +47,8 @@ async function main() {
     faabMaxBid: 60,
     tradeVetoMode: "COMMISSIONER",
     tradeDeadline: null,
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    draftPickTradingEnabled: true,
   });
 
   let threw = false;

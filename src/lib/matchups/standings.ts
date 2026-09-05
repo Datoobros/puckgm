@@ -44,6 +44,7 @@ export async function getTeamScoreForPeriod(
 export interface StandingsRow {
   teamId: string;
   teamName: string;
+  division: string | null;
   wins: number;
   losses: number;
   ties: number;
@@ -69,7 +70,7 @@ export async function getStandings(
   const rows = new Map<string, StandingsRow>(
     teams.map((t) => [
       t.id,
-      { teamId: t.id, teamName: t.name, wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0 },
+      { teamId: t.id, teamName: t.name, division: t.division, wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0 },
     ]),
   );
 

@@ -8,12 +8,11 @@
 // neither.
 
 import { prisma } from "@/lib/db";
-import { getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { cancelTrade } from "@/lib/trades/mutations";
 
 export async function startNewSeason(leagueId: string, callerUserId: string): Promise<{ newSeason: number }> {
-  const commissioner = await getLeagueCommissioner(leagueId);
-  if (!commissioner || commissioner !== callerUserId) {
+  if (!(await isLeagueCommissioner(leagueId, callerUserId))) {
     throw new Error("Only the league commissioner can start a new season.");
   }
 

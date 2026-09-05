@@ -146,6 +146,19 @@ model Team {
   managerUserId String
   state         TeamState @default(ACTIVE)
   createdAt     DateTime  @default(now())
+  // Commissioner tools. isCoCommissioner grants full commissioner powers to
+  // whoever manages this team (src/lib/leagues/mutations.ts
+  // getLeagueCommissioners) — only the primary commissioner can grant/revoke
+  // it, so a co-commissioner can't lock out the founder or promote peers.
+  isCoCommissioner Boolean @default(false)
+  // Free-text, nullable = no division. Display/standings-grouping only —
+  // deliberately not wired into schedule generation or playoff seeding.
+  division String?
+  // Lets a specific team be claimed by a real person (src/app/invite/team/
+  // [code]) — distinct from League.inviteCode, which creates a NEW team.
+  // Used for a commissioner-added placeholder team or a freshly orphaned
+  // one. Nullable/lazy same pattern as League.inviteCode.
+  claimCode String? @unique
 
   rosterSlots       RosterSlot[]
   draftPicksOwned   DraftPick[]        @relation("CurrentOwner")

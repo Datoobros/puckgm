@@ -2,7 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
-import { setUpDraft, startDraft, resolveDraftState, makeDraftPick, type DraftStateView } from "@/lib/draft/mutations";
+import {
+  setUpDraft,
+  startDraft,
+  resolveDraftState,
+  makeDraftPick,
+  updateDraftSetup,
+  cancelDraftSetup,
+  resetDraftPickOwnership,
+  type DraftStateView,
+} from "@/lib/draft/mutations";
 
 export async function setUpDraftAction(leagueId: string, formData: FormData) {
   const { userId } = await auth.protect();
@@ -45,4 +54,37 @@ export async function makeDraftPickAction(leagueId: string, draftId: string, pla
   await makeDraftPick({ draftId, playerId, managerUserId: userId });
   revalidatePath(`/leagues/${leagueId}/draft`);
   return resolveDraftState(draftId);
+}
+
+export async function updateDraftSetupAction(leagueId: string, draftId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const roundCountRaw = String(formData.get("roundCount") ?? "").trim();
+  const pickTimerSecondsRaw = String(formData.get("pickTimerSeconds") ?? "").trim();
+  const orderModeRaw = String(formData.get("orderMode") ?? "").trim();
+  const manualOrder = formData.getAll("manualOrder").map(String).filter(Boolean);
+
+  await updateDraftSetup({
+    draftId,
+    callerUserId: userId,
+    roundCount: roundCountRaw ? Number(roundCountRaw) : undefined,
+    pickTimerSeconds: pickTimerSecondsRaw ? Number(pickTimerSecondsRaw) : undefined,
+    orderMode: orderModeRaw === "RANDOM" || orderModeRaw === "MANUAL" ? orderModeRaw : undefined,
+    manualOrder: orderModeRaw === "MANUAL" ? manualOrder : undefined,
+  });
+  revalidatePath(`/leagues/${leagueId}/settings`);
+  revalidatePath(`/leagues/${leagueId}/draft`);
+}
+
+export async function cancelDraftSetupAction(leagueId: string, draftId: string) {
+  const { userId } = await auth.protect();
+  await cancelDraftSetup({ draftId, callerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/settings`);
+  revalidatePath(`/leagues/${leagueId}/draft`);
+}
+
+export async function resetDraftPickOwnershipAction(leagueId: string) {
+  const { userId } = await auth.protect();
+  await resetDraftPickOwnership(leagueId, userId);
+  revalidatePath(`/leagues/${leagueId}/settings`);
+  revalidatePath(`/leagues/${leagueId}/trades`);
 }

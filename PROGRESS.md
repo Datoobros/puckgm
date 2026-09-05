@@ -36,10 +36,12 @@ are written to be read later, not just at merge time.
   played that day, not all 32 every time (fixed a real Vercel timeout — see git history).
 
 **Leagues, teams, rosters**
-- Create/join/delete league (`src/lib/leagues/mutations.ts`). Roster composition locked
-  forever at creation (no edit path exists — that's what makes "locked" true). Delete is
-  commissioner-gated, with a fallback-to-earliest-team-manager rule for leagues that
-  predate the `commissionerUserId` field.
+- Create/join/delete league (`src/lib/leagues/mutations.ts`). Roster composition and schedule
+  generation are commissioner-editable between seasons now (see "Commissioner tools" below) —
+  only `positionMode` (SEPARATE vs COMBINED forwards) stays locked forever at creation. Delete
+  is commissioner-gated (now via `isLeagueCommissioner`, covering co-commissioners too), with a
+  fallback-to-earliest-team-manager rule for leagues that predate the `commissionerUserId`
+  field.
 - Add/drop players to a team's **active** roster only (`src/lib/rosters/mutations.ts`).
   Enforces the roster size cap and one-team-per-player exclusivity within a league. First
   real use of the append-only `TransactionLog`.
@@ -691,6 +693,111 @@ private, and PuckPedia isn't an API — same reason Contracts generally stays un
   from inside Clerk's `auth.protect()` — confirmed via `git stash` that this fails identically
   against the last commit, before any of today's changes, so it's a pre-existing tsx/Clerk
   interop issue, not a regression. Not fixed here — out of scope for this batch.
+
+## Commissioner tools: co-commissioners, team management, roster overrides, draft/schedule editing, divisions
+
+Modeled on a generic fantasy platform's Commissioner Tools admin panel (~20 tools the user
+screenshotted across League Membership, Draft, League & Scoring, Roster, Schedule & Standings,
+Misc). Confirmed with the user up front: roster composition and schedule generation — both
+"locked forever"/"one-time" by the original design (DESIGN.md §2.10) — become
+commissioner-editable; Divisions and Co-commissioners are new this pass; Keepers and league
+polls/voting are explicitly out of scope, not deferred; a commissioner directly editing
+someone else's roster is a full override (bypasses cap/waiver/FAAB checks, same precedent as
+the existing waiver-award/FAAB-win/force-process overflow-allowed behavior).
+
+- **Co-commissioners** (`Team.isCoCommissioner Boolean @default(false)`). New
+  `getLeagueCommissioners`/`isLeagueCommissioner` (`src/lib/leagues/mutations.ts`) replace
+  every prior single-`commissionerUserId`-equality check across leagues, season rollover,
+  draft, matchups, and trades. `setCoCommissionerAction` is gated to the **primary**
+  commissioner only — a co-commissioner can't promote/demote themselves or anyone else, so one
+  can't lock out the founder. **Conflict-of-interest guard found during planning review**:
+  without it, a co-commissioner who's a manager of either side of a specific trade could
+  veto-kill or force-through their own trade, bypassing the 24h review entirely — both
+  `castTradeVeto` (COMMISSIONER mode) and `forceProcessTrade` now reject a caller who's a party
+  to that trade, even if they're otherwise a legitimate commissioner. This broke one existing
+  regression assertion in `trades-check.ts` (its sole commissioner was also a trade party) —
+  fixed correctly by granting a genuine third-party team co-commissioner status for that test,
+  preserving what the assertion was actually proving.
+- **`ORPHAN_FROZEN` finally closes the gap flagged earlier in this file** (see the trades
+  section above: "checked but not actually reachable yet"). New `setTeamManager(..., {
+  newManagerUserId } | { orphan: true })` is what actually sets it now. Making that meaningful
+  required auditing every roster-touching mutation in the app, not just trades: `addPlayerToRoster`,
+  `dropPlayerFromRoster`, `sendToFarm`, `callUpToActive`, `placeOnIR`, `activateFromIR`
+  (`src/lib/rosters/mutations.ts`), `setLineupSlot` (`src/lib/lineups/mutations.ts`),
+  `submitWaiverClaim` (`src/lib/waivers/mutations.ts`), and `submitFaBid`
+  (`src/lib/faab/mutations.ts`) all now reject a frozen team. **Also caught in review**:
+  `processExpiredWaivers` and `processFaabBids` (the daily cron resolvers) now filter winner
+  selection to `state: "ACTIVE"` teams — a team frozen *after* submitting a claim/bid but
+  *before* the cron runs must not still win; it resolves CLEARED/LOST instead, verified against
+  the real DB.
+- **Team claim links** — `Team.claimCode String? @unique`, single-use (cleared on claim), via
+  `regenerateTeamClaimCode` + a new `/invite/team/[code]` route. This is what makes
+  `addTeamAsCommissioner` coherent: a commissioner-added placeholder team starts owned by the
+  commissioner administratively, then gets a claim link to hand to the real manager. Rename,
+  set/clear division, reassign, orphan, and delete (only when the team has zero history —
+  `teamHasHistory` checks `RosterSlot`, `DraftPick`, `TradeItem`, `FaBid`, `FaabBudget`,
+  `WaiverClaim`, `LineupEntry`, `TradeVeto`, and `Matchup` as home or away, since schedule
+  generation alone can already put a "fresh" team into `Matchup` rows) round out per-team
+  management, all in a new "Teams & managers" card in Commissioner Settings.
+- **Real bug found during browser verification, fixed**: `setTeamManager`'s
+  duplicate-manager guard (`src/lib/leagues/mutations.ts`) queried for *any* team in the league
+  already managed by the target user, but didn't exclude the team being reassigned itself.
+  Orphaning leaves `managerUserId` untouched (only `state` changes), so reassigning an orphaned
+  team back to its own already-orphaned manager — the ordinary "I orphaned this by mistake, undo
+  it" recovery path — hit a false "that person already manages a team" rejection and silently
+  no-opped. Fixed by excluding `id: input.teamId` from that lookup; the existing regression
+  script had only ever exercised reassign-to-a-*different*-manager, so it never caught this —
+  added a dedicated assertion for the self-reassign case to `commissioner-tools-check.ts`.
+- **Second real gap found during browser verification, fixed**: the commissioner
+  roster-override controls (`!isOwner && isCommissionerViewing`, `src/app/leagues/[id]/teams/
+  [teamId]/page.tsx`) were wired into the Active-roster table but never added to the Farm or IR
+  list rendering, which only ever had `isOwner`-gated buttons. A commissioner viewing another
+  team's page could add a player and see them land on Active, Farm, or IR, but had no UI path
+  to call up a farm player, activate someone off IR, or move/drop a player already sitting in
+  either list. Added the same Active/Farm/IR/Drop button set (via `commissionerMovePlayerAction`/
+  `commissionerDropPlayerAction`) to both list renderers, verified live for all three states.
+- **Direct roster overrides** — `commissionerAddPlayer`/`commissionerDropPlayer`/
+  `commissionerMovePlayer` (`src/lib/rosters/mutations.ts`) skip the cap-check branch entirely,
+  same "overflow allowed" precedent as waiver/FAAB awards. A new debounced search box
+  (`CommissionerAddPlayerBox.tsx`, reusing the free-agent typeahead's `searchPlayersAction`)
+  plus Active/Farm/IR/Drop buttons render on any team's page when viewed by a commissioner who
+  isn't its owner. Still blocked by `ORPHAN_FROZEN` — the commissioner reassigns/un-freezes a
+  team first if it needs roster surgery.
+- **Draft settings become editable while `SETUP`** — `updateDraftSetup` diffs `DraftPick` rows
+  in place (update existing rows' `round`/`overallPick`, add/remove only the delta) instead of
+  delete-and-recreate, because `TradeItem.draftPickId` has no cascade: deleting a pick ever
+  referenced by a trade (any trade state, not just pending) would throw an FK violation. Both
+  `updateDraftSetup` and a new `cancelDraftSetup` reject outright once *any* pick in that draft
+  has ever appeared in a `TradeItem`. New `LeagueSettings.draftPickTradingEnabled` (default
+  `true`) lets a commissioner turn off pick trading entirely; `resetDraftPickOwnership` reverts
+  every *unused* traded-away pick back to its original owner league-wide (already-drafted picks
+  are history, untouched).
+- **Roster composition and schedule generation are no longer locked forever** — both move to
+  the same "between seasons, by league vote (unenforced — no voting system exists)" tier as
+  farm/IR/waiver settings already were. `positionMode` is the one field that stays locked even
+  as the rest of `rosterComposition` opens up — `updateLeagueSettings` rejects any attempt to
+  change it, and re-enforces the SEPARATE/COMBINED zero-invariants on the editable numeric
+  fields (same check `parseRosterComposition` already does at creation). New `resetSchedule`
+  deletes every `Matchup`/`MatchupPeriod` for a season so the commissioner can regenerate —
+  refused once any period's `endDate` has passed, since standings are computed live from stored
+  `Matchup` rows with no separate results table, so a completed week's history would simply
+  vanish rather than just reset.
+- **Divisions** (`Team.division: String?`) are deliberately display/standings-grouping only —
+  not wired into schedule generation (round-robin still covers every team regardless) or
+  playoff seeding (still overall standings). `getStandings` includes `division` per row; the
+  Standings page groups by it when any team has one set, otherwise renders flat as before.
+- Verified in a new `scripts/commissioner-tools-check.ts` against the real DB (co-commissioner
+  grant/revoke and the conflict-of-interest guard; orphan freezing every roster-touching
+  mutation including cron-resolution-time claims/bids; the self-reassign fix; add-team → claim
+  link → a second identity claiming it; delete-team's history gating; draft edit/cancel
+  diffing and the traded-pick lock; the pick-trading toggle; reset-pick-ownership; roster
+  composition edit with `positionMode` still rejected; schedule reset's past-week guard;
+  division grouping not disturbing unrelated mechanics) plus every pre-existing regression
+  script re-run clean. Also checked live in a real browser end to end: cancel-draft, add
+  team, claim-link generation and claiming as a second identity, co-commissioner toggle,
+  orphan → reassign (including the bug above), invite-link generation, the commissioner
+  roster-override controls across Active/Farm/IR (including the second bug above), and
+  division grouping on Standings.
 
 ## Recent, worth knowing
 
