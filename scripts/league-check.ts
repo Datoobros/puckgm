@@ -8,7 +8,8 @@ async function main() {
     season: 2027,
     managerUserId: "test-user-1",
     teamName: "Test Team A",
-    rosterComposition: { C: 2, LW: 2, RW: 2, D: 4, G: 2, UTIL: 1, BENCH: 6 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 2, LW: 2, RW: 2, F: 0, D: 4, G: 2, UTIL: 1, BENCH: 6 },
     farmSlots: 6,
     irSlots: 2,
   });

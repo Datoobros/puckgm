@@ -39,7 +39,8 @@ async function main() {
     season,
     managerUserId: "playoff-test-A",
     teamName: "Team A",
-    rosterComposition: { C: 1, LW: 1, RW: 1, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
     farmSlots: 4,
     irSlots: 2,
   });

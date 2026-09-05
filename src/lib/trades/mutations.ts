@@ -24,7 +24,6 @@ import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getLeagueCommissioner } from "@/lib/leagues/mutations";
 import { activeRosterCap } from "@/lib/rosters/mutations";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -47,7 +46,7 @@ export async function getTradeableAssets(teamId: string): Promise<TradeableAsset
   const [slots, picks, availableFaab] = await Promise.all([
     prisma.rosterSlot.findMany({ where: { teamId, effectiveTo: null }, include: { player: true } }),
     prisma.draftPick.findMany({ where: { currentOwnerId: teamId } }),
-    getAvailableBudget(teamId, CURRENT_SCHEDULE_SEASON, settings.faabBudget),
+    getAvailableBudget(teamId, team.league.currentSeason, settings.faabBudget),
   ]);
 
   return {
@@ -113,11 +112,11 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
   await assertOwnsAssets(input.counterpartyTeamId, input.receive);
 
   if (input.give.faabAmount > 0) {
-    const available = await getAvailableBudget(input.proposingTeamId, CURRENT_SCHEDULE_SEASON, settings.faabBudget);
+    const available = await getAvailableBudget(input.proposingTeamId, proposingTeam.league.currentSeason, settings.faabBudget);
     if (input.give.faabAmount > available) throw new Error(`You only have $${available} FAAB available to offer.`);
   }
   if (input.receive.faabAmount > 0) {
-    const available = await getAvailableBudget(input.counterpartyTeamId, CURRENT_SCHEDULE_SEASON, settings.faabBudget);
+    const available = await getAvailableBudget(input.counterpartyTeamId, proposingTeam.league.currentSeason, settings.faabBudget);
     if (input.receive.faabAmount > available) throw new Error(`${counterpartyTeam.name} only has $${available} FAAB available.`);
   }
 
@@ -397,8 +396,8 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
       );
     } else if (item.itemType === "FAAB" && item.faabAmount) {
       const [fromBudget, toBudget] = await Promise.all([
-        getOrInitFaabBudget(item.fromTeamId, CURRENT_SCHEDULE_SEASON, settings.faabBudget),
-        getOrInitFaabBudget(item.toTeamId, CURRENT_SCHEDULE_SEASON, settings.faabBudget),
+        getOrInitFaabBudget(item.fromTeamId, league.currentSeason, settings.faabBudget),
+        getOrInitFaabBudget(item.toTeamId, league.currentSeason, settings.faabBudget),
       ]);
       ops.push(prisma.faabBudget.update({ where: { id: fromBudget.id }, data: { remaining: fromBudget.remaining - item.faabAmount } }));
       ops.push(prisma.faabBudget.update({ where: { id: toBudget.id }, data: { remaining: toBudget.remaining + item.faabAmount } }));

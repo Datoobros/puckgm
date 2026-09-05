@@ -590,6 +590,108 @@ roster by drafting the real NHL player pool instead of instant-add) and a recurr
   through the actual UI (search box, click Draft), confirming no AUTO tag, the next team
   getting a fresh full countdown, and the picked player disappearing from the pool.
 
+## Quality-of-life batch: league type, position mode, invites, search
+
+Six requests came in together. Two were explicitly out of scope for this pass, by the
+user's own choice: ELC-based waiver exemption (no free contract-data source exists —
+DESIGN.md §2.12 already documents CapFriendly, the old source, was bought and taken
+private, and PuckPedia isn't an API — same reason Contracts generally stays unbuilt) and
+"give the commissioner more power" (explicitly deferred). The other four:
+
+- **The load-bearing discovery**: the whole app treated "the season" as one global
+  hardcoded constant (`CURRENT_SCHEDULE_SEASON`, `src/lib/matchups/constants.ts`) shared by
+  every league — `League` had no season field of its own. Redraft literally can't work
+  without a real per-league season, so this pass added `League.currentSeason Int` (backfilled
+  to the old global's value, so every existing dynasty league is unaffected) and replaced
+  every read of the constant with the league's own value. The one spot that actually iterated
+  across leagues, `processDuePlayoffs` (`src/lib/matchups/playoffs.ts`), now joins back to
+  `League` and compares per row instead of filtering by a shared scalar — different leagues
+  can now genuinely be on different seasons. `CURRENT_SCHEDULE_SEASON` still exists, just as
+  the *default* a brand-new league is created with.
+- **League type: DYNASTY vs REDRAFT** (`LeagueSettings.leagueType`, locked at creation like
+  `rosterComposition`/`scoringFormat`). DYNASTY is this app's original, only-ever-built model
+  — unchanged. REDRAFT has no farm team: `farmSlots` is forced to `0` both at creation and in
+  `updateLeagueSettings` (server-side, not just hidden in the form), and the Farm action
+  button on the roster page is gated on `farmSlots > 0` (previously rendered unconditionally
+  and would have hit an unhandled "Farm is full (0 max)" error — found while wiring this up,
+  before it ever shipped). New `startNewSeason` (`src/lib/leagues/season.ts`, REDRAFT-only,
+  rejected server-side otherwise) — commissioner-triggered from a new Season card in
+  Commissioner Settings: cancels every non-terminal trade first (a wipe mid-flight would
+  otherwise leave a `PROCESSED` trade with a silently-skipped item —
+  `executeTradeTransfers` tolerates a missing `RosterSlot` but still marks the trade done),
+  closes out every `RosterSlot` in the league (release to free agency — no waiver cleanup
+  needed, since a farm-bound claim is structurally impossible at `farmSlots: 0`), then
+  increments `currentSeason`. It deliberately doesn't auto-generate a new draft or schedule —
+  the commissioner uses the already-built Draft and Schedule forms afterward, which now just
+  naturally operate against the bumped season, same as a brand-new league.
+- **Roster position mode: SEPARATE vs COMBINED forwards** (`RosterComposition.positionMode`
+  + a new `F` field, locked at creation, a per-league choice — not a global change). All real
+  logic lives in `src/lib/lineups/mutations.ts`: a second eligibility map for COMBINED
+  (`F: ["C","L","R"]` replacing the three separate entries), `capFor` gains an `F` case, and
+  `eligibleSlotsForPosition`/the auto-set-lineup position list are now parameterized by mode
+  instead of one fixed global map. New-league creation gets a position-mode selector
+  (`LeagueTypeAndRosterFields.tsx`) toggling between the two roster-input grids.
+- **Real bug found and fixed while verifying**: `activeRosterCap` (`src/lib/rosters/
+  mutations.ts`) did `Object.values(rosterComposition).reduce((sum, n) => sum + n, 0)` —
+  once `positionMode` (a string, not a count) became a real field on that object, this would
+  silently string-concatenate instead of sum for every COMBINED-mode league, corrupting the
+  active roster cap everywhere it's used (trade room checks, the roster page's cap display,
+  etc.). Fixed by excluding `positionMode` before summing. Three page components had the
+  identical inline `Object.values(...).reduce(...)` duplicated instead of calling this
+  shared helper — replaced all three with the (now-fixed) `activeRosterCap` call, so the fix
+  only had to happen once. Two more spots displayed roster composition as text
+  (`Object.entries(...).map(...)`) — filtered out `positionMode` and zero-count slots so a
+  COMBINED league doesn't show "0 C · 0 LW · 0 RW · 6 F · ...".
+- **Per-league invite links** (item 6 — "anyone can use the site, only invited people join a
+  specific league"). Confirmed the real gap first: any signed-in user could already join any
+  league with zero gate (`createTeamAction` had no membership/invite check at all — deleted
+  entirely, since a dead-but-still-reachable Server Action is a live security hole, not
+  inert code). `League.inviteCode String? @unique`, generated via `crypto.randomBytes(9)
+  .toString("base64url")` (Node's `crypto`, confirmed no edge runtime anywhere in this app).
+  Commissioner Settings gained an "Invite link" card (generate/regenerate — regenerating is
+  the only revocation mechanism, and that's intentional: links are reusable and
+  non-expiring, since `createTeam`'s existing one-team-per-manager-per-league check is the
+  real guard, not the link). New `/invite/[code]` route + `joinLeagueAction` do the actual
+  join. The league home page's non-member view now just points at needing a link — viewing a
+  league dashboard you're not on is unchanged (still open to any signed-in user), only
+  *joining* is gated now.
+- **Free-agent search typeahead** (`PlayerSearchBox.tsx`, `/leagues/[id]/players`): a
+  debounced (200ms, 2+ chars) client-side dropdown over a new lightweight
+  `searchPlayersByName` (`src/lib/players/rankings.ts` — no stat aggregation, just
+  name/position/team for ~8 matches) reusing the same `contains`-on-`fullName` search the
+  page's exhaustive `?q=` path already used (already matches first *or* last name — "conn"
+  already matched "Kyle Con**n**or" via last name before this). Clicking a result submits the
+  real exhaustive search for that exact name. No player photos — no headshot data source
+  exists anywhere in this app. **Bug found while verifying**: the dropdown popped back open
+  on landing on a results page (the `initialQuery` prop is 2+ chars after any search, and the
+  fetch effect ran on mount) — fixed with a `hasTyped` ref so only actual typing triggers a
+  new lookup, not the page's own pre-filled value.
+- Verified in `scripts/qol-batch-check.ts` against the real DB: position-mode eligibility
+  and `capFor` at the unit level; a REDRAFT+COMBINED league forces `farmSlots: 0` at creation
+  and rejects a later edit trying to un-zero it; `activeRosterCap` returns a real number (not
+  a corrupted string) for a COMBINED league; a 2-round startup draft, a pending draft-pick
+  trade, then `startNewSeason` — confirming the trade gets cancelled, every roster slot
+  closes out, `currentSeason` advances by exactly 1, and a fresh startup draft for the new
+  season sees both previously-drafted players available again; the full invite-link
+  lifecycle (generate, resolve, commissioner-only regenerate, old code stops resolving, a new
+  manager joins through it). Re-ran every existing waiver/FAAB/trades/playoffs/draft
+  regression script afterward to confirm dynasty/separate-mode leagues are byte-for-byte
+  unaffected — two of those scripts (`faab-check.ts`, `trades-check.ts`) needed their own
+  `CURRENT_SCHEDULE_SEASON` references swapped for a local season constant, since "the
+  season" is no longer one global value; both had been silently failing on an unrelated
+  assertion for that exact reason and now pass end to end, including their own cleanup.
+  Also checked all of it in a real browser: the new-league form's league-type/position-mode
+  toggles actually swapping the roster-input grid, Commissioner Settings' Season and Invite
+  Link cards, generating a link and joining through it as a second manager, and the players-
+  page typeahead (matches appearing, a click submitting the exact-name search, the "View N
+  results" link).
+- **Known pre-existing limitation, unrelated to this batch, found while re-running the full
+  regression suite**: `scripts/roster-action-check.ts` (calls real Server Actions directly
+  via `tsx`, not just their underlying lib functions) fails with a `server-only` import error
+  from inside Clerk's `auth.protect()` — confirmed via `git stash` that this fails identically
+  against the last commit, before any of today's changes, so it's a pre-existing tsx/Clerk
+  interop issue, not a regression. Not fixed here — out of scope for this batch.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`

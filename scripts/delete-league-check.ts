@@ -7,7 +7,8 @@ async function main() {
     season: 2027,
     managerUserId: "delete-test-owner",
     teamName: "Owner Team",
-    rosterComposition: { C: 2, LW: 2, RW: 2, D: 4, G: 2, UTIL: 1, BENCH: 6 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 2, LW: 2, RW: 2, F: 0, D: 4, G: 2, UTIL: 1, BENCH: 6 },
     farmSlots: 6,
     irSlots: 2,
   });
@@ -37,7 +38,8 @@ async function main() {
     season: 2027,
     managerUserId: "legacy-owner",
     teamName: "Legacy Team",
-    rosterComposition: { C: 2, LW: 2, RW: 2, D: 4, G: 2, UTIL: 1, BENCH: 6 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 2, LW: 2, RW: 2, F: 0, D: 4, G: 2, UTIL: 1, BENCH: 6 },
     farmSlots: 6,
     irSlots: 2,
   });

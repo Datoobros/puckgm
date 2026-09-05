@@ -10,7 +10,8 @@ async function main() {
     managerUserId: "roster-test-1",
     teamName: "Team A",
     // Deliberately tiny cap (sum = 1) to exercise the full-roster path fast.
-    rosterComposition: { C: 1, LW: 0, RW: 0, D: 0, G: 0, UTIL: 0, BENCH: 0 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 0, RW: 0, F: 0, D: 0, G: 0, UTIL: 0, BENCH: 0 },
     farmSlots: 6,
     irSlots: 2,
   });

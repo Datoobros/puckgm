@@ -5,7 +5,6 @@ import { prisma } from "@/lib/db";
 import { getLeague } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getScoreboardForPeriod } from "@/lib/matchups/standings";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 import { Card } from "@/components/Card";
 
 export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/scoreboard">) {
@@ -20,8 +19,8 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
   const settings = league.settingsJson as unknown as LeagueSettings;
 
   const [scoreboard, periodCount] = await Promise.all([
-    getScoreboardForPeriod(leagueId, CURRENT_SCHEDULE_SEASON, settings.scoringConfig, requestedPeriodNo),
-    prisma.matchupPeriod.count({ where: { leagueId, season: CURRENT_SCHEDULE_SEASON } }),
+    getScoreboardForPeriod(leagueId, league.currentSeason, settings.scoringConfig, requestedPeriodNo),
+    prisma.matchupPeriod.count({ where: { leagueId, season: league.currentSeason } }),
   ]);
 
   return (

@@ -10,7 +10,8 @@ import {
   forceProcessTrade,
   processDueTrades,
 } from "@/lib/trades/mutations";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
+
+const LEAGUE_SEASON = 2027; // must match the `season` passed to createLeague below — this is now per-league, not a global constant
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERTION FAILED: ${msg}`);
@@ -24,10 +25,11 @@ async function backdateReview(tradeId: string) {
 async function main() {
   const { leagueId, teamId: teamA } = await createLeague({
     name: "Trades Test League (delete me)",
-    season: 2027,
+    season: LEAGUE_SEASON,
     managerUserId: "trade-test-A",
     teamName: "Team A",
-    rosterComposition: { C: 1, LW: 1, RW: 1, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
     farmSlots: 4,
     irSlots: 2,
   });
@@ -113,8 +115,8 @@ async function main() {
   const pick1After = await prisma.draftPick.findUniqueOrThrow({ where: { id: pick1.id } });
   assert(pick1After.currentOwnerId === teamB, "pick ownership transferred to Team B");
 
-  const budgetA = await getOrInitFaabBudget(teamA, CURRENT_SCHEDULE_SEASON, 100);
-  const budgetB = await getOrInitFaabBudget(teamB, CURRENT_SCHEDULE_SEASON, 100);
+  const budgetA = await getOrInitFaabBudget(teamA, LEAGUE_SEASON, 100);
+  const budgetB = await getOrInitFaabBudget(teamB, LEAGUE_SEASON, 100);
   assert(budgetA.remaining === 110, "Team A's FAAB credited (100 + 10 = 110)");
   assert(budgetB.remaining === 90, "Team B's FAAB debited (100 - 10 = 90)");
 
@@ -198,7 +200,7 @@ async function main() {
     give: { playerIds: [], pickIds: [], faabAmount: 95 },
     receive: { playerIds: [], pickIds: [], faabAmount: 0 },
   });
-  const availableAfterTradeCommit = await getAvailableBudget(teamA, CURRENT_SCHEDULE_SEASON, 100);
+  const availableAfterTradeCommit = await getAvailableBudget(teamA, LEAGUE_SEASON, 100);
   assert(availableAfterTradeCommit === 15, "available budget reflects FAAB already promised away in a pending trade (110 - 95 = 15)");
 
   let overCommitThrew = false;

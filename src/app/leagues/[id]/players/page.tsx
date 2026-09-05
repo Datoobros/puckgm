@@ -5,8 +5,8 @@ import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 import { getAvailableBudget, getMyPendingBids } from "@/lib/faab/mutations";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 import { PlayerStatsTable } from "./PlayerStatsTable";
+import { PlayerSearchBox } from "./PlayerSearchBox";
 import { cancelFaBidAction } from "./actions";
 
 // Displayed pool is capped rather than shipping every player to the client
@@ -51,7 +51,7 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
   const [availableFaab, myPendingBids] =
     myTeam && settings.faabEnabled
       ? await Promise.all([
-          getAvailableBudget(myTeam.id, CURRENT_SCHEDULE_SEASON, settings.faabBudget),
+          getAvailableBudget(myTeam.id, league.currentSeason, settings.faabBudget),
           getMyPendingBids(leagueId, myTeam.id),
         ])
       : [null, []];
@@ -69,21 +69,9 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
         </p>
       )}
 
-      <form method="get" className="mt-4 flex gap-2">
-        <input
-          type="text"
-          name="q"
-          defaultValue={query}
-          placeholder="Player Name"
-          className="max-w-sm flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-blue"
-        />
-        <button
-          type="submit"
-          className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
-        >
-          Search
-        </button>
-      </form>
+      <div className="mt-4">
+        <PlayerSearchBox initialQuery={query} />
+      </div>
 
       {settings.faabEnabled && myTeam && (
         <div className="mt-4 rounded-lg border border-border bg-surface p-4 text-sm">

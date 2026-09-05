@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
-import { getRosterCounts } from "@/lib/rosters/mutations";
+import { getRosterCounts, activeRosterCap } from "@/lib/rosters/mutations";
 import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { Card, SectionLabel } from "@/components/Card";
 
@@ -14,7 +14,7 @@ export default async function OtherTeamsPage(props: PageProps<"/leagues/[id]/tea
   if (!league) notFound();
 
   const settings = league.settingsJson as unknown as LeagueSettings;
-  const cap = Object.values(settings.rosterComposition).reduce((s, n) => s + n, 0);
+  const cap = activeRosterCap(settings);
   const [rosterCounts, waiverPriority] = await Promise.all([
     getRosterCounts(league.teams.map((t) => t.id)),
     getOrInitWaiverPriority(id),

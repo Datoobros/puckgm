@@ -20,7 +20,10 @@ import type { LeagueSettings, RosterComposition } from "@/lib/leagues/mutations"
 import { getTeamGamesForDate, isLocked } from "@/lib/lineups/schedule";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
-const STARTER_ELIGIBILITY: Record<string, string[] | null> = {
+// Two eligibility maps, one per RosterComposition.positionMode. SEPARATE
+// keeps C/L/R as distinct starting slots; COMBINED folds them into one "F"
+// (Forwards) slot instead — everything else (D/G/UTIL/BE) is identical.
+const SEPARATE_ELIGIBILITY: Record<string, string[] | null> = {
   C: ["C"],
   L: ["L"],
   R: ["R"],
@@ -30,19 +33,39 @@ const STARTER_ELIGIBILITY: Record<string, string[] | null> = {
   BE: null, // any position can sit
 };
 
-export const LINEUP_SLOTS = Object.keys(STARTER_ELIGIBILITY);
+const COMBINED_ELIGIBILITY: Record<string, string[] | null> = {
+  F: ["C", "L", "R"],
+  D: ["D"],
+  G: ["G"],
+  UTIL: ["C", "L", "R", "D"],
+  BE: null,
+};
+
+type PositionMode = RosterComposition["positionMode"];
+
+function eligibilityFor(positionMode: PositionMode): Record<string, string[] | null> {
+  return positionMode === "COMBINED" ? COMBINED_ELIGIBILITY : SEPARATE_ELIGIBILITY;
+}
+
+/** Every starting slot code a league's lineup can use, in this mode — "BE"
+ * included. Team roster/lineup UI reads this to know what to render. */
+export function lineupSlotsFor(positionMode: PositionMode): string[] {
+  return Object.keys(eligibilityFor(positionMode));
+}
 
 export function capFor(slot: string, comp: RosterComposition): number | null {
   if (slot === "BE") return null; // bench isn't capacity-limited, it's the leftover state
+  if (slot === "F") return comp.F;
   if (slot === "L") return comp.LW;
   if (slot === "R") return comp.RW;
-  return comp[slot as keyof RosterComposition] ?? 0;
+  return comp[slot as keyof Omit<RosterComposition, "positionMode">] ?? 0;
 }
 
-/** Starting slots (excluding BE, which is always available) a position can fill. */
-export function eligibleSlotsForPosition(position: string | null): string[] {
+/** Starting slots (excluding BE, which is always available) a position can
+ * fill, in the given league's position mode. */
+export function eligibleSlotsForPosition(position: string | null, positionMode: PositionMode = "SEPARATE"): string[] {
   if (!position) return [];
-  return Object.entries(STARTER_ELIGIBILITY)
+  return Object.entries(eligibilityFor(positionMode))
     .filter(([slot, positions]) => slot !== "BE" && positions?.includes(position))
     .map(([slot]) => slot);
 }
@@ -78,7 +101,8 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
     throw new Error("You don't manage this team.");
   }
 
-  const eligible = STARTER_ELIGIBILITY[input.slot];
+  const settingsForEligibility = team.league.settingsJson as unknown as LeagueSettings;
+  const eligible = eligibilityFor(settingsForEligibility.rosterComposition.positionMode)[input.slot];
   if (eligible === undefined) throw new Error(`Unknown lineup slot "${input.slot}".`);
 
   const rosterSlot = await prisma.rosterSlot.findFirst({
@@ -136,13 +160,16 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
   ]);
 }
 
-// Position-specific slots first (each candidate matches at most one of
-// C/L/R/D/G, so processing order among these doesn't affect the outcome),
-// then UTIL absorbs whichever eligible skaters are left over. Ranking is by
-// career-to-date fantasy points — simple, uses data that's already computed,
-// and doesn't depend on which "season" today's calendar date happens to
-// bucket into (see src/lib/players/seasons.ts's caveat about that boundary).
-const AUTO_SET_POSITION_SLOTS = ["C", "L", "R", "D", "G"];
+// Position-specific slots first (in SEPARATE mode each candidate matches at
+// most one of C/L/R/D/G, so processing order among these doesn't affect the
+// outcome; in COMBINED mode F/D/G plays the same role), then UTIL absorbs
+// whichever eligible skaters are left over. Ranking is by career-to-date
+// fantasy points — simple, uses data that's already computed, and doesn't
+// depend on which "season" today's calendar date happens to bucket into
+// (see src/lib/players/seasons.ts's caveat about that boundary).
+function autoSetPositionSlots(positionMode: PositionMode): string[] {
+  return positionMode === "COMBINED" ? ["F", "D", "G"] : ["C", "L", "R", "D", "G"];
+}
 
 export interface AutoSetLineupInput {
   leagueId: string;
@@ -175,6 +202,8 @@ export async function autoSetLineup(input: AutoSetLineupInput): Promise<AutoSetL
     throw new Error("You don't manage this team.");
   }
   const settings = team.league.settingsJson as unknown as LeagueSettings;
+  const positionMode = settings.rosterComposition.positionMode;
+  const positionSlots = autoSetPositionSlots(positionMode);
 
   const activeSlots = await prisma.rosterSlot.findMany({
     where: { teamId: input.teamId, slotType: "ACTIVE", effectiveTo: null },
@@ -199,7 +228,7 @@ export async function autoSetLineup(input: AutoSetLineupInput): Promise<AutoSetL
     const entryByPlayer = new Map(existingEntries.map((e) => [e.playerId, e.lineupSlot]));
 
     const remainingCap: Record<string, number> = {};
-    for (const slot of [...AUTO_SET_POSITION_SLOTS, "UTIL"]) {
+    for (const slot of [...positionSlots, "UTIL"]) {
       remainingCap[slot] = capFor(slot, settings.rosterComposition) ?? 0;
     }
 
@@ -226,13 +255,13 @@ export async function autoSetLineup(input: AutoSetLineupInput): Promise<AutoSetL
     candidates.sort((a, b) => b.points - a.points);
 
     const assigned = new Map<string, string>(); // playerId -> slot
-    for (const slot of AUTO_SET_POSITION_SLOTS) {
+    for (const slot of positionSlots) {
       let cap = remainingCap[slot] ?? 0;
       if (cap <= 0) continue;
       for (const c of candidates) {
         if (cap <= 0) break;
         if (assigned.has(c.s.playerId)) continue;
-        if (!eligibleSlotsForPosition(c.s.player.primaryPosition).includes(slot)) continue;
+        if (!eligibleSlotsForPosition(c.s.player.primaryPosition, positionMode).includes(slot)) continue;
         assigned.set(c.s.playerId, slot);
         cap -= 1;
       }
@@ -242,7 +271,7 @@ export async function autoSetLineup(input: AutoSetLineupInput): Promise<AutoSetL
       for (const c of candidates) {
         if (cap <= 0) break;
         if (assigned.has(c.s.playerId)) continue;
-        if (!eligibleSlotsForPosition(c.s.player.primaryPosition).includes("UTIL")) continue;
+        if (!eligibleSlotsForPosition(c.s.player.primaryPosition, positionMode).includes("UTIL")) continue;
         assigned.set(c.s.playerId, "UTIL");
         cap -= 1;
       }

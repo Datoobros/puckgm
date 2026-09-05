@@ -85,8 +85,20 @@ model League {
   id            String   @id @default(cuid())
   name          String
   seasonFounded Int
+  // The season every "current standings/schedule/draft/FAAB" lookup actually
+  // uses — see src/lib/matchups/constants.ts's CURRENT_SCHEDULE_SEASON for
+  // why this replaced a single global constant. Defaults to the pre-existing
+  // global value so every league created before this field existed is
+  // unaffected; createLeague sets it explicitly to the creation season going
+  // forward. Only ever advanced by startNewSeasonAction (REDRAFT leagues).
+  currentSeason Int      @default(2026)
   settingsJson  Json // includes mutability-tiered settings, see DESIGN.md §2.10
   createdAt     DateTime @default(now())
+  // Shareable join link (src/lib/leagues/mutations.ts regenerateInviteCode) —
+  // nullable because it's generated lazily on first "Generate invite link"
+  // click, not backfilled for leagues that predate this feature. Regenerating
+  // overwrites this, which is the only revocation mechanism.
+  inviteCode String? @unique
   // Nullable so this migration is safe against leagues created before this
   // field existed — mutations.ts falls back to the earliest team's manager
   // for those. Always set going forward (createLeague sets it to the

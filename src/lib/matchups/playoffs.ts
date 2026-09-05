@@ -14,7 +14,6 @@
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getStandings, getTeamScoreForPeriod } from "@/lib/matchups/standings";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 
 /** Standard bracket seeding order — consecutive pairs are the real
  * single-elimination pairing (keeps seed 1 and 2 apart until the final).
@@ -126,15 +125,20 @@ export async function advancePlayoffsForLeague(leagueId: string, season: number)
   }
 }
 
-/** Cron entry point — every league with a playoff bracket for the current
- * season gets one advancement pass. */
+/** Cron entry point — every league with a playoff bracket for ITS OWN
+ * current season gets one advancement pass. Each league can be on a
+ * different season (redraft leagues advance independently), so this can't
+ * filter by a single scalar season the way a single-season app could — it
+ * has to join back to League and compare per row. */
 export async function processDuePlayoffs(): Promise<void> {
   const rows = await prisma.matchupPeriod.findMany({
-    where: { season: CURRENT_SCHEDULE_SEASON, isPlayoffs: true },
-    select: { leagueId: true },
+    where: { isPlayoffs: true },
+    select: { leagueId: true, season: true, league: { select: { currentSeason: true } } },
     distinct: ["leagueId"],
+    orderBy: { season: "desc" }, // so distinct keeps each league's MOST RECENT playoff season, not an arbitrary past one
   });
-  for (const { leagueId } of rows) {
-    await advancePlayoffsForLeague(leagueId, CURRENT_SCHEDULE_SEASON);
+  const due = rows.filter((r) => r.season === r.league.currentSeason);
+  for (const { leagueId, season } of due) {
+    await advancePlayoffsForLeague(leagueId, season);
   }
 }

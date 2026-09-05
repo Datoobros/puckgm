@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { getTeamRosterView, getCallupsUsedThisWeek } from "@/lib/rosters/mutations";
+import { getTeamRosterView, getCallupsUsedThisWeek, activeRosterCap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate, getPlayerDailyStats, type PlayerStatsRow } from "@/lib/players/rankings";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import { seasonByValue } from "@/lib/players/seasons";
@@ -15,7 +15,7 @@ import { LineupSlotSelect, type SlotOption } from "./LineupSlotSelect";
 import { ViewControls } from "./ViewControls";
 import { AutoSetLineupButton } from "./AutoSetLineupButton";
 
-const SLOT_LABELS: Record<string, string> = { C: "C", L: "L", R: "R", D: "D", G: "G", UTIL: "UTIL", BE: "Bench" };
+const SLOT_LABELS: Record<string, string> = { C: "C", L: "L", R: "R", F: "F", D: "D", G: "G", UTIL: "UTIL", BE: "Bench" };
 
 function todayUTC(): string {
   return new Date().toISOString().slice(0, 10);
@@ -33,8 +33,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // lineup slot (not roster-add order) — C block, then L, then R, then D, then
 // UTIL, then Bench. A visual divider is coarser than the sort: C/L/R don't
 // get a line between them, only before D / UTIL / Bench do.
-const SKATER_SLOT_ORDER = ["C", "L", "R", "D", "UTIL", "BE"];
-const SKATER_DIVIDER_GROUPS: string[][] = [["C", "L", "R"], ["D"], ["UTIL"], ["BE"]];
+const SKATER_SLOT_ORDER = ["C", "L", "R", "F", "D", "UTIL", "BE"];
+const SKATER_DIVIDER_GROUPS: string[][] = [["C", "L", "R", "F"], ["D"], ["UTIL"], ["BE"]];
 const GOALIE_SLOT_ORDER = ["G", "BE"];
 const GOALIE_DIVIDER_GROUPS: string[][] = [["G"], ["BE"]];
 
@@ -64,7 +64,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   if (!team || team.leagueId !== leagueId) notFound();
 
   const settings = team.league.settingsJson as unknown as LeagueSettings;
-  const cap = Object.values(settings.rosterComposition).reduce((sum, n) => sum + n, 0);
+  const cap = activeRosterCap(settings);
   const isOwner = team.managerUserId === userId;
 
   const allSlots = await getTeamRosterView(teamId);
@@ -97,7 +97,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
     const game = s.player.currentNhlOrg ? teamGames.get(s.player.currentNhlOrg) : undefined;
     const locked = game ? isLocked(game) : false;
 
-    const starterSlots = eligibleSlotsForPosition(s.player.primaryPosition);
+    const starterSlots = eligibleSlotsForPosition(s.player.primaryPosition, settings.rosterComposition.positionMode);
     const options: SlotOption[] = [
       ...starterSlots.map((slot) => {
         const capN = capFor(slot, settings.rosterComposition) ?? 0;
@@ -219,6 +219,8 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           isOwner={isOwner}
           lineupFor={lineupFor}
           waiverGpThreshold={settings.waiverGpThreshold}
+          positionMode={settings.rosterComposition.positionMode}
+          farmSlots={settings.farmSlots}
           emptyText="No skaters rostered yet."
         />
       </div>
@@ -236,6 +238,8 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           isOwner={isOwner}
           lineupFor={lineupFor}
           waiverGpThreshold={settings.waiverGpThreshold}
+          positionMode={settings.rosterComposition.positionMode}
+          farmSlots={settings.farmSlots}
           emptyText="No goalies rostered yet."
         />
       </div>
@@ -382,6 +386,8 @@ function RosterTable({
   isOwner,
   lineupFor,
   waiverGpThreshold,
+  positionMode,
+  farmSlots,
   emptyText,
 }: {
   slots: RosterSlotWithPlayer[];
@@ -394,6 +400,8 @@ function RosterTable({
   isOwner: boolean;
   lineupFor: (s: RosterSlotWithPlayer) => LineupInfo;
   waiverGpThreshold: number;
+  positionMode: "SEPARATE" | "COMBINED";
+  farmSlots: number;
   emptyText: string;
 }) {
   if (slots.length === 0) {
@@ -427,7 +435,7 @@ function RosterTable({
             const { player, playerId } = s;
             const stats = statsById.get(playerId);
             const lineup = lineupFor(s);
-            const eligible = eligibleSlotsForPosition(player.primaryPosition);
+            const eligible = eligibleSlotsForPosition(player.primaryPosition, positionMode);
 
             const group = slotGroupIndex(lineup.currentSlot, slotGroups);
             const prevGroup = i > 0 ? slotGroupIndex(lineupFor(slots[i - 1]).currentSlot, slotGroups) : group;
@@ -503,14 +511,16 @@ function RosterTable({
                           </button>
                         </form>
                       )}
-                      <form action={sendToFarmAction.bind(null, leagueId, teamId, playerId)}>
-                        <button
-                          type="submit"
-                          className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
-                        >
-                          → Farm
-                        </button>
-                      </form>
+                      {farmSlots > 0 && (
+                        <form action={sendToFarmAction.bind(null, leagueId, teamId, playerId)}>
+                          <button
+                            type="submit"
+                            className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
+                          >
+                            → Farm
+                          </button>
+                        </form>
+                      )}
                       <form action={dropPlayerAction.bind(null, leagueId, teamId, playerId)}>
                         <button
                           type="submit"

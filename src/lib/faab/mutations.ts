@@ -19,7 +19,6 @@
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 
 export async function getOrInitFaabBudget(teamId: string, season: number, startingAmount: number) {
   const existing = await prisma.faabBudget.findUnique({ where: { teamId_season: { teamId, season } } });
@@ -87,7 +86,7 @@ export async function submitFaBid(input: SubmitFaBidInput): Promise<void> {
   });
   if (existingBid) throw new Error("You already have a pending bid on this player — cancel it to change the amount.");
 
-  const available = await getAvailableBudget(team.id, CURRENT_SCHEDULE_SEASON, settings.faabBudget);
+  const available = await getAvailableBudget(team.id, team.league.currentSeason, settings.faabBudget);
   if (input.amount > available) {
     throw new Error(`Bid exceeds your available FAAB ($${available}, after your other pending bids).`);
   }
@@ -194,7 +193,7 @@ export async function processFaabBids(): Promise<FaabProcessResult[]> {
     const losers = bids.filter((b) => b.id !== winner.id);
 
     const settings = winner.team.league.settingsJson as unknown as LeagueSettings;
-    const budget = await getOrInitFaabBudget(winner.teamId, CURRENT_SCHEDULE_SEASON, settings.faabBudget);
+    const budget = await getOrInitFaabBudget(winner.teamId, winner.team.league.currentSeason, settings.faabBudget);
     // Safety net — remaining shouldn't drift below what was checked at
     // submission, but re-verify before debiting rather than trusting it.
     if (winner.amount > budget.remaining) {

@@ -102,6 +102,28 @@ export async function getPlayerStatsAggregate(opts?: {
   return opts?.limit ? withPoints.slice(0, opts.limit) : withPoints;
 }
 
+export interface PlayerSearchResult {
+  id: string;
+  fullName: string;
+  primaryPosition: string | null;
+  currentNhlOrg: string | null;
+}
+
+/** A fast, plain name lookup for the typeahead dropdown — no stat
+ * aggregation, unlike getPlayerStatsAggregate above. "contains" on fullName
+ * already matches both first and last name (e.g. "conn" matches "Kyle
+ * Connor" via the last name and "Connor McDavid" via the first). */
+export async function searchPlayersByName(query: string, limit = 8): Promise<PlayerSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  return prisma.player.findMany({
+    where: { fullName: { contains: trimmed, mode: "insensitive" } },
+    select: { id: true, fullName: true, primaryPosition: true, currentNhlOrg: true },
+    take: limit,
+    orderBy: { careerNhlGp: "desc" },
+  });
+}
+
 /** One row per player for a single calendar date — that day's raw box
  * score run through the scoring config, not a season sum. Players with no
  * completed game that date are simply absent from the map (same "missing

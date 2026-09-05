@@ -4,7 +4,6 @@ import { prisma } from "@/lib/db";
 import { getLeague } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getStandings, getScoreboardForPeriod } from "@/lib/matchups/standings";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
 import { Card, SectionLabel } from "@/components/Card";
 
 export default async function StandingsPage(props: PageProps<"/leagues/[id]/standings">) {
@@ -16,22 +15,22 @@ export default async function StandingsPage(props: PageProps<"/leagues/[id]/stan
   const settings = league.settingsJson as unknown as LeagueSettings;
 
   const hasSchedule =
-    (await prisma.matchupPeriod.count({ where: { leagueId, season: CURRENT_SCHEDULE_SEASON } })) > 0;
-  const standings = hasSchedule ? await getStandings(leagueId, CURRENT_SCHEDULE_SEASON, settings.scoringConfig) : [];
+    (await prisma.matchupPeriod.count({ where: { leagueId, season: league.currentSeason } })) > 0;
+  const standings = hasSchedule ? await getStandings(leagueId, league.currentSeason, settings.scoringConfig) : [];
 
   const playoffPeriods = await prisma.matchupPeriod.findMany({
-    where: { leagueId, season: CURRENT_SCHEDULE_SEASON, isPlayoffs: true },
+    where: { leagueId, season: league.currentSeason, isPlayoffs: true },
     orderBy: { periodNo: "asc" },
   });
   const playoffRounds = await Promise.all(
-    playoffPeriods.map((p) => getScoreboardForPeriod(leagueId, CURRENT_SCHEDULE_SEASON, settings.scoringConfig, p.periodNo)),
+    playoffPeriods.map((p) => getScoreboardForPeriod(leagueId, league.currentSeason, settings.scoringConfig, p.periodNo)),
   );
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Standings</h1>
       <p className="mt-1 text-sm text-muted">
-        {CURRENT_SCHEDULE_SEASON}-{(CURRENT_SCHEDULE_SEASON + 1) % 100} regular season
+        {league.currentSeason}-{(league.currentSeason + 1) % 100} regular season
       </p>
 
       <div className="mt-6">

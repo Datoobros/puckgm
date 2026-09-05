@@ -4,14 +4,21 @@
 // throughout the ingestion code: keep the actual logic importable and
 // scriptable, keep the framework glue thin.
 
+import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { STARTER_SCORING, EDITABLE_SCORING_FIELDS, type ScoringConfig } from "@/lib/scoring/engine";
 
 export interface RosterComposition {
+  // Locked at creation, like every other field here. SEPARATE keeps C/LW/RW
+  // as distinct starting slots (F stays 0); COMBINED folds them into one "F"
+  // (Forwards) slot instead (C/LW/RW all stay 0). src/lib/lineups/mutations.ts
+  // is where this actually changes lineup-slot eligibility.
+  positionMode: "SEPARATE" | "COMBINED";
   C: number;
   LW: number;
   RW: number;
+  F: number;
   D: number;
   G: number;
   UTIL: number;
@@ -25,6 +32,12 @@ export interface RosterComposition {
 export interface LeagueSettings {
   scoringFormat: "H2H_POINTS"; // only supported value right now
   leagueSize: number;
+  // Locked at creation. DYNASTY is this app's original, only-ever-built
+  // model: a farm team, rosters persist across seasons indefinitely. REDRAFT
+  // has no farm team (farmSlots is forced to 0 both at creation and in
+  // updateLeagueSettings) and instead resets every roster to free agency via
+  // startNewSeason, which the commissioner triggers once a season is over.
+  leagueType: "DYNASTY" | "REDRAFT";
   rosterComposition: RosterComposition;
   farmSlots: number;
   irSlots: number;
@@ -53,17 +66,23 @@ export interface CreateLeagueInput {
   season: number;
   managerUserId: string;
   teamName: string;
+  leagueType: "DYNASTY" | "REDRAFT";
   rosterComposition: RosterComposition;
   farmSlots: number;
   irSlots: number;
 }
 
 export async function createLeague(input: CreateLeagueInput): Promise<{ leagueId: string; teamId: string }> {
+  // REDRAFT has no farm team — forced here regardless of what was submitted,
+  // not just hidden in the creation form (defense in depth).
+  const farmSlots = input.leagueType === "REDRAFT" ? 0 : input.farmSlots;
+
   const settings: LeagueSettings = {
     scoringFormat: "H2H_POINTS",
     leagueSize: 12,
+    leagueType: input.leagueType,
     rosterComposition: input.rosterComposition,
-    farmSlots: input.farmSlots,
+    farmSlots,
     irSlots: input.irSlots,
     waiverGpThreshold: 80,
     callupsPerWeek: 2,
@@ -80,6 +99,7 @@ export async function createLeague(input: CreateLeagueInput): Promise<{ leagueId
     data: {
       name: input.name,
       seasonFounded: input.season,
+      currentSeason: input.season,
       settingsJson: settings as unknown as Prisma.InputJsonValue,
       commissionerUserId: input.managerUserId,
       teams: {
@@ -117,6 +137,27 @@ export async function createTeam(input: CreateTeamInput): Promise<{ teamId: stri
     },
   });
   return { teamId: team.id };
+}
+
+/** The join gate for item 6: the site itself stays open to any signed-in
+ * user, but joining a specific league requires this link. Reusable and
+ * non-expiring by design — multiple managers join off one link, and
+ * createTeam()'s existing one-team-per-manager-per-league check is the real
+ * guard. Regenerating overwrites the old code, which is the only revocation
+ * mechanism. Works whether inviteCode is currently null (first "Generate")
+ * or already set ("Regenerate"). */
+export async function regenerateInviteCode(leagueId: string, callerUserId: string): Promise<{ inviteCode: string }> {
+  const commissioner = await getLeagueCommissioner(leagueId);
+  if (!commissioner || commissioner !== callerUserId) {
+    throw new Error("Only the league commissioner can manage the invite link.");
+  }
+  const inviteCode = randomBytes(9).toString("base64url");
+  await prisma.league.update({ where: { id: leagueId }, data: { inviteCode } });
+  return { inviteCode };
+}
+
+export async function getLeagueByInviteCode(inviteCode: string) {
+  return prisma.league.findUnique({ where: { inviteCode }, include: { teams: true } });
 }
 
 export async function listLeagues() {
@@ -233,6 +274,10 @@ export async function updateLeagueSettings(input: UpdateLeagueSettingsInput): Pr
   const league = await prisma.league.findUnique({ where: { id: input.leagueId } });
   if (!league) throw new Error("League not found.");
   const current = league.settingsJson as unknown as LeagueSettings;
+
+  if (current.leagueType === "REDRAFT" && input.farmSlots !== 0) {
+    throw new Error("Farm slots are always 0 for a REDRAFT league — there's no farm team to size.");
+  }
 
   for (const [key, val] of Object.entries({
     farmSlots: input.farmSlots,

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Show } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
 import { getTeamsForUser, type LeagueSettings } from "@/lib/leagues/mutations";
-import { getRosterCounts } from "@/lib/rosters/mutations";
+import { getRosterCounts, activeRosterCap } from "@/lib/rosters/mutations";
 import { Card, SectionLabel } from "@/components/Card";
 
 export default async function Home() {
@@ -60,7 +60,7 @@ export default async function Home() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {teams.map((team) => {
                 const settings = team.league.settingsJson as unknown as LeagueSettings;
-                const cap = Object.values(settings.rosterComposition).reduce((s, n) => s + n, 0);
+                const cap = activeRosterCap(settings);
                 const rosterCount = rosterCounts.get(team.id) ?? 0;
                 return (
                   <Link key={team.id} href={`/leagues/${team.leagueId}/teams/${team.id}`}>

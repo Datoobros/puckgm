@@ -1,18 +1,22 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
-import { createLeague, createTeam, deleteLeague, updateLeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
+import { revalidatePath } from "next/cache";
+import { createLeague, deleteLeague, updateLeagueSettings, regenerateInviteCode, type RosterComposition } from "@/lib/leagues/mutations";
+import { startNewSeason } from "@/lib/leagues/season";
 import { generateSchedule } from "@/lib/matchups/mutations";
 import { EDITABLE_SCORING_FIELDS, type ScoringConfig } from "@/lib/scoring/engine";
 
 function parseRosterComposition(formData: FormData): RosterComposition {
   const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
+  const positionMode = String(formData.get("positionMode") ?? "SEPARATE") === "COMBINED" ? "COMBINED" : "SEPARATE";
   return {
-    C: num("posC"),
-    LW: num("posLW"),
-    RW: num("posRW"),
+    positionMode,
+    C: positionMode === "SEPARATE" ? num("posC") : 0,
+    LW: positionMode === "SEPARATE" ? num("posLW") : 0,
+    RW: positionMode === "SEPARATE" ? num("posRW") : 0,
+    F: positionMode === "COMBINED" ? num("posF") : 0,
     D: num("posD"),
     G: num("posG"),
     UTIL: num("posUTIL"),
@@ -28,6 +32,7 @@ export async function createLeagueAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const teamName = String(formData.get("teamName") ?? "").trim();
   const season = Number(formData.get("season") ?? 0);
+  const leagueType = String(formData.get("leagueType") ?? "DYNASTY") === "REDRAFT" ? "REDRAFT" : "DYNASTY";
   if (!name || !teamName || !season) {
     throw new Error("League name, team name, and season are required.");
   }
@@ -37,23 +42,12 @@ export async function createLeagueAction(formData: FormData) {
     season,
     managerUserId: userId,
     teamName,
+    leagueType,
     rosterComposition: parseRosterComposition(formData),
     farmSlots: Math.max(0, Number(formData.get("farmSlots") ?? 6) | 0),
     irSlots: Math.max(0, Number(formData.get("irSlots") ?? 2) | 0),
   });
 
-  redirect(`/leagues/${leagueId}`);
-}
-
-export async function createTeamAction(leagueId: string, formData: FormData) {
-  const { userId } = await auth.protect();
-
-  const teamName = String(formData.get("teamName") ?? "").trim();
-  if (!teamName) {
-    throw new Error("Team name is required.");
-  }
-
-  await createTeam({ leagueId, managerUserId: userId, teamName });
   redirect(`/leagues/${leagueId}`);
 }
 
@@ -111,4 +105,18 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/settings`);
   redirect(`/leagues/${leagueId}/settings?saved=1`);
+}
+
+export async function startNewSeasonAction(leagueId: string) {
+  const { userId } = await auth.protect();
+  await startNewSeason(leagueId, userId);
+  revalidatePath(`/leagues/${leagueId}`);
+  revalidatePath(`/leagues/${leagueId}/settings`);
+  revalidatePath(`/leagues/${leagueId}/teams`);
+}
+
+export async function regenerateInviteCodeAction(leagueId: string) {
+  const { userId } = await auth.protect();
+  await regenerateInviteCode(leagueId, userId);
+  revalidatePath(`/leagues/${leagueId}/settings`);
 }

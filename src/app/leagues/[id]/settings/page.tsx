@@ -1,15 +1,17 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { EDITABLE_SCORING_FIELDS } from "@/lib/scoring/engine";
-import { updateLeagueSettingsAction, generateScheduleAction } from "@/app/leagues/actions";
+import { updateLeagueSettingsAction, generateScheduleAction, regenerateInviteCodeAction } from "@/app/leagues/actions";
 import { startDraftAction } from "../draft/actions";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
+import { StartNewSeasonButton } from "@/components/StartNewSeasonButton";
 import { DraftSetupForm } from "./DraftSetupForm";
 import { Card, SectionLabel } from "@/components/Card";
 import { prisma } from "@/lib/db";
-import { CURRENT_SCHEDULE_SEASON, DEFAULT_SEASON_START } from "@/lib/matchups/constants";
+import { DEFAULT_SEASON_START } from "@/lib/matchups/constants";
 
 export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]/settings">) {
   const { userId } = await auth.protect();
@@ -30,10 +32,15 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
     );
   }
 
+  const currentSeason = league.currentSeason;
   const hasSchedule =
-    (await prisma.matchupPeriod.count({ where: { leagueId, season: CURRENT_SCHEDULE_SEASON } })) > 0;
+    (await prisma.matchupPeriod.count({ where: { leagueId, season: currentSeason } })) > 0;
 
   const drafts = await prisma.draft.findMany({ where: { leagueId }, orderBy: { createdAt: "desc" } });
+
+  const h = await headers();
+  const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
+  const inviteUrl = league.inviteCode ? `${origin}/invite/${league.inviteCode}` : null;
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
@@ -61,14 +68,16 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
       <div className="mt-6">
         <SectionLabel>Locked forever</SectionLabel>
         <Card>
-          <p className="text-xs text-muted">Roster composition, league size, and scoring format never change once the league is created.</p>
+          <p className="text-xs text-muted">Roster composition, league size, scoring format, and league type never change once the league is created.</p>
           <p className="mt-2 text-sm">
             {Object.entries(settings.rosterComposition)
+              .filter(([slot, count]) => slot !== "positionMode" && count > 0)
               .map(([slot, count]) => `${count} ${slot}`)
               .join(" · ")}
           </p>
           <p className="mt-1 text-sm text-muted">
-            {settings.leagueSize}-team league · {settings.scoringFormat.replace("_", " ")}
+            {settings.leagueSize}-team league · {settings.scoringFormat.replace("_", " ")} ·{" "}
+            {settings.leagueType === "REDRAFT" ? "Redraft" : "Dynasty"}
           </p>
         </Card>
       </div>
@@ -77,16 +86,20 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         <div>
           <SectionLabel>Roster limits</SectionLabel>
           <Card className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <label className="block">
-              <span className="text-xs text-muted">Farm slots</span>
-              <input
-                name="farmSlots"
-                type="number"
-                min={0}
-                defaultValue={settings.farmSlots}
-                className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue"
-              />
-            </label>
+            {settings.leagueType === "REDRAFT" ? (
+              <input type="hidden" name="farmSlots" value={0} />
+            ) : (
+              <label className="block">
+                <span className="text-xs text-muted">Farm slots</span>
+                <input
+                  name="farmSlots"
+                  type="number"
+                  min={0}
+                  defaultValue={settings.farmSlots}
+                  className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue"
+                />
+              </label>
+            )}
             <label className="block">
               <span className="text-xs text-muted">IR slots</span>
               <input
@@ -253,7 +266,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
               ))}
             </ul>
           )}
-          <DraftSetupForm leagueId={leagueId} teams={league.teams.map((t) => ({ id: t.id, name: t.name }))} defaultSeason={CURRENT_SCHEDULE_SEASON} />
+          <DraftSetupForm leagueId={leagueId} teams={league.teams.map((t) => ({ id: t.id, name: t.name }))} defaultSeason={currentSeason} />
         </Card>
       </div>
 
@@ -262,17 +275,17 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         <Card>
           {hasSchedule ? (
             <p className="text-sm text-muted">
-              {CURRENT_SCHEDULE_SEASON}-{(CURRENT_SCHEDULE_SEASON + 1) % 100} schedule generated —
+              {currentSeason}-{(currentSeason + 1) % 100} schedule generated —
               see Scoreboard / Standings.
             </p>
           ) : (
             <form action={generateScheduleAction.bind(null, leagueId)} className="space-y-2">
               <p className="text-xs text-muted">
-                Generate a round-robin schedule for the {CURRENT_SCHEDULE_SEASON}-
-                {(CURRENT_SCHEDULE_SEASON + 1) % 100} season. One-time — can&apos;t be
+                Generate a round-robin schedule for the {currentSeason}-
+                {(currentSeason + 1) % 100} season. One-time — can&apos;t be
                 regenerated once created.
               </p>
-              <input type="hidden" name="season" value={CURRENT_SCHEDULE_SEASON} />
+              <input type="hidden" name="season" value={currentSeason} />
               <label className="block text-xs text-muted">
                 Start date
                 <input
@@ -315,6 +328,46 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
               </button>
             </form>
           )}
+        </Card>
+      </div>
+
+      {settings.leagueType === "REDRAFT" && (
+        <div className="mt-10">
+          <SectionLabel>Season</SectionLabel>
+          <Card className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm">Current season: {currentSeason}</p>
+              <p className="mt-1 text-xs text-muted">
+                Empties every roster on this league back to free agency and advances to{" "}
+                {currentSeason + 1} — set up a new startup draft afterward from the Draft card
+                above. Any trade still pending is cancelled first.
+              </p>
+            </div>
+            <StartNewSeasonButton leagueId={leagueId} currentSeason={currentSeason} />
+          </Card>
+        </div>
+      )}
+
+      <div className="mt-10">
+        <SectionLabel>Invite link</SectionLabel>
+        <Card>
+          <p className="text-xs text-muted">
+            The site itself is open to anyone signed in — this link is what actually lets someone
+            join <em>this</em> league. Share it with whoever you want in; regenerating it
+            invalidates the old link.
+          </p>
+          {inviteUrl ? (
+            <p className="mt-2 select-all rounded border border-border bg-surface-tint px-3 py-2 text-sm">
+              {inviteUrl}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-muted">No invite link generated yet.</p>
+          )}
+          <form action={regenerateInviteCodeAction.bind(null, leagueId)} className="mt-3">
+            <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint">
+              {inviteUrl ? "Regenerate link" : "Generate invite link"}
+            </button>
+          </form>
         </Card>
       </div>
 

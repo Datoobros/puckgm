@@ -5,8 +5,6 @@ import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getClaimablePlayers, getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { getRecentActivity } from "@/lib/activity/feed";
 import { getStandings } from "@/lib/matchups/standings";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
-import { createTeamAction } from "@/app/leagues/actions";
 import { Card, SectionLabel } from "@/components/Card";
 import { submitWaiverClaimAction, cancelWaiverClaimAction } from "./waivers/actions";
 
@@ -45,7 +43,7 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
     getRecentActivity(id),
     getClaimablePlayers(id, yourTeam?.id ?? null),
     getOrInitWaiverPriority(id),
-    getStandings(id, CURRENT_SCHEDULE_SEASON, settings.scoringConfig),
+    getStandings(id, league.currentSeason, settings.scoringConfig),
   ]);
   const teamNameById = new Map(league.teams.map((t) => [t.id, t.name]));
 
@@ -62,18 +60,10 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
 
       {!yourTeam && (
         <Card className="mt-6">
-          <p className="text-sm text-muted">You don&apos;t have a team here yet.</p>
-          <form action={createTeamAction.bind(null, league.id)} className="mt-3 flex gap-2">
-            <input
-              name="teamName"
-              required
-              placeholder="Your team name"
-              className="flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-blue"
-            />
-            <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
-              Join league
-            </button>
-          </form>
+          <p className="text-sm text-muted">
+            You&apos;re not a member of this league. Ask the commissioner for an invite link to
+            join.
+          </p>
         </Card>
       )}
 
@@ -211,6 +201,7 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
               <p className="text-xs text-muted">Roster composition (locked)</p>
               <p className="mt-1 text-sm">
                 {Object.entries(settings.rosterComposition)
+                  .filter(([slot, count]) => slot !== "positionMode" && count > 0)
                   .map(([slot, count]) => `${count} ${slot}`)
                   .join(" · ")}
               </p>

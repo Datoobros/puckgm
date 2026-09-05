@@ -2,7 +2,8 @@ import { prisma } from "@/lib/db";
 import { createLeague, createTeam, updateLeagueSettings, getLeague, deleteLeague } from "@/lib/leagues/mutations";
 import { addPlayerToRoster, getTeamRosterView } from "@/lib/rosters/mutations";
 import { submitFaBid, cancelFaBid, getAvailableBudget, processFaabBids, getMyPendingBids } from "@/lib/faab/mutations";
-import { CURRENT_SCHEDULE_SEASON } from "@/lib/matchups/constants";
+
+const LEAGUE_SEASON = 2027; // must match the `season` passed to createLeague below — this is now per-league, not a global constant
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`ASSERTION FAILED: ${msg}`);
@@ -12,10 +13,11 @@ function assert(cond: boolean, msg: string) {
 async function main() {
   const { leagueId, teamId: teamA } = await createLeague({
     name: "FAAB Test League (delete me)",
-    season: 2027,
+    season: LEAGUE_SEASON,
     managerUserId: "faab-test-A",
     teamName: "Team A",
-    rosterComposition: { C: 1, LW: 1, RW: 1, D: 1, G: 1, UTIL: 1, BENCH: 2 },
+    leagueType: "DYNASTY",
+    rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
     farmSlots: 4,
     irSlots: 2,
   });
@@ -75,7 +77,7 @@ async function main() {
   console.log("\n-- available budget blocks overcommitted simultaneous bids --");
   const fixture2 = await prisma.player.create({ data: { fullName: "FAAB Test Free Agent 2 (delete me)", primaryPosition: "D" } });
   await submitFaBid({ leagueId, playerId: fixture.id, amount: 50, targetSlot: "ACTIVE", managerUserId: "faab-test-A" });
-  const availableAfterFirstBid = await getAvailableBudget(teamA, CURRENT_SCHEDULE_SEASON, 100);
+  const availableAfterFirstBid = await getAvailableBudget(teamA, LEAGUE_SEASON, 100);
   assert(availableAfterFirstBid === 50, "available budget drops by the pending bid amount (100 - 50 = 50)");
 
   let overCommitThrew = false;
@@ -99,9 +101,9 @@ async function main() {
   assert(!!farmSlot, "the player landed on Team B's FARM roster, matching the winning bid's targetSlot");
 
   const league = await getLeague(leagueId);
-  const budgetB = await prisma.faabBudget.findUnique({ where: { teamId_season: { teamId: teamB, season: CURRENT_SCHEDULE_SEASON } } });
+  const budgetB = await prisma.faabBudget.findUnique({ where: { teamId_season: { teamId: teamB, season: LEAGUE_SEASON } } });
   assert(budgetB?.remaining === 45, "Team B's budget debited by the winning amount (100 - 55 = 45)");
-  const budgetA = await prisma.faabBudget.findUnique({ where: { teamId_season: { teamId: teamA, season: CURRENT_SCHEDULE_SEASON } } });
+  const budgetA = await prisma.faabBudget.findUnique({ where: { teamId_season: { teamId: teamA, season: LEAGUE_SEASON } } });
   assert(budgetA?.remaining === 100, "Team A's losing bid didn't touch its remaining budget");
   assert(!!league, "league still exists"); // keep `league` referenced
 
@@ -115,7 +117,7 @@ async function main() {
   const bidToCancel = pendingBefore.find((b) => b.playerId === fixture3.id);
   assert(!!bidToCancel, "the bid shows up in getMyPendingBids");
   await cancelFaBid({ bidId: bidToCancel!.id, managerUserId: "faab-test-A" });
-  const availableAfterCancel = await getAvailableBudget(teamA, CURRENT_SCHEDULE_SEASON, 100);
+  const availableAfterCancel = await getAvailableBudget(teamA, LEAGUE_SEASON, 100);
   assert(availableAfterCancel === 100, "cancelling restores full available budget (nothing was ever debited)");
 
   console.log("\n-- overflow: winning bid bypasses the active roster cap --");
