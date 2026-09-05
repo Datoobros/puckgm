@@ -19,7 +19,7 @@ export function DraftSetupEditForm({
   const [orderMode, setOrderMode] = useState<"" | "RANDOM" | "MANUAL">("");
   const [manualOrder, setManualOrder] = useState<string[]>(teams.map((t) => t.id));
 
-  const inputClass = "mt-1 block w-full rounded border border-border bg-white px-2 py-1.5 text-sm text-black";
+  const inputClass = "mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground";
 
   return (
     <div className="mt-3 space-y-3 border-t border-border pt-3">

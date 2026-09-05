@@ -81,6 +81,7 @@ export async function upsertPlayerFull(nhlPlayerId: number): Promise<string> {
       shoots: landing.shootsCatches,
       currentNhlOrg: landing.currentTeamAbbrev,
       careerNhlGp: landing.careerTotals?.regularSeason?.gamesPlayed ?? 0,
+      headshotUrl: landing.headshot,
     },
   });
 

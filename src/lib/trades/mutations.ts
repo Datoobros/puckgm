@@ -34,7 +34,14 @@ export interface TradeAssetSelection {
 }
 
 export interface TradeableAssets {
-  players: { id: string; fullName: string; primaryPosition: string | null; currentNhlOrg: string | null; slotType: string }[];
+  players: {
+    id: string;
+    fullName: string;
+    primaryPosition: string | null;
+    currentNhlOrg: string | null;
+    headshotUrl: string | null;
+    slotType: string;
+  }[];
   picks: { id: string; season: number; round: number }[];
   availableFaab: number;
 }
@@ -55,6 +62,7 @@ export async function getTradeableAssets(teamId: string): Promise<TradeableAsset
       fullName: s.player.fullName,
       primaryPosition: s.player.primaryPosition,
       currentNhlOrg: s.player.currentNhlOrg,
+      headshotUrl: s.player.headshotUrl,
       slotType: s.slotType,
     })),
     picks: picks.map((p) => ({ id: p.id, season: p.season, round: p.round })),

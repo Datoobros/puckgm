@@ -16,7 +16,7 @@ export function DraftSetupForm({
   const [orderMode, setOrderMode] = useState<"RANDOM" | "MANUAL">("RANDOM");
   const [manualOrder, setManualOrder] = useState<string[]>(teams.map((t) => t.id));
 
-  const inputClass = "mt-1 block w-full rounded border border-border bg-white px-2 py-1.5 text-sm text-black";
+  const inputClass = "mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground";
 
   return (
     <form action={setUpDraftAction.bind(null, leagueId)} className="space-y-3">

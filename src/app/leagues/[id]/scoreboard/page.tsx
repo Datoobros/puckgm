@@ -4,8 +4,9 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getLeague } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
-import { getScoreboardForPeriod } from "@/lib/matchups/standings";
+import { getScoreboardForPeriod, getTeamSchedule } from "@/lib/matchups/standings";
 import { Card } from "@/components/Card";
+import { TeamScheduleSelect } from "./TeamScheduleSelect";
 
 export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/scoreboard">) {
   await auth.protect();
@@ -13,10 +14,66 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
   const sp = await props.searchParams;
   const rawWeek = Array.isArray(sp.week) ? sp.week[0] : sp.week;
   const requestedPeriodNo = rawWeek ? Number(rawWeek) : undefined;
+  const rawTeam = Array.isArray(sp.team) ? sp.team[0] : sp.team;
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
   const settings = league.settingsJson as unknown as LeagueSettings;
+
+  const teams = await prisma.team.findMany({ where: { leagueId }, orderBy: { name: "asc" } });
+  const selectedTeam = rawTeam ? teams.find((t) => t.id === rawTeam) : undefined;
+
+  if (selectedTeam) {
+    const rows = await getTeamSchedule(selectedTeam.id, leagueId, league.currentSeason, settings.scoringConfig);
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Scoreboard</h1>
+          <TeamScheduleSelect leagueId={leagueId} teams={teams} selectedTeamId={selectedTeam.id} />
+        </div>
+        <p className="mt-1 text-sm text-muted">{selectedTeam.name}&apos;s full-season schedule</p>
+
+        {rows.length === 0 ? (
+          <Card className="mt-6">
+            <p className="text-sm text-muted">No schedule yet — the commissioner can generate one from the League page.</p>
+          </Card>
+        ) : (
+          <Card className="mt-6 !p-0 overflow-hidden">
+            <ul className="divide-y divide-border">
+              {rows.map((r) => (
+                <li key={r.periodNo} className="flex items-center justify-between px-4 py-3 text-sm">
+                  <span>
+                    <span className="text-xs text-muted">
+                      {r.isPlayoffs ? r.roundLabel : `Week ${r.periodNo}`}
+                      {" · "}
+                      {r.startDate.toISOString().slice(0, 10)}
+                    </span>
+                    <br />
+                    {r.bye ? (
+                      <span className="text-muted">Bye</span>
+                    ) : (
+                      <>
+                        <span className="text-xs text-muted">{r.isHome ? "vs" : "@"} </span>
+                        <span className="font-medium">{r.opponentTeamName}</span>
+                      </>
+                    )}
+                  </span>
+                  {!r.bye && r.final && (
+                    <span
+                      className={`tabular-nums text-sm ${r.myScore >= r.opponentScore ? "font-semibold text-foreground" : "text-muted"}`}
+                    >
+                      {r.myScore.toFixed(1)} – {r.opponentScore.toFixed(1)}
+                    </span>
+                  )}
+                  {!r.bye && !r.final && <span className="text-xs text-muted">Upcoming</span>}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+      </div>
+    );
+  }
 
   const [scoreboard, periodCount] = await Promise.all([
     getScoreboardForPeriod(leagueId, league.currentSeason, settings.scoringConfig, requestedPeriodNo),
@@ -25,7 +82,10 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Scoreboard</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Scoreboard</h1>
+        {scoreboard && <TeamScheduleSelect leagueId={leagueId} teams={teams} selectedTeamId="" />}
+      </div>
 
       {!scoreboard ? (
         <Card className="mt-6">

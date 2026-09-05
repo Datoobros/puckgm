@@ -135,6 +135,100 @@ export interface ScoreboardPeriod {
   matchups: ScoreboardMatchup[];
 }
 
+export interface TeamScheduleRow {
+  matchupId: string | null; // null on a bye week
+  periodNo: number;
+  startDate: Date;
+  endDate: Date;
+  isPlayoffs: boolean;
+  roundLabel: string | null;
+  opponentTeamId: string | null;
+  opponentTeamName: string | null;
+  isHome: boolean;
+  myScore: number;
+  opponentScore: number;
+  final: boolean;
+  bye: boolean;
+}
+
+/** One team's full-season schedule, one row per period. A regular-season
+ * period the team has no Matchup in (odd team count, see
+ * generateRoundRobinRounds) becomes a `bye: true` row; a playoff period the
+ * team never reached (eliminated, or bracket not seeded yet) is omitted
+ * entirely rather than shown as a bye — those aren't the same thing. Scores
+ * are only computed for periods whose week has actually finished, same rule
+ * getStandings uses. */
+export async function getTeamSchedule(
+  teamId: string,
+  leagueId: string,
+  season: number,
+  scoringConfig: ScoringConfig,
+): Promise<TeamScheduleRow[]> {
+  const [periods, teams] = await Promise.all([
+    prisma.matchupPeriod.findMany({
+      where: { leagueId, season },
+      include: { matchups: { where: { OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] } } },
+      orderBy: { periodNo: "asc" },
+    }),
+    prisma.team.findMany({ where: { leagueId } }),
+  ]);
+  const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
+  const playoffPeriods = periods.filter((p) => p.isPlayoffs);
+
+  const rows: TeamScheduleRow[] = [];
+  for (const period of periods) {
+    const m = period.matchups[0];
+    const final = period.endDate <= new Date();
+    if (!m) {
+      if (!period.isPlayoffs) {
+        rows.push({
+          matchupId: null,
+          periodNo: period.periodNo,
+          startDate: period.startDate,
+          endDate: period.endDate,
+          isPlayoffs: false,
+          roundLabel: null,
+          opponentTeamId: null,
+          opponentTeamName: null,
+          isHome: false,
+          myScore: 0,
+          opponentScore: 0,
+          final,
+          bye: true,
+        });
+      }
+      continue;
+    }
+
+    const isHome = m.homeTeamId === teamId;
+    const opponentTeamId = isHome ? m.awayTeamId : m.homeTeamId;
+    const [myScore, opponentScore] = final
+      ? await Promise.all([
+          getTeamScoreForPeriod(teamId, period.startDate, period.endDate, scoringConfig),
+          getTeamScoreForPeriod(opponentTeamId, period.startDate, period.endDate, scoringConfig),
+        ])
+      : [0, 0];
+    const roundIndex = playoffPeriods.findIndex((p) => p.id === period.id);
+
+    rows.push({
+      matchupId: m.id,
+      periodNo: period.periodNo,
+      startDate: period.startDate,
+      endDate: period.endDate,
+      isPlayoffs: period.isPlayoffs,
+      roundLabel: roundIndex === -1 ? null : playoffRoundLabel(playoffPeriods.length, roundIndex),
+      opponentTeamId,
+      opponentTeamName: teamNameById.get(opponentTeamId) ?? "Unknown",
+      isHome,
+      myScore,
+      opponentScore,
+      final,
+      bye: false,
+    });
+  }
+  return rows;
+}
+
 /** periodNo omitted -> whichever period today's date falls in, or the
  * nearest upcoming one if the season hasn't started yet, or the most
  * recent one if the season's schedule has run out. */

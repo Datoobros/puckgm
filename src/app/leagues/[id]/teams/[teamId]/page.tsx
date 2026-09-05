@@ -9,7 +9,9 @@ import { seasonByValue } from "@/lib/players/seasons";
 import { getLineupForDate, capFor, eligibleSlotsForPosition } from "@/lib/lineups/mutations";
 import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/schedule";
 import { isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getTeamSchedule } from "@/lib/matchups/standings";
 import { Card, SectionLabel } from "@/components/Card";
+import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import {
   dropPlayerAction,
   sendToFarmAction,
@@ -76,6 +78,9 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const cap = activeRosterCap(settings);
   const isOwner = team.managerUserId === userId;
   const isCommissionerViewing = !isOwner && (await isLeagueCommissioner(leagueId, userId));
+
+  const fullSchedule = await getTeamSchedule(teamId, leagueId, team.league.currentSeason, settings.scoringConfig);
+  const upcomingMatchups = fullSchedule.filter((r) => r.endDate >= new Date()).slice(0, 2);
 
   const allSlots = await getTeamRosterView(teamId);
   const activeSlots = allSlots.filter((s) => s.slotType === "ACTIVE");
@@ -167,6 +172,40 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           </div>
         )}
       </div>
+
+      {fullSchedule.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {upcomingMatchups.length === 0 && <span className="text-sm text-muted">Season complete.</span>}
+            {upcomingMatchups.map((m) => (
+              <span key={m.periodNo} className="text-sm">
+                <span className="text-xs text-muted">
+                  {m.isPlayoffs ? m.roundLabel : `Week ${m.periodNo}`}
+                  {" · "}
+                  {m.startDate.toISOString().slice(0, 10)}
+                </span>
+                <br />
+                {m.bye ? (
+                  <span className="text-muted">Bye</span>
+                ) : (
+                  <>
+                    {m.isHome ? "vs" : "@"}{" "}
+                    <Link href={`/leagues/${leagueId}/teams/${m.opponentTeamId}`} className="font-medium hover:underline">
+                      {m.opponentTeamName}
+                    </Link>
+                  </>
+                )}
+              </span>
+            ))}
+          </div>
+          <Link
+            href={`/leagues/${leagueId}/teams/${teamId}/schedule`}
+            className="rounded-full border border-border px-3 py-1.5 text-xs hover:bg-surface-tint"
+          >
+            My Schedule →
+          </Link>
+        </div>
+      )}
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <div className="flex items-center gap-2">
@@ -291,9 +330,10 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                 const callupLimitReached = callupsUsed >= settings.callupsPerWeek;
                 return (
                   <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
-                    <span>
+                    <span className="flex items-center gap-2">
+                      <PlayerHeadshot url={s.player.headshotUrl} alt={s.player.fullName} size={28} />
                       {s.player.fullName}
-                      <span className="ml-2 text-xs text-muted">
+                      <span className="text-xs text-muted">
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
                       {s.waiverExpiresAt && s.waiverExpiresAt > new Date() && (
@@ -371,12 +411,13 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                 const activeFull = activeSlots.length >= cap;
                 return (
                   <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
-                    <span>
+                    <span className="flex items-center gap-2">
+                      <PlayerHeadshot url={s.player.headshotUrl} alt={s.player.fullName} size={28} />
                       {s.player.fullName}
-                      <span className="ml-2 text-xs text-muted">
+                      <span className="text-xs text-muted">
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
-                      <span className="ml-2 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                      <span className="rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
                         {s.player.officialRosterStatus ?? "IR"}
                       </span>
                     </span>
@@ -513,26 +554,29 @@ function RosterTable({
                 } ${isGroupStart ? "border-t-2 border-t-blue" : ""}`}
               >
                 <td className="py-2 pl-4 pr-2 font-medium">
-                  {player.fullName}
-                  {eligible.length > 0 && (
-                    <span className="ml-2 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                      {eligible.join("/")}
-                    </span>
-                  )}
-                  {player.careerNhlGp >= waiverGpThreshold && (
-                    <span
-                      title={`${player.careerNhlGp} career GP — sending him to farm exposes him to demotion waivers`}
-                      className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                    >
-                      {waiverGpThreshold}+ GP
-                    </span>
-                  )}
-                  {(player.officialRosterStatus === "IR" || player.officialRosterStatus === "LTIR") && (
-                    <span className="ml-2 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400">
-                      {player.officialRosterStatus}
-                    </span>
-                  )}
-                  <span className="ml-2 text-xs text-muted">{player.currentNhlOrg ?? "—"}</span>
+                  <span className="flex items-center gap-2">
+                    <PlayerHeadshot url={player.headshotUrl} alt={player.fullName} size={28} />
+                    {player.fullName}
+                    {eligible.length > 0 && (
+                      <span className="rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                        {eligible.join("/")}
+                      </span>
+                    )}
+                    {player.careerNhlGp >= waiverGpThreshold && (
+                      <span
+                        title={`${player.careerNhlGp} career GP — sending him to farm exposes him to demotion waivers`}
+                        className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                      >
+                        {waiverGpThreshold}+ GP
+                      </span>
+                    )}
+                    {(player.officialRosterStatus === "IR" || player.officialRosterStatus === "LTIR") && (
+                      <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400">
+                        {player.officialRosterStatus}
+                      </span>
+                    )}
+                    <span className="text-xs text-muted">{player.currentNhlOrg ?? "—"}</span>
+                  </span>
                 </td>
                 <td className="py-2 pr-2 text-muted">
                   {lineup?.game

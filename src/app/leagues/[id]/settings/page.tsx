@@ -258,7 +258,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
               <select
                 name="tradeVetoMode"
                 defaultValue={settings.tradeVetoMode}
-                className="mt-1 block w-full max-w-xs rounded border border-border bg-white px-2 py-1.5 text-sm text-black"
+                className="mt-1 block w-full max-w-xs rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
               >
                 <option value="COMMISSIONER">Commissioner only</option>
                 <option value="VOTE">League vote (majority of managers not in the trade)</option>
@@ -290,7 +290,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                 name="tradeDeadline"
                 type="date"
                 defaultValue={settings.tradeDeadline ?? ""}
-                className="mt-1 w-full rounded border border-border bg-white px-2 py-1.5 text-sm text-black"
+                className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
               />
             </label>
           </Card>
@@ -395,7 +395,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                   name="startDate"
                   defaultValue={DEFAULT_SEASON_START}
                   required
-                  className="mt-1 block w-full rounded border border-border bg-white px-2 py-1 text-sm text-black"
+                  className="mt-1 block w-full rounded border border-border bg-surface px-2 py-1 text-sm text-foreground"
                 />
               </label>
               <label className="block text-xs text-muted">
@@ -414,7 +414,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                 <select
                   name="playoffTeams"
                   defaultValue={0}
-                  className="mt-1 block w-full rounded border border-border bg-white px-2 py-1 text-sm text-black"
+                  className="mt-1 block w-full rounded border border-border bg-surface px-2 py-1 text-sm text-foreground"
                 >
                   <option value={0}>None</option>
                   <option value={2}>2 teams (1 round — Championship)</option>

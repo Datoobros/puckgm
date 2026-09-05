@@ -121,7 +121,7 @@ export function DraftRoom({
           placeholder="Search available players…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded border border-border bg-white px-3 py-2 text-sm text-black"
+          className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground"
         />
         <Card className="mt-2 !p-0 max-h-96 overflow-y-auto">
           <ul className="divide-y divide-border">

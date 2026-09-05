@@ -5,6 +5,7 @@
    plain `bg-surface`/`text-muted`/etc. utility class adapts automatically
    with no `dark:` variant needed anywhere in the app. */
 :root {
+  color-scheme: light;
   --background: #f7f9fc;
   --foreground: #1b2430;
   --surface: #ffffff;
@@ -38,6 +39,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --background: #081120;
     --foreground: #eaf0f8;
     --surface: #132a4d;

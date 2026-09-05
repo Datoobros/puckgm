@@ -51,6 +51,7 @@ export interface NhlPlayerLanding {
   position: string;
   shootsCatches?: string;
   birthDate?: string;
+  headshot?: string; // full CDN URL, ready to use directly — no need to construct it
   draftDetails?: {
     year: number;
     teamAbbrev: string;

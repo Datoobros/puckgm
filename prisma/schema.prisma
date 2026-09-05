@@ -24,6 +24,9 @@ model Player {
   currentNhlOrg   String? // team abbrev, e.g. "EDM" — derived, refreshed from NHL data
   careerNhlGp     Int      @default(0) // derived — drives the 80-GP waiver exemption
   officialRosterStatus String? // ACTIVE | IR | LTIR — derived from source data, see DESIGN.md §2.6
+  headshotUrl     String? // NHL CDN URL, derived/refreshed from NHL landing data — same
+                          // "derived, refreshed" tier as currentNhlOrg; null shows a
+                          // silhouette placeholder (PlayerHeadshot.tsx), not an error
   // Real NHL Entry Draft metadata (src/lib/players/draftClass.ts) — set only
   // for players ingested as a rookie-draft-eligible class. currentNhlOrg
   // above is set to the *drafting* team for these, satisfying DESIGN.md

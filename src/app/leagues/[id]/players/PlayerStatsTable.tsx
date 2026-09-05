@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { NHL_TEAM_ABBREVS } from "@/lib/nhl/client";
+import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import { addPlayerAction, submitFaBidAction } from "./actions";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
@@ -179,7 +180,12 @@ export function PlayerStatsTable({
           <tbody>
             {pageRows.map((r) => (
               <tr key={r.id} className="border-b border-border">
-                <td className="py-2 pr-2 font-medium">{r.fullName}</td>
+                <td className="py-2 pr-2 font-medium">
+                  <span className="flex items-center gap-2">
+                    <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
+                    {r.fullName}
+                  </span>
+                </td>
                 <td className="py-2 pr-2 text-muted">
                   {r.primaryPosition ?? "—"} · {r.currentNhlOrg ?? "—"}
                 </td>
@@ -209,12 +215,12 @@ export function PlayerStatsTable({
                             max={faab.maxBid ?? undefined}
                             defaultValue={faab.minBid}
                             required
-                            className="w-14 rounded border border-border bg-white px-1 py-0.5 text-xs text-black"
+                            className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-xs text-foreground"
                           />
                           <select
                             name="targetSlot"
                             defaultValue="ACTIVE"
-                            className="rounded border border-border bg-white px-1 py-0.5 text-xs text-black"
+                            className="rounded border border-border bg-surface px-1 py-0.5 text-xs text-foreground"
                           >
                             <option value="ACTIVE">Active</option>
                             <option value="FARM">Farm</option>

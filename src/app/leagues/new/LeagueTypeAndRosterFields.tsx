@@ -25,7 +25,7 @@ export function LeagueTypeAndRosterFields() {
   const [positionMode, setPositionMode] = useState<"SEPARATE" | "COMBINED">("SEPARATE");
   const positions = positionMode === "COMBINED" ? COMBINED_POSITIONS : SEPARATE_POSITIONS;
 
-  const selectClass = "mt-1 w-full rounded border border-border bg-white px-2 py-2 text-sm text-black";
+  const selectClass = "mt-1 w-full rounded border border-border bg-surface px-2 py-2 text-sm text-foreground";
   const numberClass = "mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-center text-sm outline-none focus:border-blue";
 
   return (

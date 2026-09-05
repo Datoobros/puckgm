@@ -663,8 +663,9 @@ private, and PuckPedia isn't an API — same reason Contracts generally stays un
   name/position/team for ~8 matches) reusing the same `contains`-on-`fullName` search the
   page's exhaustive `?q=` path already used (already matches first *or* last name — "conn"
   already matched "Kyle Con**n**or" via last name before this). Clicking a result submits the
-  real exhaustive search for that exact name. No player photos — no headshot data source
-  exists anywhere in this app. **Bug found while verifying**: the dropdown popped back open
+  real exhaustive search for that exact name. No player photos in this dropdown itself (see
+  "Player headshots" below for where photos were later added). **Bug found while verifying**:
+  the dropdown popped back open
   on landing on a results page (the `initialQuery` prop is 2+ chars after any search, and the
   fetch effect ran on mount) — fixed with a `hasTyped` ref so only actual typing triggers a
   new lookup, not the page's own pre-filled value.
@@ -798,6 +799,63 @@ the existing waiver-award/FAAB-win/force-process overflow-allowed behavior).
   orphan → reassign (including the bug above), invite-link generation, the commissioner
   roster-override controls across Active/Farm/IR (including the second bug above), and
   division grouping on Standings.
+
+## Native form control theming, schedule visibility, player headshots
+
+Three unrelated small-to-medium requests bundled together in one pass.
+
+- **Native `<select>`/`<input type="date">` popups now render dark in dark mode.** Every one
+  of these controls across the app had been hardcoded `bg-white text-black` (`globals.css`
+  had no `color-scheme` property set, so browsers rendered the *option popup* — not just the
+  closed box — using the OS's light-mode chrome regardless of the page's own dark theme; two
+  components even carried comments documenting this as a deliberate past fix, not an
+  oversight). Setting `color-scheme: light` / `color-scheme: dark` on `:root` (mirroring the
+  existing `prefers-color-scheme` media-query pattern) makes browsers render the popups
+  themselves with matching native dark chrome, which is what actually let every occurrence
+  switch to the theme's `bg-surface`/`text-foreground` tokens instead of white/black without
+  reintroducing the invisible-text bug the white/black hack was there to prevent.
+- **Team page: next-two-matchups widget + full "My Schedule" page.** New
+  `getTeamSchedule(teamId, leagueId, season, scoringConfig)`
+  (`src/lib/matchups/standings.ts`) returns one row per `MatchupPeriod` for a team — opponent,
+  home/away, and (only once that period's `endDate` has passed, same rule `getStandings`
+  uses) the final score. A regular-season period with no `Matchup` row for the team becomes a
+  `bye: true` row (see `generateRoundRobinRounds`'s odd-team-count handling below); a playoff
+  period the team never reached is omitted rather than shown as a bye — those aren't the same
+  thing. The team page shows the next two upcoming rows (or "Season complete.") with a link to
+  the new `/leagues/[id]/teams/[teamId]/schedule` page, which lists the whole season.
+- **Scoreboard: view any team's full-season schedule instead of one week at a time.** A new
+  team selector (`TeamScheduleSelect.tsx`) on the existing Scoreboard page switches between
+  the original week-by-week view and a per-team view built on the same `getTeamSchedule`
+  query — reused, not duplicated, across the team page, the new schedule page, and this.
+- **How odd team counts are handled in schedule generation** (asked directly, documented
+  here since it wasn't written down anywhere): `generateRoundRobinRounds`
+  (`src/lib/matchups/mutations.ts`) is the standard circle method — an odd team count gets a
+  phantom "bye" slot injected before pairing, and whichever real team lands opposite it in a
+  given round simply gets no `Matchup` row that week. Nothing else about generation changes;
+  every other team still gets a normal pairing that round.
+- **Player headshots** — `Player.headshotUrl String?` (migration), populated from the NHL
+  landing/roster endpoints' own `headshot` field (a ready-to-use CDN URL — confirmed real via
+  a direct API check, not constructed by hand from team/season/playerId, which isn't stable
+  across trades and retirements). `upsertPlayerFull` (`src/lib/players/identity.ts`) now
+  captures it alongside the existing `currentNhlOrg`/`careerNhlGp` derived-and-refreshed
+  fields — same tier, refreshed the same way, via the existing `syncTeamRoster`/
+  `syncAllRosters` roster sync, no new ingestion path needed. New `PlayerHeadshot.tsx`
+  (client component — needs `onError` state to swap in a blank-silhouette SVG when a player
+  has no photo yet, which is expected for rookie-draft-class prospects and anyone not on a
+  current NHL roster, not treated as an error) is wired into the three surfaces asked for:
+  the Players page table, the team roster page (Active/Farm/IR), and the trade builder's
+  asset checklists. Free-agent/commissioner search typeahead dropdowns were left as-is —
+  out of scope for this pass.
+- **Real external-API constraint hit while backfilling, worth knowing for next time**: a
+  one-time backfill run against all 32 NHL teams to populate `headshotUrl` for existing
+  players hit NHL's (unauthenticated, undocumented) API's rate limit repeatedly — even with
+  2s pacing between teams — and only completed for ~135 of ~1,300 players before this pass
+  ended. This is **not a code bug**: the sync mechanism itself is confirmed correct (every
+  team that didn't get rate-limited synced cleanly, verified live with both a real photo and
+  the silhouette fallback rendering correctly side by side). The remaining players will pick
+  up their headshot the normal way, via the existing daily-cron roster sync, without any
+  further action — this was a one-time bulk backfill hitting a burst limit, not a gap in the
+  ongoing sync path.
 
 ## Recent, worth knowing
 

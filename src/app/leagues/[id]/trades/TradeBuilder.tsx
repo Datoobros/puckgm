@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Card } from "@/components/Card";
+import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { proposeTradeAction } from "./actions";
 import type { TradeableAssets } from "@/lib/trades/mutations";
 
@@ -14,6 +15,7 @@ function AssetChecklist({ prefix, assets }: { prefix: "give" | "receive"; assets
       {assets.players.map((p) => (
         <label key={p.id} className="flex items-center gap-2 text-sm">
           <input type="checkbox" name={`${prefix}PlayerIds`} value={p.id} />
+          <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={24} />
           {p.fullName}
           <span className="text-xs text-muted">
             {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"} · {p.slotType}
@@ -34,7 +36,7 @@ function AssetChecklist({ prefix, assets }: { prefix: "give" | "receive"; assets
           min={0}
           max={assets.availableFaab}
           defaultValue={0}
-          className="w-20 rounded border border-border bg-white px-1.5 py-1 text-xs text-black"
+          className="w-20 rounded border border-border bg-surface px-1.5 py-1 text-xs text-foreground"
         />
         <span className="text-xs text-muted">(${assets.availableFaab} available)</span>
       </label>
@@ -68,7 +70,7 @@ export function TradeBuilder({
           name="counterpartyTeamId"
           value={counterpartyId}
           onChange={(e) => setCounterpartyId(e.target.value)}
-          className="mt-1 block w-full rounded border border-border bg-white px-2 py-1.5 text-sm text-black"
+          className="mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
         >
           {otherTeams.map((t) => (
             <option key={t.teamId} value={t.teamId}>
