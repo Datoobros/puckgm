@@ -30,20 +30,20 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
 
       {!scoreboard ? (
         <Card className="mt-6">
-          <p className="text-sm text-zinc-500">No schedule yet — the commissioner can generate one from the League page.</p>
+          <p className="text-sm text-muted">No schedule yet — the commissioner can generate one from the League page.</p>
         </Card>
       ) : (
         <>
           <div className="mt-4 flex items-center gap-2">
             <Link
               href={`/leagues/${leagueId}/scoreboard?week=${Math.max(1, scoreboard.periodNo - 1)}`}
-              className={`rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05] ${
+              className={`rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint ${
                 scoreboard.periodNo <= 1 ? "pointer-events-none opacity-30" : ""
               }`}
             >
               ← Prev
             </Link>
-            <span className="text-sm text-zinc-500">
+            <span className="text-sm text-muted">
               Week {scoreboard.periodNo} of {periodCount}
               {" · "}
               {scoreboard.startDate.toISOString().slice(0, 10)} – {scoreboard.endDate.toISOString().slice(0, 10)}
@@ -52,7 +52,7 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
             </span>
             <Link
               href={`/leagues/${leagueId}/scoreboard?week=${Math.min(periodCount, scoreboard.periodNo + 1)}`}
-              className={`rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05] ${
+              className={`rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint ${
                 scoreboard.periodNo >= periodCount ? "pointer-events-none opacity-30" : ""
               }`}
             >
@@ -63,7 +63,7 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
           <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {scoreboard.matchups.length === 0 ? (
               <Card>
-                <p className="text-sm text-zinc-500">Bye week for every team, or nothing scheduled.</p>
+                <p className="text-sm text-muted">Bye week for every team, or nothing scheduled.</p>
               </Card>
             ) : (
               scoreboard.matchups.map((m) => (

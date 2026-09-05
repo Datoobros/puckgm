@@ -22,20 +22,20 @@ export default async function StandingsPage(props: PageProps<"/leagues/[id]/stan
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Standings</h1>
-      <p className="mt-1 text-sm text-zinc-500">
+      <p className="mt-1 text-sm text-muted">
         {CURRENT_SCHEDULE_SEASON}-{(CURRENT_SCHEDULE_SEASON + 1) % 100} regular season
       </p>
 
       <div className="mt-6">
         {!hasSchedule ? (
           <Card>
-            <p className="text-sm text-zinc-500">No schedule yet — the commissioner can generate one from the League page.</p>
+            <p className="text-sm text-muted">No schedule yet — the commissioner can generate one from the League page.</p>
           </Card>
         ) : (
           <Card className="overflow-x-auto !p-0">
             <table className="w-full min-w-[480px] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-black/10 text-left text-zinc-500 dark:border-white/10">
+                <tr className="border-b border-border text-left text-muted">
                   <th className="py-2 pl-4 pr-2 font-medium">Team</th>
                   <th className="py-2 pr-2 text-right font-medium">W</th>
                   <th className="py-2 pr-2 text-right font-medium">L</th>
@@ -48,8 +48,8 @@ export default async function StandingsPage(props: PageProps<"/leagues/[id]/stan
                 {standings.map((row, i) => (
                   <tr
                     key={row.teamId}
-                    className={`border-b border-black/5 last:border-0 dark:border-white/5 ${
-                      i % 2 === 1 ? "bg-black/[.015] dark:bg-white/[.02]" : ""
+                    className={`border-b border-border last:border-0 ${
+                      i % 2 === 1 ? "bg-surface-tint" : ""
                     }`}
                   >
                     <td className="py-2 pl-4 pr-2 font-medium">{row.teamName}</td>
@@ -65,7 +65,7 @@ export default async function StandingsPage(props: PageProps<"/leagues/[id]/stan
           </Card>
         )}
       </div>
-      <p className="mt-3 text-xs text-zinc-500">
+      <p className="mt-3 text-xs text-muted">
         Only completed weeks count toward the record — a week in progress isn&apos;t final yet.
       </p>
     </div>

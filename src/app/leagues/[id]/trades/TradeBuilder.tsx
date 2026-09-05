@@ -9,13 +9,13 @@ function AssetChecklist({ prefix, assets }: { prefix: "give" | "receive"; assets
   return (
     <div className="space-y-2">
       {assets.players.length === 0 && assets.picks.length === 0 && (
-        <p className="text-xs text-zinc-500">No players or picks to offer.</p>
+        <p className="text-xs text-muted">No players or picks to offer.</p>
       )}
       {assets.players.map((p) => (
         <label key={p.id} className="flex items-center gap-2 text-sm">
           <input type="checkbox" name={`${prefix}PlayerIds`} value={p.id} />
           {p.fullName}
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-muted">
             {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"} · {p.slotType}
           </span>
         </label>
@@ -34,9 +34,9 @@ function AssetChecklist({ prefix, assets }: { prefix: "give" | "receive"; assets
           min={0}
           max={assets.availableFaab}
           defaultValue={0}
-          className="w-20 rounded border border-black/10 bg-white px-1.5 py-1 text-xs text-black dark:border-white/15"
+          className="w-20 rounded border border-border bg-white px-1.5 py-1 text-xs text-black"
         />
-        <span className="text-xs text-zinc-500">(${assets.availableFaab} available)</span>
+        <span className="text-xs text-muted">(${assets.availableFaab} available)</span>
       </label>
     </div>
   );
@@ -57,18 +57,18 @@ export function TradeBuilder({
   const counterparty = otherTeams.find((t) => t.teamId === counterpartyId);
 
   if (otherTeams.length === 0) {
-    return <p className="text-sm text-zinc-500">No other teams in this league to trade with.</p>;
+    return <p className="text-sm text-muted">No other teams in this league to trade with.</p>;
   }
 
   return (
     <form action={proposeTradeAction.bind(null, leagueId, myTeamId)} className="space-y-4">
       <label className="block text-sm">
-        <span className="text-xs text-zinc-500">Trade with</span>
+        <span className="text-xs text-muted">Trade with</span>
         <select
           name="counterpartyTeamId"
           value={counterpartyId}
           onChange={(e) => setCounterpartyId(e.target.value)}
-          className="mt-1 block w-full rounded border border-black/10 bg-white px-2 py-1.5 text-sm text-black dark:border-white/15"
+          className="mt-1 block w-full rounded border border-border bg-white px-2 py-1.5 text-sm text-black"
         >
           {otherTeams.map((t) => (
             <option key={t.teamId} value={t.teamId}>
@@ -80,16 +80,16 @@ export function TradeBuilder({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">You give</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">You give</p>
           <AssetChecklist prefix="give" assets={myAssets} />
         </Card>
         <Card>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">You get</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">You get</p>
           {counterparty && <AssetChecklist prefix="receive" assets={counterparty.assets} />}
         </Card>
       </div>
 
-      <button type="submit" className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background">
+      <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
         Propose Trade
       </button>
     </form>

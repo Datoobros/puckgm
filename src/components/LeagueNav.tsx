@@ -3,24 +3,29 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Opposing Teams/LM Tools would just duplicate what the League page already
-// shows (the team list, and the commissioner tools card) rather than being
-// real distinct destinations, so they're left out.
-export function LeagueNav({ leagueId, myTeamId }: { leagueId: string; myTeamId: string | null }) {
+export function LeagueNav({
+  leagueId,
+  myTeamId,
+  isCommissioner,
+}: {
+  leagueId: string;
+  myTeamId: string | null;
+  isCommissioner: boolean;
+}) {
   const pathname = usePathname();
 
   const links = [
-    myTeamId ? { href: `/leagues/${leagueId}/teams/${myTeamId}`, label: "My Team" } : null,
     { href: `/leagues/${leagueId}`, label: "League" },
+    myTeamId ? { href: `/leagues/${leagueId}/teams/${myTeamId}`, label: "My Team" } : null,
+    { href: `/leagues/${leagueId}/players`, label: "Players" },
+    { href: `/leagues/${leagueId}/trades`, label: "Trades" },
     { href: `/leagues/${leagueId}/scoreboard`, label: "Scoreboard" },
     { href: `/leagues/${leagueId}/standings`, label: "Standings" },
-    { href: `/leagues/${leagueId}/waivers`, label: "Waivers" },
-    { href: `/leagues/${leagueId}/trades`, label: "Trades" },
-    { href: `/leagues/${leagueId}/players`, label: "Players" },
+    { href: `/leagues/${leagueId}/teams`, label: "Other Teams" },
   ].filter((l): l is { href: string; label: string } => l !== null);
 
   return (
-    <nav className="flex items-center gap-1 border-b border-black/10 bg-black/[.02] px-6 py-2 dark:border-white/10 dark:bg-white/[.03]">
+    <nav className="flex items-center gap-1 border-b border-border bg-surface px-6 py-2">
       {links.map((link) => {
         const isActive = pathname === link.href;
         return (
@@ -28,15 +33,23 @@ export function LeagueNav({ leagueId, myTeamId }: { leagueId: string; myTeamId: 
             key={link.href}
             href={link.href}
             className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-              isActive
-                ? "bg-foreground text-background"
-                : "text-zinc-500 hover:text-foreground"
+              isActive ? "bg-gold text-gold-foreground" : "text-muted hover:text-foreground"
             }`}
           >
             {link.label}
           </Link>
         );
       })}
+      {isCommissioner && (
+        <Link
+          href={`/leagues/${leagueId}/settings`}
+          className={`ml-auto rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+            pathname === `/leagues/${leagueId}/settings` ? "bg-gold text-gold-foreground" : "text-gold hover:text-gold/80"
+          }`}
+        >
+          Commissioner Settings
+        </Link>
+      )}
     </nav>
   );
 }

@@ -1,26 +1,57 @@
 @import "tailwindcss";
 
+/* Navy / gold / white brand palette. Dark mode is the `prefers-color-scheme`
+   media strategy (unchanged from before) — every token flips below, so a
+   plain `bg-surface`/`text-muted`/etc. utility class adapts automatically
+   with no `dark:` variant needed anywhere in the app. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f9fc;
+  --foreground: #1b2430;
+  --surface: #ffffff;
+  --surface-tint: rgba(20, 51, 94, 0.05);
+  --border: #e1e7ef;
+  --muted: #5b6b82;
+  --navy: #14335e;
+  --blue: #2c5ca6;
+  --gold: #c9972e;
+  /* Static — gold and navy are used as fills in both modes, so the text that
+     sits on them doesn't need to flip. */
+  --navy-foreground: #ffffff;
+  --gold-foreground: #3b2a08;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-surface: var(--surface);
+  --color-surface-tint: var(--surface-tint);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-navy: var(--navy);
+  --color-blue: var(--blue);
+  --color-gold: var(--gold);
+  --color-navy-foreground: var(--navy-foreground);
+  --color-gold-foreground: var(--gold-foreground);
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-oswald);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #081120;
+    --foreground: #eaf0f8;
+    --surface: #132a4d;
+    --surface-tint: rgba(126, 164, 214, 0.08);
+    --border: rgba(126, 164, 214, 0.2);
+    --muted: #9db6d6;
+    --navy: #1d3f72;
+    --blue: #7eb0ff;
+    --gold: #e3b84a;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }

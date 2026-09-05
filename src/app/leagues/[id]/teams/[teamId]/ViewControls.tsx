@@ -29,7 +29,7 @@ export function ViewControls({
         onChange={(e) => {
           if (e.target.value) navigate(e.target.value, view);
         }}
-        className="rounded border border-black/10 bg-white px-2 py-1 text-sm text-black dark:border-white/15"
+        className="rounded border border-border bg-white px-2 py-1 text-sm text-black"
       />
       {/* bg-white/text-black is deliberate here, not a dark-mode oversight:
           the native option popup ignores our dark theme's CSS and renders
@@ -38,7 +38,7 @@ export function ViewControls({
       <select
         value={view}
         onChange={(e) => navigate(date, e.target.value)}
-        className="rounded border border-black/10 bg-white px-2 py-1 text-sm text-black dark:border-white/15"
+        className="rounded border border-border bg-white px-2 py-1 text-sm text-black"
       >
         <option value="daily">Daily</option>
         {SEASONS.map((s) => (

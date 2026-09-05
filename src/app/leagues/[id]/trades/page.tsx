@@ -81,7 +81,7 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
-      <p className="mt-1 text-sm text-zinc-500">
+      <p className="mt-1 text-sm text-muted">
         Propose a trade — the other manager has to accept before anything moves. An accepted trade
         sits in a 24-hour review window ({settings.tradeVetoMode === "COMMISSIONER" ? "commissioner veto" : "league vote veto"}).
         {settings.tradeDeadline && ` New trades can't be proposed after ${settings.tradeDeadline}.`}
@@ -98,18 +98,18 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
         <div className="mt-6">
           <SectionLabel>Needs your response</SectionLabel>
           <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-black/5 dark:divide-white/5">
+            <ul className="divide-y divide-border">
               {needsResponse.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
                   <span className="flex shrink-0 gap-2">
                     <form action={respondToTradeAction.bind(null, leagueId, t.id, true)}>
-                      <button type="submit" className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]">
+                      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                         Accept
                       </button>
                     </form>
                     <form action={respondToTradeAction.bind(null, leagueId, t.id, false)}>
-                      <button type="submit" className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]">
+                      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                         Decline
                       </button>
                     </form>
@@ -125,12 +125,12 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
         <div className="mt-6">
           <SectionLabel>Waiting on a response</SectionLabel>
           <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-black/5 dark:divide-white/5">
+            <ul className="divide-y divide-border">
               {myOpenProposals.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
                   <form action={cancelTradeAction.bind(null, leagueId, t.id)}>
-                    <button type="submit" className="shrink-0 rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]">
+                    <button type="submit" className="shrink-0 rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                       Withdraw
                     </button>
                   </form>
@@ -145,35 +145,35 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
         <SectionLabel>Pending (under review)</SectionLabel>
         {pending.length === 0 ? (
           <Card>
-            <p className="text-sm text-zinc-500">No trades currently under review.</p>
+            <p className="text-sm text-muted">No trades currently under review.</p>
           </Card>
         ) : (
           <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-black/5 dark:divide-white/5">
+            <ul className="divide-y divide-border">
               {pending.map((t) => (
                 <li key={t.id} className="px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <TradeSummary trade={t} />
-                    <span className="shrink-0 text-xs text-zinc-500">{timeLeft(t.reviewEndsAt)}</span>
+                    <span className="shrink-0 text-xs text-muted">{timeLeft(t.reviewEndsAt)}</span>
                   </div>
                   <div className="mt-2 flex gap-2">
                     {canCancel(t) && (
                       <form action={cancelTradeAction.bind(null, leagueId, t.id)}>
-                        <button type="submit" className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]">
+                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                           Cancel
                         </button>
                       </form>
                     )}
                     {canVeto(t) && (
                       <form action={castVetoAction.bind(null, leagueId, t.id)}>
-                        <button type="submit" className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]">
+                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                           Veto
                         </button>
                       </form>
                     )}
                     {isCommissioner && (
                       <form action={forceProcessTradeAction.bind(null, leagueId, t.id)}>
-                        <button type="submit" className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]">
+                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
                           Force through now
                         </button>
                       </form>
@@ -190,15 +190,15 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
         <SectionLabel>History</SectionLabel>
         {history.length === 0 ? (
           <Card>
-            <p className="text-sm text-zinc-500">No resolved trades yet.</p>
+            <p className="text-sm text-muted">No resolved trades yet.</p>
           </Card>
         ) : (
           <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-black/5 dark:divide-white/5">
+            <ul className="divide-y divide-border">
               {history.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
-                  <span className="shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-white/10">
+                  <span className="shrink-0 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
                     {t.state}
                   </span>
                 </li>

@@ -23,7 +23,7 @@ export function NavBar() {
             key={link.href}
             href={link.href}
             className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-              isActive ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
+              isActive ? "bg-gold text-gold-foreground" : "text-navy-foreground/70 hover:text-navy-foreground"
             }`}
           >
             {link.label}

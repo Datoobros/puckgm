@@ -17,14 +17,14 @@ export default async function PlayersRedirectPage() {
   return (
     <div className="mx-auto max-w-md px-6 py-16 text-center">
       <h1 className="text-xl font-semibold tracking-tight">Pick a league</h1>
-      <p className="mt-2 text-sm text-zinc-500">
+      <p className="mt-2 text-sm text-muted">
         Players are viewed within a league now — each league can set its own
         scoring.
       </p>
       {teams.length === 0 ? (
         <Link
           href="/leagues"
-          className="mt-6 inline-block rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
+          className="mt-6 inline-block rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
         >
           Browse leagues
         </Link>

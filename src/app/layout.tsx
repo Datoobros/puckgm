@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Oswald } from "next/font/google";
 import {
   ClerkProvider,
   Show,
@@ -11,13 +11,14 @@ import {
 import { NavBar } from "@/components/NavBar";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const oswald = Oswald({
+  variable: "--font-oswald",
+  weight: ["500", "600"],
   subsets: ["latin"],
 });
 
@@ -31,12 +32,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <ClerkProvider>
       <html
         lang="en"
-        className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+        className={`${inter.variable} ${oswald.variable} h-full antialiased`}
       >
         <body className="min-h-full flex flex-col">
-          <header className="flex items-center gap-4 border-b border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-100">
-            <Link href="/" className="text-sm font-bold tracking-tight text-white">
-              puckgm
+          <header className="flex items-center gap-4 bg-navy px-4 py-3 text-navy-foreground">
+            <Link href="/" className="font-heading text-base font-semibold tracking-tight text-gold">
+              PuckGM
             </Link>
             <Show when="signed-in">
               <NavBar />
@@ -44,10 +45,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <div className="ml-auto flex items-center gap-3">
               <Show when="signed-out">
                 <SignInButton mode="modal">
-                  <button className="text-sm text-zinc-300 hover:text-white">Sign in</button>
+                  <button className="text-sm text-navy-foreground/80 hover:text-navy-foreground">Sign in</button>
                 </SignInButton>
                 <SignUpButton mode="modal">
-                  <button className="rounded bg-white px-3 py-1.5 text-sm font-medium text-zinc-950">
+                  <button className="rounded border border-gold px-3 py-1.5 text-sm font-medium text-gold hover:bg-gold hover:text-gold-foreground">
                     Sign up
                   </button>
                 </SignUpButton>

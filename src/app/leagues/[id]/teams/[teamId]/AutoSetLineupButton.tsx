@@ -24,7 +24,7 @@ export function AutoSetLineupButton({
     >
       <button
         type="submit"
-        className="rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+        className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
       >
         {label}
       </button>

@@ -59,12 +59,12 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
-      <p className="mt-1 text-sm text-zinc-500">
+      <p className="mt-1 text-sm text-muted">
         {league.name}&apos;s scoring, 2025-26 season stats.
         {!query && ` Showing top ${DEFAULT_POOL_SIZE} by points — search finds anyone.`}
       </p>
       {!myTeam && (
-        <p className="mt-2 text-sm text-zinc-500">
+        <p className="mt-2 text-sm text-muted">
           You don&apos;t have a team in this league — viewing ownership only.
         </p>
       )}
@@ -75,29 +75,29 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
           name="q"
           defaultValue={query}
           placeholder="Player Name"
-          className="max-w-sm flex-1 rounded border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30"
+          className="max-w-sm flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-blue"
         />
         <button
           type="submit"
-          className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
+          className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
         >
           Search
         </button>
       </form>
 
       {settings.faabEnabled && myTeam && (
-        <div className="mt-4 rounded-lg border border-black/10 bg-black/[.02] p-4 text-sm dark:border-white/10 dark:bg-white/[.03]">
+        <div className="mt-4 rounded-lg border border-border bg-surface p-4 text-sm">
           <p>
             FAAB available: <span className="font-medium">${availableFaab}</span>
             {settings.faabMaxBid !== null && (
-              <span className="text-zinc-500"> · max bid ${settings.faabMaxBid}</span>
+              <span className="text-muted"> · max bid ${settings.faabMaxBid}</span>
             )}
-            <span className="text-zinc-500"> · min bid ${settings.faabMinBid}</span>
+            <span className="text-muted"> · min bid ${settings.faabMinBid}</span>
           </p>
           {myPendingBids.length > 0 && (
             <ul className="mt-2 space-y-1">
               {myPendingBids.map((bid) => (
-                <li key={bid.id} className="flex items-center justify-between text-xs text-zinc-500">
+                <li key={bid.id} className="flex items-center justify-between text-xs text-muted">
                   <span>
                     ${bid.amount} on {bid.playerName} → {bid.targetSlot === "ACTIVE" ? "Active" : "Farm"}
                   </span>

@@ -411,6 +411,64 @@ proposer UI and validation don't yet).
   commissioner, settings page's new Trades card) — reverted before commit
   (`grep -rn "TEMP:" src/` clean).
 
+## UI re-theme + nav/league-home restructure
+
+Full visual identity pass, requested because the app "looked black and ugly" — plus a
+nav-order and information-architecture change specified directly by the user.
+
+- **Navy / gold / white palette**, both light and dark (`src/app/globals.css`). Dark mode
+  stays the pre-existing `prefers-color-scheme` media strategy — no toggle was requested or
+  built. The old two-token setup (`--background`/`--foreground` only, Tailwind v4
+  `@theme inline`) is now ten tokens (`--surface`, `--surface-tint`, `--border`, `--muted`,
+  `--navy`, `--blue`, `--gold`, plus static `--navy-foreground`/`--gold-foreground` for text
+  that always sits on those two fills). Every page now uses a single token-based class (e.g.
+  `border-border`, `text-muted`, `bg-surface`) instead of hand-paired `dark:` variants — the
+  CSS variable itself flips under the media query, so `dark:` classes are gone app-wide
+  except the two places (`<select>`/`<input>` backgrounds) already documented as a
+  deliberate native-dropdown-legibility workaround unrelated to theming.
+- Fonts swapped from Geist to **Oswald** (headings/nav/`SectionLabel`) + **Inter** (body),
+  via the same `next/font/google` pattern already in use.
+- **Nav reordered and restructured**, per explicit user spec: League → My Team → Players →
+  Trades → Scoreboard → Standings → Other Teams, then a right-aligned, gold, commissioner-only
+  **Commissioner Settings** link. (Trades' position was an explicit assumption, flagged to
+  the user before building — their spec named every tab except Trades, almost certainly an
+  oversight rather than a removal request.) `LeagueNav` gained an `isCommissioner` prop,
+  resolved once in `src/app/leagues/[id]/layout.tsx` via the existing `getLeagueCommissioner`.
+- **League home is now a dashboard**, not a team directory: the team grid moved out entirely
+  to a new `/leagues/[id]/teams` ("Other Teams") page; the old "Commissioner Tools" card's
+  schedule-generation form and delete-league button moved into `/leagues/[id]/settings`
+  (renamed "Commissioner Settings" to match the nav label) — so every commissioner action now
+  lives in one place instead of being split across two pages. League home gained a **Recent
+  activity** feed and a **Standings** summary card, and the **Waivers** page's entire content
+  (claimable list + priority order, claim/cancel actions) moved in wholesale — the old
+  `/leagues/[id]/waivers` route is deleted; its `actions.ts` stayed put and is imported by
+  relative path from the new location, since server actions don't care where they're called
+  from.
+- New `src/lib/activity/feed.ts` (`getRecentActivity`) — the first place in this app that
+  reads `TransactionLog` for display rather than just writing to it (the one prior read was a
+  `count()` for the weekly-callup limit, not a listing). Scoped to *terminal* events only —
+  `WAIVER_CLAIM` with `payload.event === "AWARDED"`, every `FAAB_WIN`, `TRADE` with
+  `payload.event` in `PROCESSED`/`FORCED` — explicitly excluding submissions, proposals, and
+  every non-completed trade state, plus every routine roster add/drop/callup/lineup-edit, per
+  the user's own scoping call ("just the notable moves"). For trade rows it reuses
+  `getTradesForLeague` (`src/lib/trades/mutations.ts`) rather than re-deriving team/item
+  names from `TransactionLog.payload`, which only carries a bare `tradeId` for that type.
+- **Real regression found and fixed while verifying**: `deleteLeague` never accounted for
+  `WaiverClaim` rows (they reference `Team` with no cascade) — the same shape of FK-teardown
+  bug already hit and fixed for `Matchup`, `LeagueSettingsLog`, `FaBid`/`FaabBudget`, and the
+  trades tables, but missed for waivers specifically since that feature shipped before the
+  pattern was established. Caught by a real cleanup script hitting the FK violation, not by
+  inspection — fixed by adding it to the same teardown order.
+- Verified in a real browser against a disposable two-team league seeded with one of each
+  notable event (a waiver claim awarded, a FAAB win, a completed trade, plus one still-open
+  claimable player): nav order and gold Commissioner-Settings visibility (commissioner vs.
+  non-commissioner view), the activity feed's three entries with correct per-kind dot color
+  (gold for waiver/FAAB, blue for trade — confirmed via computed style, not just visually),
+  the Waivers section's live claim button, the Other Teams grid, and the Commissioner
+  Settings page's moved schedule/delete-league controls — in both light and dark
+  (`resize_window`'s `colorScheme` option). Re-ran the existing waiver/FAAB/trades regression
+  scripts afterward to confirm the restructuring didn't break any of the three prior features.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`

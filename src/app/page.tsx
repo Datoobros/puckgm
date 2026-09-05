@@ -15,11 +15,11 @@ export default async function Home() {
       <Show when="signed-out">
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-24 text-center">
           <h1 className="text-3xl font-semibold tracking-tight">puckgm</h1>
-          <p className="max-w-md text-zinc-600 dark:text-zinc-400">
+          <p className="max-w-md text-muted">
             Dynasty fantasy hockey GM sim. Early days — player stats and
             leagues are the first things built.
           </p>
-          <p className="text-sm text-zinc-500">Sign in above to get started.</p>
+          <p className="text-sm text-muted">Sign in above to get started.</p>
         </div>
       </Show>
 
@@ -27,10 +27,10 @@ export default async function Home() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
           <div className="flex gap-3 text-sm">
-            <Link href="/leagues/new" className="text-zinc-500 hover:text-foreground hover:underline">
+            <Link href="/leagues/new" className="text-muted hover:text-foreground hover:underline">
               Create a league
             </Link>
-            <Link href="/leagues" className="text-zinc-500 hover:text-foreground hover:underline">
+            <Link href="/leagues" className="text-muted hover:text-foreground hover:underline">
               Browse leagues
             </Link>
           </div>
@@ -38,17 +38,17 @@ export default async function Home() {
 
         {teams.length === 0 ? (
           <Card className="mt-6 flex flex-col items-center gap-3 py-12 text-center">
-            <p className="text-sm text-zinc-500">You&apos;re not in any leagues yet.</p>
+            <p className="text-sm text-muted">You&apos;re not in any leagues yet.</p>
             <div className="flex gap-3">
               <Link
                 href="/leagues/new"
-                className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
+                className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
               >
                 Create a league
               </Link>
               <Link
                 href="/leagues"
-                className="rounded border border-black/10 px-4 py-2 text-sm font-medium dark:border-white/15"
+                className="rounded border border-border px-4 py-2 text-sm font-medium"
               >
                 Browse leagues
               </Link>
@@ -64,10 +64,10 @@ export default async function Home() {
                 const rosterCount = rosterCounts.get(team.id) ?? 0;
                 return (
                   <Link key={team.id} href={`/leagues/${team.leagueId}/teams/${team.id}`}>
-                    <Card className="transition-colors hover:border-black/25 dark:hover:border-white/25">
-                      <p className="text-xs text-zinc-500">{team.league.name}</p>
+                    <Card className="transition-colors hover:border-blue">
+                      <p className="text-xs text-muted">{team.league.name}</p>
                       <p className="mt-1 font-medium">{team.name}</p>
-                      <p className="mt-2 text-xs text-zinc-500">
+                      <p className="mt-2 text-xs text-muted">
                         {rosterCount} / {cap} roster spots
                       </p>
                     </Card>

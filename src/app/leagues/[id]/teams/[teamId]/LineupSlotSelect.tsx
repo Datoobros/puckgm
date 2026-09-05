@@ -36,7 +36,7 @@ export function LineupSlotSelect({
         defaultValue={value}
         disabled={locked}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-black/10 bg-white px-2 py-1 text-xs text-black disabled:opacity-50 dark:border-white/15"
+        className="rounded border border-border bg-white px-2 py-1 text-xs text-black disabled:opacity-50"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value} disabled={o.disabled}>

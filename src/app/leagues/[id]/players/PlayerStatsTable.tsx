@@ -99,17 +99,17 @@ export function PlayerStatsTable({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-4 border-b border-black/10 pb-3 dark:border-white/10">
+      <div className="flex flex-wrap items-center gap-4 border-b border-border pb-3">
         <div className="flex items-center gap-1 text-sm">
-          <span className="mr-1 text-zinc-500">Position:</span>
+          <span className="mr-1 text-muted">Position:</span>
           {(["SKATERS", "F", "D", "G"] as PositionFilter[]).map((p) => (
             <button
               key={p}
               onClick={() => handlePositionChange(p)}
               className={`rounded px-2 py-1 font-medium ${
                 position === p
-                  ? "bg-foreground text-background"
-                  : "text-zinc-500 hover:text-foreground"
+                  ? "bg-gold text-gold-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               {p === "SKATERS" ? "All Skaters" : p}
@@ -117,7 +117,7 @@ export function PlayerStatsTable({
           ))}
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-zinc-500">
+        <label className="flex items-center gap-2 text-sm text-muted">
           Pro Team
           <select
             value={proTeam}
@@ -125,7 +125,7 @@ export function PlayerStatsTable({
               setProTeam(e.target.value);
               setPage(0);
             }}
-            className="rounded border border-black/10 bg-transparent px-2 py-1 text-sm dark:border-white/15"
+            className="rounded border border-border bg-transparent px-2 py-1 text-sm"
           >
             <option value="ALL">All</option>
             {NHL_TEAM_ABBREVS.map((abbrev) => (
@@ -137,7 +137,7 @@ export function PlayerStatsTable({
         </label>
 
         {rosterContext && (
-          <label className="flex items-center gap-2 text-sm text-zinc-500">
+          <label className="flex items-center gap-2 text-sm text-muted">
             Filter
             <select
               value={availability}
@@ -145,7 +145,7 @@ export function PlayerStatsTable({
                 setAvailability(e.target.value as "ALL" | "AVAILABLE");
                 setPage(0);
               }}
-              className="rounded border border-black/10 bg-transparent px-2 py-1 text-sm dark:border-white/15"
+              className="rounded border border-border bg-transparent px-2 py-1 text-sm"
             >
               <option value="ALL">All</option>
               <option value="AVAILABLE">Available</option>
@@ -153,7 +153,7 @@ export function PlayerStatsTable({
           </label>
         )}
 
-        <span className="ml-auto text-xs text-zinc-500">
+        <span className="ml-auto text-xs text-muted">
           {sorted.length} player{sorted.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -161,7 +161,7 @@ export function PlayerStatsTable({
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-sm">
           <thead>
-            <tr className="border-b border-black/10 text-left text-zinc-500 dark:border-white/10">
+            <tr className="border-b border-border text-left text-muted">
               <th className="py-2 pr-2 font-medium">Player</th>
               <th className="py-2 pr-2 font-medium">Team</th>
               {allColumns.map((col) => (
@@ -178,9 +178,9 @@ export function PlayerStatsTable({
           </thead>
           <tbody>
             {pageRows.map((r) => (
-              <tr key={r.id} className="border-b border-black/5 dark:border-white/5">
+              <tr key={r.id} className="border-b border-border">
                 <td className="py-2 pr-2 font-medium">{r.fullName}</td>
-                <td className="py-2 pr-2 text-zinc-500">
+                <td className="py-2 pr-2 text-muted">
                   {r.primaryPosition ?? "—"} · {r.currentNhlOrg ?? "—"}
                 </td>
                 {allColumns.map((col) => (
@@ -191,12 +191,12 @@ export function PlayerStatsTable({
                 {rosterContext && (
                   <td className="py-2 text-right">
                     {ownership[r.id] ? (
-                      <span className="text-xs text-zinc-500">{ownership[r.id]}</span>
+                      <span className="text-xs text-muted">{ownership[r.id]}</span>
                     ) : !rosterContext.isMyTeam ? (
-                      <span className="text-xs text-zinc-500">—</span>
+                      <span className="text-xs text-muted">—</span>
                     ) : faab ? (
                       faab.pendingPlayerIds.includes(r.id) ? (
-                        <span className="text-xs text-zinc-500">Bid pending</span>
+                        <span className="text-xs text-muted">Bid pending</span>
                       ) : (
                         <form
                           action={submitFaBidAction.bind(null, rosterContext.leagueId, r.id)}
@@ -209,17 +209,17 @@ export function PlayerStatsTable({
                             max={faab.maxBid ?? undefined}
                             defaultValue={faab.minBid}
                             required
-                            className="w-14 rounded border border-black/10 bg-white px-1 py-0.5 text-xs text-black dark:border-white/15"
+                            className="w-14 rounded border border-border bg-white px-1 py-0.5 text-xs text-black"
                           />
                           <select
                             name="targetSlot"
                             defaultValue="ACTIVE"
-                            className="rounded border border-black/10 bg-white px-1 py-0.5 text-xs text-black dark:border-white/15"
+                            className="rounded border border-border bg-white px-1 py-0.5 text-xs text-black"
                           >
                             <option value="ACTIVE">Active</option>
                             <option value="FARM">Farm</option>
                           </select>
-                          <button type="submit" className="text-xs underline">
+                          <button type="submit" className="text-xs font-medium text-blue underline">
                             Bid
                           </button>
                         </form>
@@ -233,7 +233,7 @@ export function PlayerStatsTable({
                           r.id,
                         )}
                       >
-                        <button type="submit" className="text-xs underline">
+                        <button type="submit" className="text-xs font-medium text-blue underline">
                           Add
                         </button>
                       </form>
@@ -244,7 +244,7 @@ export function PlayerStatsTable({
             ))}
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={allColumns.length + 2} className="py-8 text-center text-sm text-zinc-500">
+                <td colSpan={allColumns.length + 2} className="py-8 text-center text-sm text-muted">
                   No players match these filters.
                 </td>
               </tr>
@@ -258,17 +258,17 @@ export function PlayerStatsTable({
           <button
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={pageSafe === 0}
-            className="text-zinc-500 hover:text-foreground disabled:opacity-30"
+            className="text-muted hover:text-foreground disabled:opacity-30"
           >
             ← Prev
           </button>
-          <span className="text-zinc-500">
+          <span className="text-muted">
             Page {pageSafe + 1} of {totalPages}
           </span>
           <button
             onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
             disabled={pageSafe >= totalPages - 1}
-            className="text-zinc-500 hover:text-foreground disabled:opacity-30"
+            className="text-muted hover:text-foreground disabled:opacity-30"
           >
             Next →
           </button>
@@ -293,7 +293,7 @@ function SortableHeader({
     <th className="py-2 pr-2 text-right font-medium">
       <button
         onClick={onClick}
-        className={`whitespace-nowrap hover:text-foreground ${active ? "text-foreground" : ""}`}
+        className={`whitespace-nowrap hover:text-foreground ${active ? "text-blue" : ""}`}
       >
         {col.label}
         {active && <span className="ml-0.5">{desc ? "▼" : "▲"}</span>}

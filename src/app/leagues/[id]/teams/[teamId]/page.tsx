@@ -130,49 +130,49 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-      <Link href={`/leagues/${leagueId}`} className="text-sm text-zinc-500 hover:underline">
+      <Link href={`/leagues/${leagueId}`} className="text-sm text-muted hover:underline">
         ← {team.league.name}
       </Link>
       <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{team.name}</h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-muted">
             {activeSlots.length} / {cap} active roster spots
           </p>
         </div>
         {isOwner && (
           <Link
             href={`/leagues/${leagueId}/players`}
-            className="rounded-full border border-black/10 px-4 py-1.5 text-sm font-medium hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+            className="rounded-full border border-border px-4 py-1.5 text-sm font-medium hover:bg-surface-tint"
           >
             + Add
           </Link>
         )}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-black/10 pt-4 dark:border-white/10">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <div className="flex items-center gap-2">
           <Link
             href={`/leagues/${leagueId}/teams/${teamId}?date=${shiftDate(date, -1)}&view=${view}`}
-            className="rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+            className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
           >
             ← Prev
           </Link>
           <Link
             href={`/leagues/${leagueId}/teams/${teamId}?date=${shiftDate(date, 1)}&view=${view}`}
-            className="rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+            className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
           >
             Next →
           </Link>
           {date !== todayUTC() && (
             <Link
               href={`/leagues/${leagueId}/teams/${teamId}?date=${todayUTC()}&view=${view}`}
-              className="rounded-full border border-black/10 px-3 py-1.5 text-sm hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+              className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
             >
               Today
             </Link>
           )}
-          <span className="text-sm text-zinc-500">{date === todayUTC() ? "Today" : date}</span>
+          <span className="text-sm text-muted">{date === todayUTC() ? "Today" : date}</span>
         </div>
         <ViewControls leagueId={leagueId} teamId={teamId} date={date} view={view} />
       </div>
@@ -194,7 +194,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           />
         </div>
       )}
-      <p className="mt-1 text-xs text-zinc-500">
+      <p className="mt-1 text-xs text-muted">
         Lineups are freely editable until a player&apos;s own game starts.
       </p>
 
@@ -236,18 +236,18 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         <SectionLabel>
           Farm ({farmSlots.length} / {settings.farmSlots})
           {isOwner && (
-            <span className="ml-2 normal-case text-zinc-400">
+            <span className="ml-2 normal-case text-muted">
               · {callupsUsed} / {settings.callupsPerWeek} callups used this week
             </span>
           )}
         </SectionLabel>
         {farmSlots.length === 0 ? (
           <Card>
-            <p className="text-sm text-zinc-500">No players on the farm.</p>
+            <p className="text-sm text-muted">No players on the farm.</p>
           </Card>
         ) : (
           <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-black/5 dark:divide-white/5">
+            <ul className="divide-y divide-border">
               {farmSlots.map((s) => {
                 const stats = statsById.get(s.playerId);
                 const played = stats && stats.gamesIngested > 0;
@@ -257,7 +257,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
                     <span>
                       {s.player.fullName}
-                      <span className="ml-2 text-xs text-zinc-500">
+                      <span className="ml-2 text-xs text-muted">
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
                       {s.waiverExpiresAt && s.waiverExpiresAt > new Date() && (
@@ -271,7 +271,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                     </span>
                     <span className="flex items-center gap-3">
                       {played && (
-                        <span className="text-xs text-zinc-500">
+                        <span className="text-xs text-muted">
                           {stats.gamesIngested} GP · {stats.points.toFixed(1)} pts
                         </span>
                       )}
@@ -287,7 +287,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                                   ? "Weekly callup limit reached"
                                   : undefined
                             }
-                            className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] disabled:opacity-30 dark:border-white/15 dark:hover:bg-white/[.05]"
+                            className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint disabled:opacity-30"
                           >
                             ↑ Call Up
                           </button>
@@ -306,11 +306,11 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         <SectionLabel>IR ({irSlots.length} / {settings.irSlots})</SectionLabel>
         {irSlots.length === 0 ? (
           <Card>
-            <p className="text-sm text-zinc-500">No players on IR.</p>
+            <p className="text-sm text-muted">No players on IR.</p>
           </Card>
         ) : (
           <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-black/5 dark:divide-white/5">
+            <ul className="divide-y divide-border">
               {irSlots.map((s) => {
                 const stillIr = s.player.officialRosterStatus === "IR" || s.player.officialRosterStatus === "LTIR";
                 const activeFull = activeSlots.length >= cap;
@@ -318,10 +318,10 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
                     <span>
                       {s.player.fullName}
-                      <span className="ml-2 text-xs text-zinc-500">
+                      <span className="ml-2 text-xs text-muted">
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>
-                      <span className="ml-2 rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-white/10">
+                      <span className="ml-2 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
                         {s.player.officialRosterStatus ?? "IR"}
                       </span>
                     </span>
@@ -337,7 +337,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                                 ? "Active roster is full — send someone down first"
                                 : undefined
                           }
-                          className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] disabled:opacity-30 dark:border-white/15 dark:hover:bg-white/[.05]"
+                          className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint disabled:opacity-30"
                         >
                           Activate
                         </button>
@@ -391,7 +391,7 @@ function RosterTable({
   if (slots.length === 0) {
     return (
       <Card>
-        <p className="text-sm text-zinc-500">{emptyText}</p>
+        <p className="text-sm text-muted">{emptyText}</p>
       </Card>
     );
   }
@@ -402,7 +402,7 @@ function RosterTable({
     <Card className="overflow-x-auto !p-0">
       <table className="w-full min-w-[720px] border-collapse text-sm">
         <thead>
-          <tr className="border-b border-black/10 text-left text-zinc-500 dark:border-white/10">
+          <tr className="border-b border-border text-left text-muted">
             <th className="py-2 pl-4 pr-2 font-medium">Player</th>
             <th className="py-2 pr-2 font-medium">Opponent</th>
             <th className="py-2 pr-2 font-medium">Status</th>
@@ -428,14 +428,14 @@ function RosterTable({
             return (
               <tr
                 key={playerId}
-                className={`border-b border-black/5 last:border-0 dark:border-white/5 ${
-                  i % 2 === 1 ? "bg-black/[.015] dark:bg-white/[.02]" : ""
-                } ${isGroupStart ? "border-t-2 border-t-black/20 dark:border-t-white/20" : ""}`}
+                className={`border-b border-border last:border-0 ${
+                  i % 2 === 1 ? "bg-surface-tint" : ""
+                } ${isGroupStart ? "border-t-2 border-t-blue" : ""}`}
               >
                 <td className="py-2 pl-4 pr-2 font-medium">
                   {player.fullName}
                   {eligible.length > 0 && (
-                    <span className="ml-2 rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-white/10">
+                    <span className="ml-2 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
                       {eligible.join("/")}
                     </span>
                   )}
@@ -452,9 +452,9 @@ function RosterTable({
                       {player.officialRosterStatus}
                     </span>
                   )}
-                  <span className="ml-2 text-xs text-zinc-500">{player.currentNhlOrg ?? "—"}</span>
+                  <span className="ml-2 text-xs text-muted">{player.currentNhlOrg ?? "—"}</span>
                 </td>
-                <td className="py-2 pr-2 text-zinc-500">
+                <td className="py-2 pr-2 text-muted">
                   {lineup?.game
                     ? `${lineup.game.home ? "vs" : "@"} ${lineup.game.opponent}${lineup.locked ? " · locked" : ""}`
                     : "No game"}
@@ -472,7 +472,7 @@ function RosterTable({
                         locked={lineup.locked}
                       />
                     ) : (
-                      <span className="text-xs text-zinc-500">
+                      <span className="text-xs text-muted">
                         {lineup.currentSlot === "BE" ? "Bench" : lineup.currentSlot}
                       </span>
                     ))}
@@ -489,7 +489,7 @@ function RosterTable({
                         <form action={placeOnIrAction.bind(null, leagueId, teamId, playerId)}>
                           <button
                             type="submit"
-                            className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                            className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
                           >
                             → IR
                           </button>
@@ -498,7 +498,7 @@ function RosterTable({
                       <form action={sendToFarmAction.bind(null, leagueId, teamId, playerId)}>
                         <button
                           type="submit"
-                          className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                          className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
                         >
                           → Farm
                         </button>
@@ -506,7 +506,7 @@ function RosterTable({
                       <form action={dropPlayerAction.bind(null, leagueId, teamId, playerId)}>
                         <button
                           type="submit"
-                          className="rounded-full border border-black/10 px-3 py-1 text-xs hover:bg-black/[.03] dark:border-white/15 dark:hover:bg-white/[.05]"
+                          className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
                         >
                           − Drop
                         </button>
