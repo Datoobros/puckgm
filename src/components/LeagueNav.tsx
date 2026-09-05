@@ -19,6 +19,7 @@ export function LeagueNav({
     myTeamId ? { href: `/leagues/${leagueId}/teams/${myTeamId}`, label: "My Team" } : null,
     { href: `/leagues/${leagueId}/players`, label: "Players" },
     { href: `/leagues/${leagueId}/trades`, label: "Trades" },
+    { href: `/leagues/${leagueId}/draft`, label: "Draft" },
     { href: `/leagues/${leagueId}/scoreboard`, label: "Scoreboard" },
     { href: `/leagues/${leagueId}/standings`, label: "Standings" },
     { href: `/leagues/${leagueId}/teams`, label: "Other Teams" },

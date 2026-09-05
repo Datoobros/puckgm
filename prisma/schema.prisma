@@ -24,6 +24,17 @@ model Player {
   currentNhlOrg   String? // team abbrev, e.g. "EDM" — derived, refreshed from NHL data
   careerNhlGp     Int      @default(0) // derived — drives the 80-GP waiver exemption
   officialRosterStatus String? // ACTIVE | IR | LTIR — derived from source data, see DESIGN.md §2.6
+  // Real NHL Entry Draft metadata (src/lib/players/draftClass.ts) — set only
+  // for players ingested as a rookie-draft-eligible class. currentNhlOrg
+  // above is set to the *drafting* team for these, satisfying DESIGN.md
+  // §2.1's "tied to an NHL organization" rule even pre-debut. No season
+  // stats exist for these players — name/org/position only, by design (see
+  // PROGRESS.md's Draft section for why).
+  draftYear         Int?
+  draftRound        Int?
+  draftOverallPick  Int?
+  amateurLeague     String?
+  amateurClubName   String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -94,6 +105,7 @@ model League {
   teams            Team[]
   settingsLog      LeagueSettingsLog[]
   draftPicks       DraftPick[]
+  drafts           Draft[]
   trades           Trade[]
   matchupPeriods   MatchupPeriod[]
 }
@@ -194,10 +206,53 @@ model DraftPick {
   lotteryResult     Int? // final pick number after lottery
   usedOnPlayerId    String?
   usedOnPlayer      Player?  @relation(fields: [usedOnPlayerId], references: [id])
+  // Draft room (src/lib/draft/mutations.ts). overallPick is the global
+  // sequence position across every round of the draft it belongs to — the
+  // pick with the lowest overallPick and no usedOnPlayerId is whoever's on
+  // the clock. draftId links back to that live session; nullable because a
+  // DraftPick can exist (and be traded) before draftId meant anything here.
+  overallPick       Int?
+  draftId           String?
+  draft             Draft?   @relation(fields: [draftId], references: [id])
 
   tradeItems TradeItem[]
 
   @@index([leagueId, season])
+}
+
+// ---------------------------------------------------------------------------
+// The draft (startup or annual rookie). DESIGN.md §2.8, src/lib/draft/mutations.ts.
+// No cron involvement — the live room's clock resolves itself on every read
+// (same "compute the true current state on read" principle already used for
+// fantasy points/scores), since Vercel Hobby's once-daily cron can't drive a
+// live countdown and this app has no other live-update infrastructure.
+// ---------------------------------------------------------------------------
+
+enum DraftType {
+  STARTUP
+  ROOKIE
+}
+
+enum DraftStatus {
+  SETUP // DraftPicks exist (and are already real, tradeable rows) — clock not running yet
+  IN_PROGRESS
+  COMPLETE
+}
+
+model Draft {
+  id                  String      @id @default(cuid())
+  leagueId            String
+  league              League      @relation(fields: [leagueId], references: [id])
+  season              Int
+  type                DraftType
+  status              DraftStatus @default(SETUP)
+  pickTimerSeconds    Int         @default(90)
+  currentPickDeadline DateTime?
+  createdAt           DateTime    @default(now())
+
+  picks DraftPick[]
+
+  @@unique([leagueId, season, type])
 }
 
 // ---------------------------------------------------------------------------

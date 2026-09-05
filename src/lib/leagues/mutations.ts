@@ -178,7 +178,9 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   // project (predates this teardown list entirely) and was never added;
   // caught the same way, by a playoff-bracket test script's cleanup hitting
   // the FK violation, not by inspection. A real league with any lineup
-  // history would have hit this on delete too.
+  // history would have hit this on delete too. Draft (added with the draft
+  // feature) is fixed proactively here instead of waiting to hit it —
+  // DraftPick references Draft, so it has to go first.
   await prisma.$transaction([
     prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
     prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
@@ -191,6 +193,7 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
     prisma.tradeItem.deleteMany({ where: { trade: { leagueId } } }),
     prisma.trade.deleteMany({ where: { leagueId } }),
     prisma.draftPick.deleteMany({ where: { leagueId } }),
+    prisma.draft.deleteMany({ where: { leagueId } }),
     prisma.lineupEntry.deleteMany({ where: { team: { leagueId } } }),
     prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } }),
     prisma.team.deleteMany({ where: { leagueId } }),

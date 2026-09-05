@@ -517,6 +517,79 @@ nav-order and information-architecture change specified directly by the user.
   (`resize_window`'s `colorScheme` option). Re-ran the existing waiver/FAAB/trades regression
   scripts afterward to confirm the restructuring didn't break any of the three prior features.
 
+## Draft (startup + rookie)
+
+The last major roadmap item — both a one-time **startup draft** (a new league builds its
+roster by drafting the real NHL player pool instead of instant-add) and a recurring
+**rookie draft** (that year's actual NHL Entry Draft class), sharing one live draft room.
+
+- **Real prospect data, sourced free**: `https://api-web.nhle.com/v1/draft/picks/{year}/all`
+  (`getDraftClass`, `src/lib/nhl/client.ts`) returns every real NHL Entry Draft class back to
+  1979 — name, position, drafting team, round/pick, junior league/club. No player ID field,
+  so `ingestDraftClass` (`src/lib/players/draftClass.ts`) creates name/org/position-only
+  `Player` stubs keyed by a synthetic `PlayerSourceId` (`source: "nhl-draft"`,
+  `sourceId: "${year}-${overallPick}"`), tagged with five new nullable `Player` fields
+  (`draftYear`, `draftRound`, `draftOverallPick`, `amateurLeague`, `amateurClubName`). Run
+  manually, once a year after the real draft (`npx tsx scripts/ingest-draft-class.ts <year>`)
+  — idempotent, matching `backfill-season.ts`'s convention. Ingested 2025 for real against
+  production (224 real players).
+  - **Known limitation, not solved**: a prospect ingested this way who later actually debuts
+    gets a *separate* `Player` row from the existing boxscore/roster ingestion (which only
+    keys off a real NHL numeric ID, `source: "nhl"`) — one stub, one real, no merge. No
+    fuzzy-name matching built to fix this now; flagged for a future pass.
+- **Live draft room, resolve-on-read clock**: this app has no live-update infrastructure
+  (no websockets, no fine-grained cron) and Vercel Hobby cron only fires once a day, so the
+  countdown isn't cron-driven. Instead `resolveDraftState` (`src/lib/draft/mutations.ts`)
+  checks on every single read — every poll, every pick attempt — whether the current pick's
+  deadline has passed, and if so autopicks and advances, **looping** so a stretch nobody was
+  watching still catches all the way up to the true state in one call. `advanceDeadline`
+  chains the next deadline from the *missed* deadline (not from "now") specifically when
+  autopicking, so the loop can genuinely resolve several overdue picks per call — a subtle
+  bug in the first draft of this function (always basing off "now") would have silently
+  capped catch-up at one pick per call, defeating the point. A timely manual pick still gives
+  the next team a fresh full window. This is the first client-polling UI in the app
+  (`DraftRoom.tsx`, 3s interval) — called out as such, not hidden.
+- **Order and mechanics**: `setUpDraft` builds every `DraftPick` row up front in snake order
+  (round 2 reverses round 1, etc.), commissioner's choice of random shuffle or manual
+  order — both, not either/or. Picks are real, tradeable `DraftPick` rows the moment
+  `SETUP` exists, before the clock even starts — no changes needed to the trade system,
+  which already only cares about `currentOwnerId`. `ROOKIE` setup rejects a season with no
+  ingested class (honest error naming the ingestion command) rather than creating an empty
+  pool.
+- **Autopick ranking**: career fantasy points (`getPlayerStatsAggregate`, the same ranking
+  `autoSetLineup` already uses) for a `STARTUP` draft. Falls back to real NHL draft position
+  for `ROOKIE` — a freshly-ingested prospect has zero `GameStatLine` rows and would tie at 0
+  points with every other prospect under the points ranking, so real draft order (lower
+  overall pick = better prospect) is the closest honest proxy available.
+- Drafted players land on the `ACTIVE` roster **past the roster cap** — same
+  overflow-allowed philosophy as waiver-claim/FAAB awards, since a draft is supposed to fill
+  every roster up to the round count, not fight the cap pick by pick.
+- **UI**: Commissioner Settings gained a "Draft" card (`DraftSetupForm.tsx`) — draft
+  type/season/rounds/timer/order form, a list of existing drafts with a Start Draft button
+  per `SETUP` one. New `/leagues/[id]/draft` live room: on-the-clock card with a ticking
+  countdown, a searchable pool with a Draft button (enabled only when the viewer's team is on
+  the clock), and a recent-picks list tagging autopicked ones. `LeagueNav` gained a "Draft"
+  link after Trades.
+- **Real regression found and fixed while verifying, same shape as five times before**:
+  `deleteLeague`'s teardown transaction didn't know about the new `Draft` model (it had
+  `DraftPick` already, but not the `Draft` row itself) — fixed by inspection this time,
+  before running the test script, recognizing the same FK-teardown gap that has hit
+  `Matchup`, `LeagueSettingsLog`, `FaBid`/`FaabBudget`, `WaiverClaim`, and `LineupEntry`.
+- Verified in `scripts/draft-check.ts` against the real DB: `ROOKIE` setup rejection with no
+  ingested class; snake-order `overallPick` sequencing for a 4-team/2-round `STARTUP` draft;
+  picks tradeable immediately via `getTradeableAssets`; turn enforcement; a manual pick
+  landing on `ACTIVE` and leaving the pool; deadline chaining catching up through *exactly*
+  as many picks as elapsed time allows (not all-or-nothing); full-draft completion past the
+  cap; a real `ROOKIE` draft against the actual ingested 2025 class correctly ranking and
+  drafting Matthew Schaefer (the real #1 overall pick) first. Also checked the full UI flow
+  in a real browser across two disposable leagues: the settings-page setup form (manual
+  order, round count, timer), starting the draft, the live room's countdown actually ticking
+  down between polls, a real autopick sequence (a short timer let an entire 4-team/2-round
+  draft autopick itself to completion while driving the browser, each pick correctly tagged
+  AUTO in Recent Picks), and — in a second league with a long timer — a genuine manual pick
+  through the actual UI (search box, click Draft), confirming no AUTO tag, the next team
+  getting a fresh full countdown, and the picked player disappearing from the pool.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
@@ -527,10 +600,12 @@ nav-order and information-architecture change specified directly by the user.
 
 ## Known gaps, deliberately not built (ask before building)
 
-- No draft. Playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in
+- Draft, playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in
   per schedule generation (see below); FAAB is per-league opt-in,
   default off (a league that hasn't turned it on still uses free instant add exactly as
-  before); trades are always on (see below).
+  before); trades are always on (see below); draft is commissioner-triggered, both startup
+  and rookie types (see above) — a league that never sets one up just keeps using free
+  instant add, same as before this feature existed.
 - Watch List, schedule/"next game" column, stat projections — still no backing data or
   feature built for any of these. (Injury/IR status is now real, via ESPN — see above; this
   line used to include it.)

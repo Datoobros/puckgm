@@ -130,6 +130,30 @@ export function getBoxscore(gameId: number): Promise<NhlBoxscore> {
   return getJson<NhlBoxscore>(`${API_BASE}/gamecenter/${gameId}/boxscore`);
 }
 
+export interface NhlDraftPick {
+  round: number;
+  pickInRound: number;
+  overallPick: number;
+  teamAbbrev: string;
+  firstName: { default: string };
+  lastName: { default: string };
+  positionCode: string;
+  amateurLeague?: string;
+  amateurClubName?: string;
+}
+
+export interface NhlDraftClass {
+  draftYear: number;
+  picks: NhlDraftPick[];
+}
+
+// No player ID in this payload — these are pre-NHL prospects, nothing to
+// cross-reference yet. See src/lib/players/draftClass.ts for how that's
+// handled (a synthetic PlayerSourceId instead of a real NHL one).
+export function getDraftClass(year: number): Promise<NhlDraftClass> {
+  return getJson<NhlDraftClass>(`${API_BASE}/draft/picks/${year}/all`);
+}
+
 // Stable enough to hardcode — NHL franchise abbreviations change on relocation
 // only (last one: Arizona -> Utah, 2024). Revisit if any ingestion job starts
 // silently missing a team.

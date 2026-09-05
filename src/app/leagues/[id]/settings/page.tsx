@@ -4,7 +4,9 @@ import { auth } from "@clerk/nextjs/server";
 import { getLeague, getLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { EDITABLE_SCORING_FIELDS } from "@/lib/scoring/engine";
 import { updateLeagueSettingsAction, generateScheduleAction } from "@/app/leagues/actions";
+import { startDraftAction } from "../draft/actions";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
+import { DraftSetupForm } from "./DraftSetupForm";
 import { Card, SectionLabel } from "@/components/Card";
 import { prisma } from "@/lib/db";
 import { CURRENT_SCHEDULE_SEASON, DEFAULT_SEASON_START } from "@/lib/matchups/constants";
@@ -30,6 +32,8 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
 
   const hasSchedule =
     (await prisma.matchupPeriod.count({ where: { leagueId, season: CURRENT_SCHEDULE_SEASON } })) > 0;
+
+  const drafts = await prisma.draft.findMany({ where: { leagueId }, orderBy: { createdAt: "desc" } });
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
@@ -221,6 +225,37 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
           Save settings
         </button>
       </form>
+
+      <div className="mt-10">
+        <SectionLabel>Draft</SectionLabel>
+        <Card>
+          {drafts.length > 0 && (
+            <ul className="mb-4 divide-y divide-border">
+              {drafts.map((d) => (
+                <li key={d.id} className="flex items-center justify-between gap-3 py-2 first:pt-0">
+                  <span className="text-sm">
+                    {d.season} {d.type === "STARTUP" ? "Startup" : "Rookie"} draft —{" "}
+                    <span className="text-xs text-muted">{d.status.replace("_", " ")}</span>
+                  </span>
+                  {d.status === "SETUP" && (
+                    <form action={startDraftAction.bind(null, leagueId, d.id)}>
+                      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                        Start Draft
+                      </button>
+                    </form>
+                  )}
+                  {d.status !== "SETUP" && (
+                    <Link href={`/leagues/${leagueId}/draft`} className="shrink-0 text-xs underline">
+                      Open room
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <DraftSetupForm leagueId={leagueId} teams={league.teams.map((t) => ({ id: t.id, name: t.name }))} defaultSeason={CURRENT_SCHEDULE_SEASON} />
+        </Card>
+      </div>
 
       <div className="mt-10">
         <SectionLabel>Schedule</SectionLabel>
