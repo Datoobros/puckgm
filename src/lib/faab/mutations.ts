@@ -18,6 +18,7 @@
 
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
+import { isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
 import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 
 export async function getOrInitFaabBudget(teamId: string, season: number, startingAmount: number) {
@@ -61,7 +62,7 @@ export interface SubmitFaBidInput {
 
 export async function submitFaBid(input: SubmitFaBidInput): Promise<void> {
   const team = await prisma.team.findFirst({
-    where: { leagueId: input.leagueId, managerUserId: input.managerUserId },
+    where: { leagueId: input.leagueId, ...managerOrCoManagerWhere(input.managerUserId) },
     include: { league: true },
   });
   if (!team) throw new Error("You don't manage a team in this league.");
@@ -121,7 +122,7 @@ export interface CancelFaBidInput {
 export async function cancelFaBid(input: CancelFaBidInput): Promise<void> {
   const bid = await prisma.faBid.findUnique({ where: { id: input.bidId }, include: { team: true } });
   if (!bid) throw new Error("Bid not found.");
-  if (bid.team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(bid.team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (bid.result !== "PENDING") throw new Error("This bid has already been resolved.");
 
   await prisma.faBid.delete({ where: { id: input.bidId } });

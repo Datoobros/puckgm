@@ -13,7 +13,7 @@
 
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
-import { isLeagueCommissioner } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 
 export function activeRosterCap(settings: LeagueSettings): number {
@@ -70,7 +70,7 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
   if (!team || team.leagueId !== input.leagueId) {
     throw new Error("Team not found in this league.");
   }
-  if (team.managerUserId !== input.managerUserId) {
+  if (!isTeamManager(team, input.managerUserId)) {
     throw new Error("You don't manage this team.");
   }
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't add players.");
@@ -129,7 +129,7 @@ export interface DropPlayerInput {
 export async function dropPlayerFromRoster(input: DropPlayerInput): Promise<void> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId } });
   if (!team) throw new Error("Team not found.");
-  if (team.managerUserId !== input.managerUserId) {
+  if (!isTeamManager(team, input.managerUserId)) {
     throw new Error("You don't manage this team.");
   }
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't drop players.");
@@ -174,7 +174,7 @@ const TRADE_EXEMPTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExposed: boolean }> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
-  if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't send players down.");
 
   const slot = await prisma.rosterSlot.findFirst({
@@ -230,7 +230,7 @@ export interface CallUpInput {
 export async function callUpToActive(input: CallUpInput): Promise<void> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
-  if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't call up players.");
 
   const slot = await prisma.rosterSlot.findFirst({
@@ -286,7 +286,7 @@ export interface PlaceOnIrInput {
 export async function placeOnIR(input: PlaceOnIrInput): Promise<void> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
-  if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't place a player on IR.");
 
   const slot = await prisma.rosterSlot.findFirst({
@@ -336,7 +336,7 @@ export interface ActivateFromIrInput {
 export async function activateFromIR(input: ActivateFromIrInput): Promise<void> {
   const team = await prisma.team.findUnique({ where: { id: input.teamId }, include: { league: true } });
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
-  if (team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't activate a player from IR.");
 
   const slot = await prisma.rosterSlot.findFirst({

@@ -127,7 +127,7 @@ export interface CreateTeamInput {
 
 export async function createTeam(input: CreateTeamInput): Promise<{ teamId: string }> {
   const existing = await prisma.team.findFirst({
-    where: { leagueId: input.leagueId, managerUserId: input.managerUserId },
+    where: { leagueId: input.leagueId, ...managerOrCoManagerWhere(input.managerUserId) },
   });
   if (existing) {
     throw new Error("You already have a team in this league.");
@@ -183,15 +183,26 @@ export async function setTeamManager(input: { leagueId: string; teamId: string; 
   if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
 
   if (input.orphan) {
-    await prisma.team.update({ where: { id: input.teamId }, data: { state: "ORPHAN_FROZEN" } });
+    // Clears any co-manager too — a stale co-manager must not retain full
+    // control of a team that's now marked abandoned and awaiting a new
+    // primary manager.
+    await prisma.team.update({
+      where: { id: input.teamId },
+      data: { state: "ORPHAN_FROZEN", secondManagerUserId: null, secondManagerClaimCode: null },
+    });
     return;
   }
   if (!input.newManagerUserId) throw new Error("A new manager is required unless orphaning the team.");
   const existing = await prisma.team.findFirst({
-    where: { leagueId: input.leagueId, managerUserId: input.newManagerUserId, id: { not: input.teamId } },
+    where: { leagueId: input.leagueId, ...managerOrCoManagerWhere(input.newManagerUserId), id: { not: input.teamId } },
   });
   if (existing) throw new Error("That person already manages a team in this league.");
-  await prisma.team.update({ where: { id: input.teamId }, data: { managerUserId: input.newManagerUserId, state: "ACTIVE" } });
+  // Reassigning also clears any co-manager — the incoming primary manager
+  // shouldn't inherit a stranger with full control of their new team.
+  await prisma.team.update({
+    where: { id: input.teamId },
+    data: { managerUserId: input.newManagerUserId, state: "ACTIVE", secondManagerUserId: null, secondManagerClaimCode: null },
+  });
 }
 
 /** Per-team join link (distinct from League.inviteCode, which creates a
@@ -219,11 +230,13 @@ export async function getTeamByClaimCode(claimCode: string) {
 export async function claimTeam(input: { claimCode: string; newManagerUserId: string }): Promise<{ leagueId: string; teamId: string }> {
   const team = await getTeamByClaimCode(input.claimCode);
   if (!team) throw new Error("This claim link is invalid or has been revoked.");
-  const existing = await prisma.team.findFirst({ where: { leagueId: team.leagueId, managerUserId: input.newManagerUserId } });
+  const existing = await prisma.team.findFirst({ where: { leagueId: team.leagueId, ...managerOrCoManagerWhere(input.newManagerUserId) } });
   if (existing) throw new Error("You already manage a team in this league.");
+  // Clears any co-manager too — the new primary manager shouldn't inherit a
+  // stranger with full control of the team they just claimed.
   await prisma.team.update({
     where: { id: team.id },
-    data: { managerUserId: input.newManagerUserId, state: "ACTIVE", claimCode: null },
+    data: { managerUserId: input.newManagerUserId, state: "ACTIVE", claimCode: null, secondManagerUserId: null, secondManagerClaimCode: null },
   });
   return { leagueId: team.leagueId, teamId: team.id };
 }
@@ -239,6 +252,35 @@ export async function setTeamDivision(input: { leagueId: string; teamId: string;
   if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   const division = input.division?.trim() || null;
   await prisma.team.update({ where: { id: input.teamId }, data: { division } });
+}
+
+const BLOB_HOST_SUFFIX = ".public.blob.vercel-storage.com";
+
+/** Branding, not a co-manager power (same tier as renameTeam/setTeamDivision
+ * — primary manager or commissioner only). Validates the URL's host against
+ * Vercel Blob's own storage domain before persisting — this field renders
+ * as <img src> on every viewer's team page, so it must never accept an
+ * arbitrary caller-supplied URL. null clears the logo (placeholder shown
+ * instead, src/components/TeamLogo.tsx). */
+export async function setTeamLogo(input: { leagueId: string; teamId: string; callerUserId: string; logoUrl: string | null }): Promise<void> {
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
+  if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  const isOwner = team.managerUserId === input.callerUserId;
+  if (!isOwner && !(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only this team's manager or the league commissioner can set its logo.");
+  }
+  if (input.logoUrl !== null) {
+    let host: string;
+    try {
+      host = new URL(input.logoUrl).hostname;
+    } catch {
+      throw new Error("That doesn't look like a valid image URL.");
+    }
+    if (!host.endsWith(BLOB_HOST_SUFFIX)) {
+      throw new Error("Logo must be uploaded through this app, not linked from elsewhere.");
+    }
+  }
+  await prisma.team.update({ where: { id: input.teamId }, data: { logoUrl: input.logoUrl } });
 }
 
 /** Only permitted when the team is completely untouched — a fresh team
@@ -316,11 +358,84 @@ export async function getLeague(leagueId: string) {
   });
 }
 
+export interface TeamManagerFields {
+  managerUserId: string;
+  secondManagerUserId: string | null;
+}
+
+/** True if userId is this team's primary manager OR its co-manager (see the
+ * Team model's secondManagerUserId comment — a per-team concept, distinct
+ * from isCoCommissioner's league-wide power). Use this — never a bare
+ * `team.managerUserId === userId` — for any "can this caller act as this
+ * team's manager" gate on roster/lineup/waiver/FAAB/trade/draft-pick
+ * mutations. A pure predicate: the caller already has the Team row loaded
+ * at every one of these call sites. */
+export function isTeamManager(team: TeamManagerFields, userId: string): boolean {
+  return team.managerUserId === userId || team.secondManagerUserId === userId;
+}
+
+/** Composable `where` fragment for the sites that look up "the team this
+ * user manages" via a query instead of a loaded row (submitWaiverClaim,
+ * submitFaBid, castTradeVeto, forceProcessTrade, and the one-team-per-
+ * league dedup checks in createTeam/claimTeam/setTeamManager/
+ * claimCoManagerSlot). */
+export function managerOrCoManagerWhere(userId: string): Prisma.TeamWhereInput {
+  return { OR: [{ managerUserId: userId }, { secondManagerUserId: userId }] };
+}
+
+/** Primary-manager-only — mirrors setCoCommissioner's guardrail. Refuses if
+ * a co-manager slot is already filled (removeCoManager first) rather than
+ * silently replacing whoever's there, so "regenerate" and "replace" stay
+ * unambiguous. */
+export async function regenerateCoManagerClaimCode(input: { leagueId: string; teamId: string; callerUserId: string }): Promise<{ claimCode: string }> {
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
+  if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  if (team.managerUserId !== input.callerUserId) throw new Error("Only this team's primary manager can invite a co-manager.");
+  if (team.secondManagerUserId) throw new Error("This team already has a co-manager — remove them first.");
+  const claimCode = randomBytes(9).toString("base64url");
+  await prisma.team.update({ where: { id: input.teamId }, data: { secondManagerClaimCode: claimCode } });
+  return { claimCode };
+}
+
+export async function getTeamByCoManagerClaimCode(claimCode: string) {
+  return prisma.team.findUnique({ where: { secondManagerClaimCode: claimCode }, include: { league: true } });
+}
+
+/** Same one-team-per-league dedup createTeam/claimTeam enforce for a
+ * primary manager also applies to a co-manager slot — otherwise one real
+ * person could quietly control two rosters in the same league. */
+export async function claimCoManagerSlot(input: { claimCode: string; newSecondManagerUserId: string }): Promise<{ leagueId: string; teamId: string }> {
+  const team = await getTeamByCoManagerClaimCode(input.claimCode);
+  if (!team) throw new Error("This claim link is invalid or has been revoked.");
+  if (team.managerUserId === input.newSecondManagerUserId) throw new Error("You already manage this team.");
+  if (team.secondManagerUserId === input.newSecondManagerUserId) throw new Error("You already are this team's co-manager.");
+  if (team.secondManagerUserId) throw new Error("This team's co-manager slot is already filled.");
+  const existing = await prisma.team.findFirst({
+    where: { leagueId: team.leagueId, ...managerOrCoManagerWhere(input.newSecondManagerUserId) },
+  });
+  if (existing) throw new Error("You already manage a team in this league.");
+  await prisma.team.update({
+    where: { id: team.id },
+    data: { secondManagerUserId: input.newSecondManagerUserId, secondManagerClaimCode: null },
+  });
+  return { leagueId: team.leagueId, teamId: team.id };
+}
+
+/** Primary-manager-only. Also revokes any still-pending invite link, so a
+ * dangling secondManagerClaimCode can't later be claimed by someone else
+ * after the relationship was supposedly closed off. */
+export async function removeCoManager(input: { leagueId: string; teamId: string; callerUserId: string }): Promise<void> {
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
+  if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  if (team.managerUserId !== input.callerUserId) throw new Error("Only this team's primary manager can remove a co-manager.");
+  await prisma.team.update({ where: { id: input.teamId }, data: { secondManagerUserId: null, secondManagerClaimCode: null } });
+}
+
 /** Every team a user manages, across every league — the home dashboard's
  * "Your Teams" list. */
 export async function getTeamsForUser(userId: string) {
   return prisma.team.findMany({
-    where: { managerUserId: userId },
+    where: managerOrCoManagerWhere(userId),
     include: { league: true },
     orderBy: { createdAt: "desc" },
   });

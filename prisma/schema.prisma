@@ -162,6 +162,21 @@ model Team {
   // Used for a commissioner-added placeholder team or a freshly orphaned
   // one. Nullable/lazy same pattern as League.inviteCode.
   claimCode String? @unique
+  // Co-manager — NOT the same as isCoCommissioner above. This shares full
+  // operational control of THIS one team (roster/lineup/waivers/FAAB/
+  // trades/draft picks) with a second real person; isCoCommissioner grants
+  // league-wide commissioner power. The two never inherit from each other.
+  // Only the primary manager (managerUserId) can grant/revoke this slot —
+  // same primary-only guardrail as isCoCommissioner. secondManagerClaimCode
+  // is a distinct field from claimCode above (not reused) because claiming
+  // one sets managerUserId and the other sets secondManagerUserId — both
+  // links can be pending on the same team at once with no collision.
+  secondManagerUserId    String?
+  secondManagerClaimCode String? @unique
+  // Team branding, uploaded via Vercel Blob (src/lib/leagues/mutations.ts
+  // setTeamLogo) — stores the public blob URL, null = show the placeholder
+  // silhouette (src/components/TeamLogo.tsx).
+  logoUrl String?
 
   rosterSlots       RosterSlot[]
   draftPicksOwned   DraftPick[]        @relation("CurrentOwner")

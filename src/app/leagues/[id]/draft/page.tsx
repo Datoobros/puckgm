@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague } from "@/lib/leagues/mutations";
+import { getLeague, isTeamManager } from "@/lib/leagues/mutations";
 import { getCurrentDraft, resolveDraftState } from "@/lib/draft/mutations";
 import { Card } from "@/components/Card";
 import { DraftRoom } from "./DraftRoom";
@@ -12,7 +12,7 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
-  const myTeam = league.teams.find((t) => t.managerUserId === userId) ?? null;
+  const myTeam = league.teams.find((t) => isTeamManager(t, userId)) ?? null;
 
   const draft = await getCurrentDraft(leagueId);
 

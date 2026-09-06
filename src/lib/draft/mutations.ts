@@ -20,7 +20,7 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { isLeagueCommissioner } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
@@ -439,7 +439,7 @@ export async function makeDraftPick(input: MakeDraftPickInput): Promise<void> {
 
   const current = await getCurrentPick(input.draftId);
   if (!current) throw new Error("The draft is already complete.");
-  if (current.currentOwner.managerUserId !== input.managerUserId) {
+  if (!isTeamManager(current.currentOwner, input.managerUserId)) {
     throw new Error("It's not your turn.");
   }
 
@@ -450,4 +450,37 @@ export async function makeDraftPick(input: MakeDraftPickInput): Promise<void> {
 
   await recordPick(draft, current, input.playerId, false);
   await advanceDeadline(draft);
+}
+
+export interface TeamDraftPickRow {
+  id: string;
+  season: number;
+  round: number;
+  overallPick: number | null;
+  isOwnPick: boolean;
+  originalTeamName: string;
+  used: boolean;
+  usedOnPlayerName: string | null;
+}
+
+/** Read-only — every pick this team currently owns, own or acquired via
+ * trade, drafted or not. Used/unused and own/acquired are both worth
+ * showing plainly rather than filtering, since a team's full pick
+ * situation (not just what's left to use) is the point of this view. */
+export async function getTeamDraftPicks(teamId: string): Promise<TeamDraftPickRow[]> {
+  const picks = await prisma.draftPick.findMany({
+    where: { currentOwnerId: teamId },
+    include: { originalTeam: true, usedOnPlayer: true },
+    orderBy: [{ season: "asc" }, { round: "asc" }],
+  });
+  return picks.map((p) => ({
+    id: p.id,
+    season: p.season,
+    round: p.round,
+    overallPick: p.overallPick,
+    isOwnPick: p.originalTeamId === teamId,
+    originalTeamName: p.originalTeam.name,
+    used: p.usedOnPlayerId !== null,
+    usedOnPlayerName: p.usedOnPlayer?.fullName ?? null,
+  }));
 }

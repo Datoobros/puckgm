@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, isLeagueCommissioner } from "@/lib/leagues/mutations";
+import { getLeague, isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { LeagueNav } from "@/components/LeagueNav";
 
 export default async function LeagueLayout(props: LayoutProps<"/leagues/[id]">) {
@@ -10,7 +10,7 @@ export default async function LeagueLayout(props: LayoutProps<"/leagues/[id]">) 
   const league = await getLeague(id);
   if (!league) notFound();
 
-  const myTeam = league.teams.find((t) => t.managerUserId === userId);
+  const myTeam = league.teams.find((t) => isTeamManager(t, userId));
   const isCommissioner = await isLeagueCommissioner(id, userId);
 
   return (

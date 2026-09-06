@@ -6,6 +6,7 @@ import { getLeague } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getScoreboardForPeriod, getTeamSchedule } from "@/lib/matchups/standings";
 import { Card } from "@/components/Card";
+import { TeamScheduleList } from "@/components/TeamScheduleList";
 import { TeamScheduleSelect } from "./TeamScheduleSelect";
 
 export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/scoreboard">) {
@@ -33,44 +34,9 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
         </div>
         <p className="mt-1 text-sm text-muted">{selectedTeam.name}&apos;s full-season schedule</p>
 
-        {rows.length === 0 ? (
-          <Card className="mt-6">
-            <p className="text-sm text-muted">No schedule yet — the commissioner can generate one from the League page.</p>
-          </Card>
-        ) : (
-          <Card className="mt-6 !p-0 overflow-hidden">
-            <ul className="divide-y divide-border">
-              {rows.map((r) => (
-                <li key={r.periodNo} className="flex items-center justify-between px-4 py-3 text-sm">
-                  <span>
-                    <span className="text-xs text-muted">
-                      {r.isPlayoffs ? r.roundLabel : `Week ${r.periodNo}`}
-                      {" · "}
-                      {r.startDate.toISOString().slice(0, 10)}
-                    </span>
-                    <br />
-                    {r.bye ? (
-                      <span className="text-muted">Bye</span>
-                    ) : (
-                      <>
-                        <span className="text-xs text-muted">{r.isHome ? "vs" : "@"} </span>
-                        <span className="font-medium">{r.opponentTeamName}</span>
-                      </>
-                    )}
-                  </span>
-                  {!r.bye && r.final && (
-                    <span
-                      className={`tabular-nums text-sm ${r.myScore >= r.opponentScore ? "font-semibold text-foreground" : "text-muted"}`}
-                    >
-                      {r.myScore.toFixed(1)} – {r.opponentScore.toFixed(1)}
-                    </span>
-                  )}
-                  {!r.bye && !r.final && <span className="text-xs text-muted">Upcoming</span>}
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
+        <div className="mt-6">
+          <TeamScheduleList leagueId={leagueId} rows={rows} />
+        </div>
       </div>
     );
   }

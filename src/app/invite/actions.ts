@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeagueByInviteCode, createTeam, claimTeam } from "@/lib/leagues/mutations";
+import { getLeagueByInviteCode, createTeam, claimTeam, claimCoManagerSlot } from "@/lib/leagues/mutations";
 
 export async function joinLeagueAction(inviteCode: string, formData: FormData) {
   const { userId } = await auth.protect();
@@ -20,5 +20,11 @@ export async function joinLeagueAction(inviteCode: string, formData: FormData) {
 export async function claimTeamAction(claimCode: string) {
   const { userId } = await auth.protect();
   const { leagueId } = await claimTeam({ claimCode, newManagerUserId: userId });
+  redirect(`/leagues/${leagueId}`);
+}
+
+export async function claimCoManagerAction(claimCode: string) {
+  const { userId } = await auth.protect();
+  const { leagueId } = await claimCoManagerSlot({ claimCode, newSecondManagerUserId: userId });
   redirect(`/leagues/${leagueId}`);
 }

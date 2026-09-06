@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeagueByInviteCode } from "@/lib/leagues/mutations";
+import { getLeagueByInviteCode, isTeamManager } from "@/lib/leagues/mutations";
 import { Card } from "@/components/Card";
 import { joinLeagueAction } from "../actions";
 
@@ -12,7 +12,7 @@ export default async function InvitePage(props: PageProps<"/invite/[code]">) {
   const league = await getLeagueByInviteCode(code);
   if (!league) notFound();
 
-  const alreadyMember = league.teams.some((t) => t.managerUserId === userId);
+  const alreadyMember = league.teams.some((t) => isTeamManager(t, userId));
 
   return (
     <div className="mx-auto max-w-md px-6 py-12">

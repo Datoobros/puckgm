@@ -23,14 +23,6 @@ export function ViewControls({
 
   return (
     <div className="flex items-center gap-2">
-      <input
-        type="date"
-        defaultValue={date}
-        onChange={(e) => {
-          if (e.target.value) navigate(e.target.value, view);
-        }}
-        className="rounded border border-border bg-surface px-2 py-1 text-sm text-foreground"
-      />
       <select
         value={view}
         onChange={(e) => navigate(date, e.target.value)}

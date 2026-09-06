@@ -21,7 +21,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
-import { isLeagueCommissioner } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner, isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
 import { activeRosterCap } from "@/lib/rosters/mutations";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
 
@@ -100,7 +100,7 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
     prisma.team.findUnique({ where: { id: input.counterpartyTeamId } }),
   ]);
   if (!proposingTeam || proposingTeam.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
-  if (proposingTeam.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(proposingTeam, input.managerUserId)) throw new Error("You don't manage this team.");
   if (!counterpartyTeam || counterpartyTeam.leagueId !== input.leagueId) throw new Error("Counterparty team not found in this league.");
   if (proposingTeam.state === "ORPHAN_FROZEN" || counterpartyTeam.state === "ORPHAN_FROZEN") {
     throw new Error("An orphaned team's roster is frozen — it can't trade.");
@@ -203,7 +203,7 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
 
   const counterpartyTeamId = getCounterpartyTeamId(trade);
   const counterpartyTeam = await prisma.team.findUnique({ where: { id: counterpartyTeamId } });
-  if (!counterpartyTeam || counterpartyTeam.managerUserId !== input.managerUserId) {
+  if (!counterpartyTeam || !isTeamManager(counterpartyTeam, input.managerUserId)) {
     throw new Error("You don't manage the team this trade was sent to.");
   }
 
@@ -250,8 +250,8 @@ export async function cancelTrade(input: CancelTradeInput): Promise<void> {
     isLeagueCommissioner(trade.leagueId, input.callerUserId),
   ]);
   const allowed =
-    proposerTeam?.managerUserId === input.callerUserId ||
-    counterpartyTeam?.managerUserId === input.callerUserId ||
+    (proposerTeam && isTeamManager(proposerTeam, input.callerUserId)) ||
+    (counterpartyTeam && isTeamManager(counterpartyTeam, input.callerUserId)) ||
     isCommissioner;
   if (!allowed) throw new Error("You aren't part of this trade.");
 
@@ -292,7 +292,7 @@ export async function castTradeVeto(input: CastTradeVetoInput): Promise<void> {
   if (!trade) throw new Error("Trade not found.");
   if (trade.state !== "UNDER_REVIEW") throw new Error("Only a trade under review can be vetoed.");
 
-  const callerTeam = await prisma.team.findFirst({ where: { leagueId: trade.leagueId, managerUserId: input.managerUserId } });
+  const callerTeam = await prisma.team.findFirst({ where: { leagueId: trade.leagueId, ...managerOrCoManagerWhere(input.managerUserId) } });
   if (!callerTeam) throw new Error("You don't manage a team in this league.");
 
   const settings = trade.league.settingsJson as unknown as LeagueSettings;
@@ -454,7 +454,7 @@ export async function forceProcessTrade(input: ForceProcessTradeInput): Promise<
   if (!(await isLeagueCommissioner(trade.leagueId, input.callerUserId))) {
     throw new Error("Only the commissioner can force a trade through.");
   }
-  const callerTeam = await prisma.team.findFirst({ where: { leagueId: trade.leagueId, managerUserId: input.callerUserId } });
+  const callerTeam = await prisma.team.findFirst({ where: { leagueId: trade.leagueId, ...managerOrCoManagerWhere(input.callerUserId) } });
   const counterpartyTeamId = getCounterpartyTeamId(trade);
   if (callerTeam && (callerTeam.id === trade.proposedByTeamId || callerTeam.id === counterpartyTeamId)) {
     throw new Error("You can't force-process a trade you're part of, even as commissioner.");

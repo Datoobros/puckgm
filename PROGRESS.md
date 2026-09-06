@@ -857,6 +857,83 @@ Three unrelated small-to-medium requests bundled together in one pass.
   further action — this was a one-time bulk backfill hitting a burst limit, not a gap in the
   ongoing sync path.
 
+## Team page redesign, co-managers, draft picks tab, team logos
+
+Prompted by a screenshot of a generic ESPN-style team page — restyle the team roster page to
+loosely match it, drop the reference's Team Settings gear/Keepers link/Trade & Acquisition
+Limits/draft-scheduling banner (all confirmed explicitly out of scope), and replace that banner
+slot with the schedule-preview widget from the previous pass. Clarifying two elements the user
+did want turned this from "mostly UI" into three real features.
+
+- **Co-managers — NOT the same as co-commissioners.** `isCoCommissioner` (see the commissioner
+  tools section above) grants league-wide commissioner power to whoever manages a flagged
+  team; this is a different, narrower concept — a team's primary manager sharing full
+  operational control of *that one team* with a second real person, via `Team.
+  secondManagerUserId` + a single-use `secondManagerClaimCode` (same claim-link pattern as the
+  existing per-team `claimCode`, kept as a separate field since claiming one sets
+  `managerUserId` and the other sets `secondManagerUserId` — both can be pending on the same
+  team at once). New `isTeamManager(team, userId)` / `managerOrCoManagerWhere(userId)` helpers
+  (`src/lib/leagues/mutations.ts`) replace every bare `team.managerUserId === userId` check
+  across the app — every roster/lineup/waiver/FAAB/trade/draft-pick mutation
+  (`src/lib/rosters`, `lineups`, `waivers`, `faab`, `trades`, `draft/mutations.ts`), the
+  one-team-per-league dedup in `createTeam`/`claimTeam`/`setTeamManager`, `getTeamsForUser`
+  (so a co-manager's teams show up on their own dashboard), and ~10 page-level "find my team"
+  lookups — same sweep shape as the `isLeagueCommissioner` rollout, same precedent reused
+  deliberately. Rename/division/logo/invite-management stay primary-manager-only (confirmed);
+  no commissioner-power inheritance even on a co-commissioner-flagged team (confirmed); the
+  one-team-per-league dedup applies to co-managers too, so one person can't quietly run two
+  rosters in the same league (confirmed). **Edge cases caught in review**: `setTeamManager`
+  (both its orphan and reassign branches) and `claimTeam` all now clear a stale co-manager —
+  without this, a co-manager would silently retain full control of a team after its primary
+  slot changed hands to someone unrelated. New route `/invite/team/co-manager/[code]` +
+  `claimCoManagerAction`, invite/remove UI lives on the team's own page (gated on the primary
+  manager specifically, never a co-manager), not in Commissioner Settings — this is a per-team
+  relationship the commissioner has no say in.
+- **Team page redesign** (`src/app/leagues/[id]/teams/[teamId]/page.tsx`): a header identity
+  card (logo, name, Dynasty/Redraft badge, "Managed by X" / "Managed by X & Y", the
+  co-manager invite/remove controls), the schedule-preview widget restyled into a boxed panel
+  in the slot the reference used for its draft banner, and three real tabs — **Stats**
+  (unchanged Skaters/Goalies/Farm/IR content), **Schedule** (the full-season list, now
+  extracted into a shared `src/components/TeamScheduleList.tsx` so the dedicated `/schedule`
+  page and this tab render identically without duplicating markup — also now reused by the
+  Scoreboard page's per-team view), and **Draft Picks** (new — added mid-planning at the
+  user's request, not originally scoped). Reference elements explicitly dropped: Trending/News
+  tabs (no data source for either), Team Settings gear, Keepers link, Trade & Acquisition
+  Limits.
+- **Draft Picks tab** — new `getTeamDraftPicks(teamId)` (`src/lib/draft/mutations.ts`), a
+  read-only list of every pick a team currently owns (own or acquired via trade, used or not),
+  reusing `DraftPick`'s existing schema — no new data model needed.
+- **The daily-lineup date picker became a real multi-day clickable strip** (confirmed as
+  actual UI work, not just a restyle) — new `DateStrip.tsx` shows ~5 days at once, click any
+  directly, chevrons scroll the window one day at a time, plus a themed native date input for
+  jumping anywhere. Replaces the old one-day-at-a-time Prev/Next/Today row on the Stats tab
+  only (meaningless for the season-aggregate view). `shiftDate`/`todayUTC`/`DATE_RE` moved to
+  a new `src/lib/dates.ts` so both the page and the client-side strip share one implementation
+  instead of two copies drifting apart.
+- **Team logos, real upload via Vercel Blob** (confirmed over storing images directly in
+  Postgres) — `Team.logoUrl`, client-side resize to ~200px before upload
+  (`src/lib/images/resizeImage.ts`, canvas-based, browser-only), a Server Action
+  (`setTeamLogoAction`) that uploads the already-resized image and passes the resulting blob
+  URL into `setTeamLogo`, which validates the URL's host is actually on Vercel Blob's own
+  domain before persisting — this field renders as `<img src>` on every viewer's team page, so
+  an arbitrary caller-supplied URL is never trusted. New `TeamLogo.tsx` mirrors
+  `PlayerHeadshot.tsx`'s load-failure-fallback shape exactly (silhouette/crest placeholder).
+  **Not yet verified live**: this app had no file storage of any kind before now, and
+  `BLOB_READ_WRITE_TOKEN` doesn't exist in `.env` — the user needs to create a Vercel Blob
+  store in their dashboard and connect it to this project before upload can be tested
+  end-to-end. Everything else in this pass (co-managers, the redesign, the Draft Picks tab)
+  has no such dependency and is fully verified.
+- Verified in a new `scripts/co-manager-check.ts` against the real DB: the full invite → claim
+  → operate → remove lifecycle; a co-manager's parity across add/drop/lineup/farm/waiver
+  claim/FAAB bid/trade proposal; rejection from every primary-only action (rename, division,
+  logo, re-invite, self-removal); the one-team-per-league dedup from both a co-manager's and a
+  primary manager's side; `setTeamManager`'s and `claimTeam`'s co-manager-clearing; `getTeamDraftPicks`
+  for both an own and an acquired-via-trade pick, used and unused. Every pre-existing
+  regression script re-run clean afterward. Checked live in a real browser: the redesigned
+  header, the restyled schedule panel, all three tabs, the co-manager invite/claim/remove flow
+  end to end as two different identities, and the date strip's click-through and
+  window-shift.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`

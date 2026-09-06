@@ -17,6 +17,7 @@
 
 import { prisma } from "@/lib/db";
 import type { LeagueSettings, RosterComposition } from "@/lib/leagues/mutations";
+import { isTeamManager } from "@/lib/leagues/mutations";
 import { getTeamGamesForDate, isLocked } from "@/lib/lineups/schedule";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
@@ -97,7 +98,7 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
   if (!team || team.leagueId !== input.leagueId) {
     throw new Error("Team not found in this league.");
   }
-  if (team.managerUserId !== input.managerUserId) {
+  if (!isTeamManager(team, input.managerUserId)) {
     throw new Error("You don't manage this team.");
   }
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — its lineup can't be edited.");
@@ -199,7 +200,7 @@ export async function autoSetLineup(input: AutoSetLineupInput): Promise<AutoSetL
   if (!team || team.leagueId !== input.leagueId) {
     throw new Error("Team not found in this league.");
   }
-  if (team.managerUserId !== input.managerUserId) {
+  if (!isTeamManager(team, input.managerUserId)) {
     throw new Error("You don't manage this team.");
   }
   const settings = team.league.settingsJson as unknown as LeagueSettings;

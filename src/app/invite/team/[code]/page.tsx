@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getTeamByClaimCode } from "@/lib/leagues/mutations";
+import { getTeamByClaimCode, isTeamManager } from "@/lib/leagues/mutations";
 import { Card } from "@/components/Card";
 import { claimTeamAction } from "../../actions";
 
@@ -11,7 +11,7 @@ export default async function ClaimTeamPage(props: PageProps<"/invite/team/[code
   const team = await getTeamByClaimCode(code);
   if (!team) notFound();
 
-  const alreadyManages = team.managerUserId === userId;
+  const alreadyManages = isTeamManager(team, userId);
 
   return (
     <div className="mx-auto max-w-md px-6 py-12">

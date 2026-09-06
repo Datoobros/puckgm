@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getTradesForLeague, getTradeableAssets, type TradeDetail } from "@/lib/trades/mutations";
 import { Card, SectionLabel } from "@/components/Card";
 import { TradeBuilder } from "./TradeBuilder";
@@ -40,7 +40,7 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
   const league = await getLeague(leagueId);
   if (!league) notFound();
   const settings = league.settingsJson as unknown as LeagueSettings;
-  const myTeam = league.teams.find((t) => t.managerUserId === userId) ?? null;
+  const myTeam = league.teams.find((t) => isTeamManager(t, userId)) ?? null;
   const isCommissioner = await isLeagueCommissioner(leagueId, userId);
 
   const trades = await getTradesForLeague(leagueId, myTeam?.id ?? null);

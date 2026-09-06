@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
-import { listLeagues } from "@/lib/leagues/mutations";
+import { listLeagues, isTeamManager } from "@/lib/leagues/mutations";
 
 export default async function LeaguesPage() {
   const { userId } = await auth.protect();
@@ -25,7 +25,7 @@ export default async function LeaguesPage() {
       ) : (
         <ul className="mt-8 divide-y divide-border">
           {leagues.map((league) => {
-            const yourTeam = league.teams.find((t) => t.managerUserId === userId);
+            const yourTeam = league.teams.find((t) => isTeamManager(t, userId));
             return (
               <li key={league.id} className="py-4">
                 <Link href={`/leagues/${league.id}`} className="block">

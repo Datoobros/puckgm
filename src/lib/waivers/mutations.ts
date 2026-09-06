@@ -20,6 +20,7 @@
 // the next daily tick after 48 hours have elapsed," up to ~24h of slop.
 
 import { prisma } from "@/lib/db";
+import { isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
 
 const CLAIM_WINDOW_MS = 48 * 60 * 60 * 1000;
 
@@ -111,7 +112,7 @@ export interface SubmitWaiverClaimInput {
 
 export async function submitWaiverClaim(input: SubmitWaiverClaimInput): Promise<void> {
   const claimingTeam = await prisma.team.findFirst({
-    where: { leagueId: input.leagueId, managerUserId: input.managerUserId },
+    where: { leagueId: input.leagueId, ...managerOrCoManagerWhere(input.managerUserId) },
   });
   if (!claimingTeam) throw new Error("You don't manage a team in this league.");
   if (claimingTeam.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't submit a waiver claim.");
@@ -164,7 +165,7 @@ export interface CancelWaiverClaimInput {
 export async function cancelWaiverClaim(input: CancelWaiverClaimInput): Promise<void> {
   const claim = await prisma.waiverClaim.findUnique({ where: { id: input.claimId }, include: { team: true } });
   if (!claim) throw new Error("Claim not found.");
-  if (claim.team.managerUserId !== input.managerUserId) throw new Error("You don't manage this team.");
+  if (!isTeamManager(claim.team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (claim.result !== "PENDING") throw new Error("This claim has already been resolved.");
 
   await prisma.waiverClaim.delete({ where: { id: input.claimId } });

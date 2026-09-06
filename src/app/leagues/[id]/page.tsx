@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getClaimablePlayers, getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { getRecentActivity } from "@/lib/activity/feed";
 import { getStandings } from "@/lib/matchups/standings";
@@ -37,7 +37,7 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
   if (!league) notFound();
 
   const settings = league.settingsJson as unknown as LeagueSettings;
-  const yourTeam = league.teams.find((t) => t.managerUserId === userId) ?? null;
+  const yourTeam = league.teams.find((t) => isTeamManager(t, userId)) ?? null;
 
   const [activity, claimable, priorityOrder, standings] = await Promise.all([
     getRecentActivity(id),

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 import { getAvailableBudget, getMyPendingBids } from "@/lib/faab/mutations";
@@ -24,7 +24,7 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
   const league = await getLeague(leagueId);
   if (!league) notFound();
   const settings = league.settingsJson as unknown as LeagueSettings;
-  const myTeam = league.teams.find((t) => t.managerUserId === userId);
+  const myTeam = league.teams.find((t) => isTeamManager(t, userId));
 
   let rows;
   if (query) {

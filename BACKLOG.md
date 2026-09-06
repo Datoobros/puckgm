@@ -6,10 +6,12 @@ detail to plan and build. When an item ships, move it off this list and document
 
 ## Open
 
-- **Team page visual polish + a proper "Move" action.** General restyle of the team roster
-  page ("make it look nicer"), plus a dedicated "Move" button per player — click a target
-  slot (bench → active or active → bench, and by extension farm/IR) to move them there,
-  replacing the current `<select>`-dropdown approach (`LineupSlotSelect.tsx`).
+- **A proper "Move" action for the daily lineup.** The general team-page visual polish
+  shipped (header card, tabs, restyled schedule panel, a real multi-day date strip — see
+  PROGRESS.md's "Team page redesign" section). Still open: a dedicated "Move" button per
+  player — click a target slot (bench → active or active → bench) to move them there,
+  replacing the current `<select>`-dropdown approach (`LineupSlotSelect.tsx`), which wasn't
+  touched in that pass.
 - **Draft needs a significant overhaul.** User says a lot is wrong with the draft as it
   stands — scope not yet defined beyond that. Needs a follow-up conversation to pin down
   specifics (setup flow? live draft room UX? autopick/timer behavior? something else

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getRosterCounts, activeRosterCap } from "@/lib/rosters/mutations";
 import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { Card, SectionLabel } from "@/components/Card";
@@ -31,7 +31,7 @@ export default async function OtherTeamsPage(props: PageProps<"/leagues/[id]/tea
         <SectionLabel>All teams ({league.teams.length})</SectionLabel>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {league.teams.map((team) => {
-            const isYou = team.managerUserId === userId;
+            const isYou = isTeamManager(team, userId);
             const rosterCount = rosterCounts.get(team.id) ?? 0;
             const priorityIdx = waiverPriority.indexOf(team.id);
             return (
