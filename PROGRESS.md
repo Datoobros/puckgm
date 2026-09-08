@@ -918,11 +918,21 @@ did want turned this from "mostly UI" into three real features.
   domain before persisting — this field renders as `<img src>` on every viewer's team page, so
   an arbitrary caller-supplied URL is never trusted. New `TeamLogo.tsx` mirrors
   `PlayerHeadshot.tsx`'s load-failure-fallback shape exactly (silhouette/crest placeholder).
-  **Not yet verified live**: this app had no file storage of any kind before now, and
-  `BLOB_READ_WRITE_TOKEN` doesn't exist in `.env` — the user needs to create a Vercel Blob
-  store in their dashboard and connect it to this project before upload can be tested
-  end-to-end. Everything else in this pass (co-managers, the redesign, the Draft Picks tab)
-  has no such dependency and is fully verified.
+  **Confirmed working end-to-end in production** (2026-09-07) — this app had no file storage
+  of any kind before now, so getting a real Vercel Blob store correctly wired up took a few
+  rounds of dashboard-only troubleshooting (no code changes): OIDC federation wasn't actually
+  active for the project (fixed by using a static `BLOB_READ_WRITE_TOKEN` instead), the first
+  store was created in Private mode and `access: "public"` mode is picked permanently at
+  creation and can't be changed (fixed by creating a new store, `puckgmblob`, as Public), and
+  the env var briefly held a stale/malformed value — once literally still pointing at the
+  deleted private store, then pasted with the `.env.local`-panel's literal quote characters
+  included, which are file syntax and not part of the real token. A real logo upload against
+  the live site succeeded once `BLOB_READ_WRITE_TOKEN` held the new public store's raw,
+  unquoted token and a redeploy picked it up (env var edits don't apply to an
+  already-running deployment). Local `.env`/`.env.local` still has no token, so this still
+  can't be exercised from a local dev session — production is the only place it's been used.
+  Everything else in this pass (co-managers, the redesign, the Draft Picks tab) had no such
+  dependency and was fully verified earlier.
 - Verified in a new `scripts/co-manager-check.ts` against the real DB: the full invite → claim
   → operate → remove lifecycle; a co-manager's parity across add/drop/lineup/farm/waiver
   claim/FAAB bid/trade proposal; rejection from every primary-only action (rename, division,
