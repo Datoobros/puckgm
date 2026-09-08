@@ -44,12 +44,23 @@ export async function getTeamScoreForPeriod(
 export interface StandingsRow {
   teamId: string;
   teamName: string;
+  logoUrl: string | null;
   division: string | null;
   wins: number;
   losses: number;
   ties: number;
   pointsFor: number;
   pointsAgainst: number;
+  /** Current streak, e.g. "W3"/"L1"/"T1", or "-" with no completed periods yet. */
+  streak: string;
+}
+
+function computeStreak(results: ("W" | "L" | "T")[]): string {
+  if (results.length === 0) return "-";
+  const last = results[results.length - 1];
+  let count = 0;
+  for (let i = results.length - 1; i >= 0 && results[i] === last; i--) count++;
+  return `${last}${count}`;
 }
 
 /** Only periods whose endDate has already passed count toward the record —
@@ -70,9 +81,21 @@ export async function getStandings(
   const rows = new Map<string, StandingsRow>(
     teams.map((t) => [
       t.id,
-      { teamId: t.id, teamName: t.name, division: t.division, wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0 },
+      {
+        teamId: t.id,
+        teamName: t.name,
+        logoUrl: t.logoUrl,
+        division: t.division,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        pointsFor: 0,
+        pointsAgainst: 0,
+        streak: "-",
+      },
     ]),
   );
+  const resultsByTeam = new Map<string, ("W" | "L" | "T")[]>(teams.map((t) => [t.id, []]));
 
   for (const period of periods) {
     for (const m of period.matchups) {
@@ -89,17 +112,26 @@ export async function getStandings(
       away.pointsFor += awayScore;
       away.pointsAgainst += homeScore;
 
-      if (homeScore > awayScore) {
+      const homeResult: "W" | "L" | "T" = homeScore > awayScore ? "W" : awayScore > homeScore ? "L" : "T";
+      const awayResult: "W" | "L" | "T" = awayScore > homeScore ? "W" : homeScore > awayScore ? "L" : "T";
+      if (homeResult === "W") {
         home.wins += 1;
         away.losses += 1;
-      } else if (awayScore > homeScore) {
+      } else if (awayResult === "W") {
         away.wins += 1;
         home.losses += 1;
       } else {
         home.ties += 1;
         away.ties += 1;
       }
+      resultsByTeam.get(m.homeTeamId)?.push(homeResult);
+      resultsByTeam.get(m.awayTeamId)?.push(awayResult);
     }
+  }
+
+  for (const [teamId, results] of resultsByTeam) {
+    const row = rows.get(teamId);
+    if (row) row.streak = computeStreak(results);
   }
 
   return [...rows.values()].sort((a, b) => {
@@ -110,6 +142,136 @@ export async function getStandings(
     if (pctB !== pctA) return pctB - pctA;
     return b.pointsFor - a.pointsFor;
   });
+}
+
+export interface TeamSeasonStatsRow {
+  teamId: string;
+  goals: number;
+  assists: number;
+  sog: number;
+  hits: number;
+  blockedShots: number;
+  pim: number;
+  wins: number;
+  goalsAgainst: number;
+  saves: number;
+  shutouts: number;
+  otl: number;
+}
+
+function zeroSeasonStats(teamId: string): TeamSeasonStatsRow {
+  return { teamId, goals: 0, assists: 0, sog: 0, hits: 0, blockedShots: 0, pim: 0, wins: 0, goalsAgainst: 0, saves: 0, shutouts: 0, otl: 0 };
+}
+
+/** Season-long raw stat totals per team — same "started players only" scope
+ * as getTeamScoreForPeriod (non-BE LineupEntry rows), but summing raw
+ * statsJson categories instead of fantasy points, over the whole season's
+ * date range (every MatchupPeriod's span, regular + playoffs) rather than
+ * one period at a time. All-zero for every team if no schedule exists yet. */
+export async function getTeamSeasonStats(leagueId: string, season: number): Promise<Map<string, TeamSeasonStatsRow>> {
+  const teams = await prisma.team.findMany({ where: { leagueId } });
+  const rows = new Map<string, TeamSeasonStatsRow>(teams.map((t) => [t.id, zeroSeasonStats(t.id)]));
+
+  const periods = await prisma.matchupPeriod.findMany({ where: { leagueId, season } });
+  if (periods.length === 0) return rows;
+  const start = new Date(Math.min(...periods.map((p) => p.startDate.getTime())));
+  const end = new Date(Math.max(...periods.map((p) => p.endDate.getTime())));
+
+  for (const team of teams) {
+    const entries = await prisma.lineupEntry.findMany({
+      where: { teamId: team.id, gameDate: { gte: start, lte: end }, lineupSlot: { not: "BE" } },
+    });
+    if (entries.length === 0) continue;
+
+    const lines = await prisma.gameStatLine.findMany({
+      where: { OR: entries.map((e) => ({ playerId: e.playerId, gameDate: e.gameDate })) },
+    });
+
+    const row = rows.get(team.id);
+    if (!row) continue;
+    for (const l of lines) {
+      const s = l.statsJson as Record<string, unknown>;
+      row.goals += Number(s.goals ?? 0);
+      row.assists += Number(s.assists ?? 0);
+      row.sog += Number(s.sog ?? 0);
+      row.hits += Number(s.hits ?? 0);
+      row.blockedShots += Number(s.blockedShots ?? 0);
+      row.pim += Number(s.pim ?? 0);
+      row.saves += Number(s.saves ?? 0);
+      row.goalsAgainst += Number(s.goalsAgainst ?? 0);
+      if (s.decision === "W") {
+        row.wins += 1;
+        if (Number(s.goalsAgainst ?? 0) === 0) row.shutouts += 1;
+      } else if (s.decision === "O") {
+        row.otl += 1;
+      }
+    }
+  }
+
+  return rows;
+}
+
+const MOVE_TYPES = new Set(["ROSTER_ADD", "ROSTER_DROP", "SEND_DOWN", "CALLUP", "IR_MOVE"]);
+
+/** Count of real roster transactions per team this season — add/drop,
+ * send-down/callup, IR moves, an awarded waiver claim, a FAAB win, and a
+ * completed trade. Deliberately excludes LINEUP_EDIT (not a roster move),
+ * COMMISSIONER_MOVE (not the manager's own action), a raw FAAB bid or any
+ * not-yet-resolved trade state, and DRAFT_PICK/STARTUP (one-time draft
+ * setup, not an in-season transaction). Scoped to the same season date
+ * range getTeamSeasonStats uses. */
+export async function getTeamMoveCounts(leagueId: string, season: number): Promise<Map<string, number>> {
+  const teams = await prisma.team.findMany({ where: { leagueId } });
+  const counts = new Map<string, number>(teams.map((t) => [t.id, 0]));
+
+  const periods = await prisma.matchupPeriod.findMany({ where: { leagueId, season } });
+  if (periods.length === 0) return counts;
+  const start = new Date(Math.min(...periods.map((p) => p.startDate.getTime())));
+  const end = new Date(Math.max(...periods.map((p) => p.endDate.getTime())));
+
+  const logs = await prisma.transactionLog.findMany({
+    where: { leagueId, effectiveAt: { gte: start, lte: end }, actorTeamId: { not: null } },
+  });
+
+  for (const log of logs) {
+    if (!log.actorTeamId || !counts.has(log.actorTeamId)) continue;
+    const payload = log.payload as Record<string, unknown> | null;
+    const isMove =
+      MOVE_TYPES.has(log.type) ||
+      log.type === "FAAB_WIN" ||
+      (log.type === "WAIVER_CLAIM" && payload?.event === "AWARDED") ||
+      (log.type === "TRADE" && (payload?.event === "PROCESSED" || payload?.event === "FORCED"));
+    if (isMove) counts.set(log.actorTeamId, (counts.get(log.actorTeamId) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+/** Every season this league has an actual schedule for, descending, always
+ * including currentSeason even before any schedule is generated — so the
+ * standings page's season selector always has at least one option. */
+export async function getAvailableSeasons(leagueId: string, currentSeason: number): Promise<number[]> {
+  const periods = await prisma.matchupPeriod.findMany({ where: { leagueId }, distinct: ["season"], select: { season: true } });
+  const seasons = new Set(periods.map((p) => p.season));
+  seasons.add(currentSeason);
+  return [...seasons].sort((a, b) => b - a);
+}
+
+/** Rough, explicitly-not-a-simulation playoff-odds estimate: teams ranked
+ * inside the bracket scale from 95 (1st) down to 55 (last bracket spot);
+ * teams outside scale from 45 down to 5 (last place). null when there's no
+ * bracket configured, or nothing yet to rank teams on. */
+export function estimatePlayoffOdds(rank: number, totalTeams: number, bracketSize: number): number | null {
+  if (bracketSize <= 0 || totalTeams <= 0) return null;
+  if (rank <= bracketSize) {
+    if (bracketSize === 1) return 95;
+    const t = (rank - 1) / (bracketSize - 1);
+    return Math.round(95 - t * 40);
+  }
+  const outCount = totalTeams - bracketSize;
+  if (outCount <= 0) return 5;
+  const t = (rank - bracketSize - 1) / Math.max(1, outCount - 1);
+  return Math.round(45 - t * 40);
 }
 
 export interface ScoreboardMatchup {

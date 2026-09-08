@@ -1061,6 +1061,65 @@ in the simplest possible form.
   stats, and clicking Counter correctly declining the original and landing back on the builder
   with the swapped assets pre-checked and still fully editable.
 
+## Standings redesign: PCT/GB/streak/moves, sortable season stats, playoff odds
+
+The old Standings page was Team/W/L/T/PF/PA in one plain table plus a Playoffs section. Redone
+after a reference screenshot the user provided, scoped down in three places confirmed with
+them directly: **PPP and SHP are dropped entirely** (this app's `GameStatLine` has no
+power-play or shorthanded data at all — same reason those fields are already absent from the
+league settings scoring form; showing them as fake zeros would be a hollow stat), **clinch
+markers (x/y/z/e) and the glossary are left out** (real magic-number math against the
+remaining schedule is a separate feature), and **Playoff % is a simple rank-based heuristic,
+not a simulation**.
+
+- **`src/lib/matchups/standings.ts`** gained four new exports, all read-only, no schema
+  changes:
+  - `StandingsRow` gained `logoUrl` and `streak` (e.g. `"W3"`) — the streak falls out of the
+    same completed-periods loop `getStandings` already ran, no second query.
+  - `getTeamSeasonStats(leagueId, season)` — per-team season-long raw stat totals (G/A/SOG/
+    HIT/BLK, W/GA/SV/SO/OTL), using the **exact same "started players only" scope**
+    `getTeamScoreForPeriod` already uses for the win/loss record (non-BE `LineupEntry` joined
+    to `GameStatLine`) — confirmed with the user this must never include bench or farm-team
+    production. Scoped to the whole season's date range (every `MatchupPeriod`'s span), not
+    one period at a time. `OTL` is new — real data (`decision === "O"` in `statsJson`), just
+    never aggregated anywhere before now.
+  - `getTeamMoveCounts(leagueId, season)` — counts real roster transactions per team
+    (add/drop, send-down/callup, IR moves, an *awarded* waiver claim, a FAAB win, a *processed
+    or forced* trade) from `TransactionLog`, explicitly excluding lineup edits, commissioner
+    overrides, raw FAAB bids, and any not-yet-resolved trade/waiver state.
+  - `getAvailableSeasons` / `estimatePlayoffOdds` — the season selector's option list (always
+    includes the league's current season even pre-schedule), and the playoff-odds heuristic
+    itself: rank-based, linearly interpolated 95→55 inside the bracket cutoff and 45→5 outside
+    it, `null` with no bracket configured or no games played yet (deliberately not shown as a
+    number when it would carry no real signal).
+- **Page rewrite** (`src/app/leagues/[id]/standings/page.tsx`): header gains a league-type
+  badge, a season selector (new `SeasonSelect.tsx`), and — only when a playoff bracket is
+  configured — a link to the new bracket page. Division tabs reuse the page's existing
+  division-grouping, just as a tab strip instead of stacked sections. The standings table
+  itself stays server-rendered (not sortable — only the Season Stats table needed that, per
+  the user's own request) but gained PCT, GB (relative to the leader within whichever
+  group/division is currently shown), and Playoff % (column omitted entirely with no bracket).
+- **New `SeasonStatsTable.tsx`** — one row per team (a team aggregates both skaters and
+  goalies, unlike the player-level tables), sortable by any column via the same
+  `sortKey`/`sortDesc` click-header convention `PlayerStatsTable.tsx` already established.
+- **New `/leagues/[id]/standings/bracket` route** — the "Projected Playoff Bracket" link, kept
+  honest: seeds today's actual top-N teams (by real current standings) and pairs them via the
+  existing `standardSeedOrder` (`src/lib/matchups/playoffs.ts`, reused verbatim — already
+  exhaustively tested for real playoff seeding). Explicitly labeled "if the playoffs started
+  today" and projects **only the first round** — it does not simulate winners through later
+  rounds, since that would be fabricating outcomes rather than reading real current state.
+- Verified in a new `scripts/standings-redesign-check.ts` against the real DB: season stats
+  correctly exclude a bench-only stat line while counting started ones; move counts include
+  exactly the intended transaction types/events and exclude the rest, scoped to the right date
+  range; a manufactured loss-then-two-wins sequence produces streak `"W2"`; playoff-odds
+  ordering is monotonic by rank and `null` with no bracket; a fresh league with no schedule
+  still lists its current season. Every pre-existing regression script re-run clean afterward.
+  Checked live in a real browser against a disposable 4-team scheduled test league: the
+  redesigned header/badge/season-selector, the standings table's new columns with correct GB
+  and playoff-odds values, the Season Stats table sorting correctly by several different
+  columns (including a live sort-direction indicator), and the bracket page correctly pairing
+  seeds 1v4 and 2v3 from real current standings.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`
