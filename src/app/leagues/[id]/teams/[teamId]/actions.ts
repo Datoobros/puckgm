@@ -6,15 +6,16 @@ import {
   dropPlayerFromRoster,
   sendToFarm,
   callUpToActive,
-  placeOnIR,
-  activateFromIR,
+  placeOnIrClearingLineup,
+  activateFromIrIntoSlot,
   commissionerAddPlayer,
   commissionerDropPlayer,
   commissionerMovePlayer,
 } from "@/lib/rosters/mutations";
-import { setLineupSlot, autoSetLineup } from "@/lib/lineups/mutations";
+import { setLineupSlot, swapLineupSlots, getPlayerLineupSlot, autoSetLineup } from "@/lib/lineups/mutations";
 import { regenerateCoManagerClaimCode, removeCoManager, setTeamLogo } from "@/lib/leagues/mutations";
 import { put } from "@vercel/blob";
+import type { MoveSourceTier, MoveDestinationInput } from "./moveTypes";
 
 export async function dropPlayerAction(leagueId: string, teamId: string, playerId: string) {
   const { userId } = await auth.protect();
@@ -34,28 +35,77 @@ export async function callUpAction(leagueId: string, teamId: string, playerId: s
   revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
 }
 
-export async function placeOnIrAction(leagueId: string, teamId: string, playerId: string) {
-  const { userId } = await auth.protect();
-  await placeOnIR({ leagueId, teamId, playerId, managerUserId: userId });
-  revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
-}
-
-export async function activateFromIrAction(leagueId: string, teamId: string, playerId: string) {
-  const { userId } = await auth.protect();
-  await activateFromIR({ leagueId, teamId, playerId, managerUserId: userId });
-  revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
-}
-
-export async function setLineupSlotAction(
+// Single dispatcher behind the Move UI (RosterMoveBoard.tsx) — replaces the
+// old setLineupSlotAction/placeOnIrAction/activateFromIrAction as UI entry
+// points (the underlying lib functions are still called internally, just no
+// longer bound directly into a row's own form). Picks the right mutation(s)
+// based on which tier the player is moving from and what kind of
+// destination was clicked; a same-slot-type swap looks up the mover's real
+// current slot server-side (never trusts a client-supplied value) so the
+// displaced occupant lands exactly where the mover came from.
+export async function moveTeamPlayerAction(
   leagueId: string,
   teamId: string,
-  playerId: string,
   date: string,
-  formData: FormData,
-) {
+  sourcePlayerId: string,
+  sourceTier: MoveSourceTier,
+  destination: MoveDestinationInput,
+): Promise<void> {
   const { userId } = await auth.protect();
-  const slot = String(formData.get("slot"));
-  await setLineupSlot({ leagueId, teamId, playerId, date, slot, managerUserId: userId });
+
+  if (sourceTier === "ACTIVE") {
+    switch (destination.kind) {
+      case "BENCH":
+        await setLineupSlot({ leagueId, teamId, playerId: sourcePlayerId, date, slot: "BE", managerUserId: userId });
+        break;
+      case "SLOT_EMPTY":
+        await setLineupSlot({ leagueId, teamId, playerId: sourcePlayerId, date, slot: destination.slot, managerUserId: userId });
+        break;
+      case "SLOT_SWAP": {
+        const moverOriginSlot = await getPlayerLineupSlot(teamId, sourcePlayerId, date);
+        await swapLineupSlots({
+          leagueId,
+          teamId,
+          date,
+          managerUserId: userId,
+          moverId: sourcePlayerId,
+          moverDestinationSlot: destination.slot,
+          displacedPlayerId: destination.displacedPlayerId,
+          displacedDestinationSlot: moverOriginSlot,
+        });
+        break;
+      }
+      case "IR_PLACE":
+        await placeOnIrClearingLineup({ leagueId, teamId, date, playerId: sourcePlayerId, managerUserId: userId });
+        break;
+      default:
+        throw new Error("Invalid destination for an active-roster player.");
+    }
+  } else {
+    switch (destination.kind) {
+      case "IR_ACTIVATE_BENCH":
+        await activateFromIrIntoSlot({
+          leagueId, teamId, date, playerId: sourcePlayerId,
+          targetSlot: "BE", displacedPlayerId: null, managerUserId: userId,
+        });
+        break;
+      case "IR_ACTIVATE_EMPTY":
+        await activateFromIrIntoSlot({
+          leagueId, teamId, date, playerId: sourcePlayerId,
+          targetSlot: destination.slot, displacedPlayerId: null, managerUserId: userId,
+        });
+        break;
+      case "IR_ACTIVATE_SWAP":
+        await activateFromIrIntoSlot({
+          leagueId, teamId, date, playerId: sourcePlayerId,
+          targetSlot: destination.slot, displacedPlayerId: destination.displacedPlayerId, managerUserId: userId,
+        });
+        break;
+      default:
+        throw new Error("Invalid destination for an IR player.");
+    }
+  }
+
   revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
 }
 

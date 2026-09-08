@@ -15,6 +15,7 @@ import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
+import { parseGameDate, setLineupSlot, swapLineupSlots } from "@/lib/lineups/mutations";
 
 export function activeRosterCap(settings: LeagueSettings): number {
   // Object.values would also pick up positionMode ("SEPARATE"/"COMBINED"), a
@@ -370,6 +371,61 @@ export async function activateFromIR(input: ActivateFromIrInput): Promise<void> 
       },
     }),
   ]);
+}
+
+export interface PlaceOnIrClearingLineupInput extends PlaceOnIrInput {
+  date: string;
+}
+
+/** Same gate as placeOnIR, plus clears that date's now-stale LineupEntry —
+ * a player who leaves the active roster has no business still counting
+ * against a lineup slot's capacity. Used by the Move UI, which lets a
+ * manager send a player straight to IR from a lineup row. */
+export async function placeOnIrClearingLineup(input: PlaceOnIrClearingLineupInput): Promise<void> {
+  await placeOnIR(input);
+  await prisma.lineupEntry.deleteMany({
+    where: { teamId: input.teamId, playerId: input.playerId, gameDate: parseGameDate(input.date) },
+  });
+}
+
+export interface ActivateFromIrIntoSlotInput extends ActivateFromIrInput {
+  date: string;
+  targetSlot: string;
+  displacedPlayerId: string | null;
+}
+
+/** Same gate as activateFromIR, plus lands the newly-activated player in a
+ * specific lineup slot instead of leaving him implicitly on Bench. If
+ * `displacedPlayerId` is given, that player is bumped to Bench (never a
+ * real IR-for-IR swap — the activated player is the only one whose roster
+ * tier actually changes). Two sequential mutations, not one cross-table
+ * transaction: if the lineup-placement leg fails after activation succeeds,
+ * the player ends up on the active roster but implicitly benched (no
+ * LineupEntry yet defaults to "BE") rather than corrupted — the same
+ * tolerance autoSetLineup already has for a partial-loop failure. */
+export async function activateFromIrIntoSlot(input: ActivateFromIrIntoSlotInput): Promise<void> {
+  await activateFromIR(input);
+  if (input.displacedPlayerId) {
+    await swapLineupSlots({
+      leagueId: input.leagueId,
+      teamId: input.teamId,
+      date: input.date,
+      managerUserId: input.managerUserId,
+      moverId: input.playerId,
+      moverDestinationSlot: input.targetSlot,
+      displacedPlayerId: input.displacedPlayerId,
+      displacedDestinationSlot: "BE",
+    });
+  } else {
+    await setLineupSlot({
+      leagueId: input.leagueId,
+      teamId: input.teamId,
+      playerId: input.playerId,
+      date: input.date,
+      slot: input.targetSlot,
+      managerUserId: input.managerUserId,
+    });
+  }
 }
 
 export interface CommissionerRosterInput {

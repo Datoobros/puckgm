@@ -71,7 +71,7 @@ export function eligibleSlotsForPosition(position: string | null, positionMode: 
     .map(([slot]) => slot);
 }
 
-function parseGameDate(date: string): Date {
+export function parseGameDate(date: string): Date {
   return new Date(`${date}T00:00:00.000Z`);
 }
 
@@ -79,6 +79,18 @@ export async function getLineupForDate(teamId: string, date: string) {
   return prisma.lineupEntry.findMany({
     where: { teamId, gameDate: parseGameDate(date) },
   });
+}
+
+/** A player's current slot for a date, defaulting to "BE" when he has no
+ * LineupEntry yet — the same default the team page's own display logic
+ * already uses. Used by the Move UI's swap dispatch to know where a
+ * displaced occupant's mover came from, without trusting a client-supplied
+ * value. */
+export async function getPlayerLineupSlot(teamId: string, playerId: string, date: string): Promise<string> {
+  const entry = await prisma.lineupEntry.findUnique({
+    where: { teamId_playerId_gameDate: { teamId, playerId, gameDate: parseGameDate(date) } },
+  });
+  return entry?.lineupSlot ?? "BE";
 }
 
 export interface SetLineupSlotInput {
@@ -90,7 +102,20 @@ export interface SetLineupSlotInput {
   managerUserId: string;
 }
 
-export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
+// Shared gate chain for anything that moves one player into one lineup slot:
+// team/league match -> manager -> not frozen -> slot legal for this league's
+// positionMode -> player actually on the ACTIVE roster -> position eligible
+// for the slot -> not locked (his own game hasn't started). setLineupSlot and
+// swapLineupSlots both build on this rather than duplicating it — a swap is
+// two of these checks (one per player) plus one atomic double-write.
+async function loadAndValidateLineupMove(input: {
+  leagueId: string;
+  teamId: string;
+  playerId: string;
+  date: string;
+  slot: string;
+  managerUserId: string;
+}) {
   const team = await prisma.team.findUnique({
     where: { id: input.teamId },
     include: { league: true },
@@ -103,8 +128,8 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
   }
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — its lineup can't be edited.");
 
-  const settingsForEligibility = team.league.settingsJson as unknown as LeagueSettings;
-  const eligible = eligibilityFor(settingsForEligibility.rosterComposition.positionMode)[input.slot];
+  const settings = team.league.settingsJson as unknown as LeagueSettings;
+  const eligible = eligibilityFor(settings.rosterComposition.positionMode)[input.slot];
   if (eligible === undefined) throw new Error(`Unknown lineup slot "${input.slot}".`);
 
   const rosterSlot = await prisma.rosterSlot.findFirst({
@@ -127,23 +152,43 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
     }
   }
 
-  const settings = team.league.settingsJson as unknown as LeagueSettings;
+  return { team, settings, rosterSlot, gameDate: parseGameDate(input.date) };
+}
+
+/** A player sent to Farm/IR (src/lib/rosters/mutations.ts) doesn't have his
+ * LineupEntry rows cleaned up for every date they might exist on — only the
+ * Move UI's IR path does that, narrowly, for the one date it's acting on
+ * (placeOnIrClearingLineup). Rather than chase every mutation that changes
+ * ACTIVE status, slot-capacity counts are filtered to currently-active
+ * players here, at the one place capacity is actually enforced — a stale
+ * row left behind by an old send-down/IR move should never count against a
+ * slot's capacity for anyone else. */
+async function activeRosterPlayerIds(teamId: string): Promise<string[]> {
+  const rows = await prisma.rosterSlot.findMany({
+    where: { teamId, slotType: "ACTIVE", effectiveTo: null },
+    select: { playerId: true },
+  });
+  return rows.map((r) => r.playerId);
+}
+
+export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
+  const { settings, gameDate } = await loadAndValidateLineupMove(input);
+
   const cap = capFor(input.slot, settings.rosterComposition);
   if (cap !== null) {
+    const activeIds = await activeRosterPlayerIds(input.teamId);
     const occupied = await prisma.lineupEntry.count({
       where: {
         teamId: input.teamId,
-        gameDate: parseGameDate(input.date),
+        gameDate,
         lineupSlot: input.slot,
-        playerId: { not: input.playerId },
+        playerId: { not: input.playerId, in: activeIds },
       },
     });
     if (occupied >= cap) {
       throw new Error(`All ${cap} ${input.slot} slot${cap === 1 ? "" : "s"} are already filled for this date.`);
     }
   }
-
-  const gameDate = parseGameDate(input.date);
 
   await prisma.$transaction([
     prisma.lineupEntry.upsert({
@@ -157,6 +202,98 @@ export async function setLineupSlot(input: SetLineupSlotInput): Promise<void> {
         type: "LINEUP_EDIT",
         actorTeamId: input.teamId,
         payload: { playerId: input.playerId, date: input.date, slot: input.slot },
+      },
+    }),
+  ]);
+}
+
+export interface SwapLineupSlotsInput {
+  leagueId: string;
+  teamId: string;
+  date: string;
+  managerUserId: string;
+  moverId: string;
+  moverDestinationSlot: string;
+  displacedPlayerId: string;
+  displacedDestinationSlot: string;
+}
+
+/** Exchanges two active-roster players' lineup slots in one shot — the Move
+ * UI's "drop onto an occupied slot" case. `displacedDestinationSlot` is
+ * normally the mover's own current slot (a real two-way swap), but callers
+ * activating an IR player into an occupied slot pass "BE" instead, since an
+ * IR player has no current lineup slot of his own to hand back. */
+export async function swapLineupSlots(input: SwapLineupSlotsInput): Promise<void> {
+  const [mover, displaced] = await Promise.all([
+    loadAndValidateLineupMove({
+      leagueId: input.leagueId,
+      teamId: input.teamId,
+      playerId: input.moverId,
+      date: input.date,
+      slot: input.moverDestinationSlot,
+      managerUserId: input.managerUserId,
+    }),
+    loadAndValidateLineupMove({
+      leagueId: input.leagueId,
+      teamId: input.teamId,
+      playerId: input.displacedPlayerId,
+      date: input.date,
+      slot: input.displacedDestinationSlot,
+      managerUserId: input.managerUserId,
+    }),
+  ]);
+
+  const { gameDate, settings } = mover;
+
+  // A true swap only ever changes who's in each slot, not how many are — but
+  // check capacity anyway (excluding both players, and any stale non-active
+  // rows) rather than assume the caller always pairs a slot with its own
+  // current occupant; a stale client-side destination list should fail
+  // loudly, not silently overfill a slot.
+  const activeIds = await activeRosterPlayerIds(input.teamId);
+  for (const [slot, otherGameDate] of [
+    [input.moverDestinationSlot, gameDate],
+    [input.displacedDestinationSlot, displaced.gameDate],
+  ] as const) {
+    const cap = capFor(slot, settings.rosterComposition);
+    if (cap === null) continue;
+    const occupied = await prisma.lineupEntry.count({
+      where: {
+        teamId: input.teamId,
+        gameDate: otherGameDate,
+        lineupSlot: slot,
+        playerId: { notIn: [input.moverId, input.displacedPlayerId], in: activeIds },
+      },
+    });
+    if (occupied >= cap) {
+      throw new Error(`All ${cap} ${slot} slot${cap === 1 ? "" : "s"} are already filled for this date.`);
+    }
+  }
+
+  await prisma.$transaction([
+    prisma.lineupEntry.upsert({
+      where: { teamId_playerId_gameDate: { teamId: input.teamId, playerId: input.moverId, gameDate } },
+      update: { lineupSlot: input.moverDestinationSlot },
+      create: { teamId: input.teamId, playerId: input.moverId, gameDate, lineupSlot: input.moverDestinationSlot },
+    }),
+    prisma.lineupEntry.upsert({
+      where: { teamId_playerId_gameDate: { teamId: input.teamId, playerId: input.displacedPlayerId, gameDate } },
+      update: { lineupSlot: input.displacedDestinationSlot },
+      create: { teamId: input.teamId, playerId: input.displacedPlayerId, gameDate, lineupSlot: input.displacedDestinationSlot },
+    }),
+    prisma.transactionLog.create({
+      data: {
+        leagueId: input.leagueId,
+        type: "LINEUP_EDIT",
+        actorTeamId: input.teamId,
+        payload: {
+          event: "SWAP",
+          date: input.date,
+          moverId: input.moverId,
+          moverSlot: input.moverDestinationSlot,
+          displacedPlayerId: input.displacedPlayerId,
+          displacedSlot: input.displacedDestinationSlot,
+        },
       },
     }),
   ]);

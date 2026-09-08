@@ -944,6 +944,123 @@ did want turned this from "mostly UI" into three real features.
   end to end as two different identities, and the date strip's click-through and
   window-shift.
 
+## Click-to-move lineup/roster UI
+
+Replaces the old `<select>`-dropdown lineup-slot picker (`LineupSlotSelect.tsx`, deleted) with
+an ESPN-style click-to-select-then-click-to-place interaction, per a reference screenshot the
+user provided and two rounds of clarifying questions. First genuinely new client-interaction
+pattern in this codebase — nothing before this used `useState` for a multi-step selection flow.
+
+- **Scope, confirmed with the user**: spans all three roster tiers on the team page — starting
+  lineup slots (C/L/R/D/UTIL/G), Bench, and IR — for the primary manager or co-manager. Farm is
+  untouched, keeps its existing Call Up/Send Down buttons.
+- **Interaction**: every eligible player row shows a solid "Move" button. Clicking it selects
+  that player; every legal destination row switches to an outlined "Here" button; clicking one
+  completes the move. Clicking Move again cancels. Non-destination rows show no button at all
+  while a selection is active (matches the reference screenshot's behavior, not a gray-out).
+- **Empty slots as real destinations**: unfilled position-slot capacity renders as clickable
+  "— Empty" placeholder rows (e.g., a second "D — Empty" row when only 1 of 2 D slots is
+  filled). Bench is uncapped in this app (`capFor("BE", comp)` already returned `null`), so
+  there's always exactly one generic empty "Bench" row as a destination rather than requiring a
+  swap with a specific existing bench occupant.
+- **True two-way swaps, not "bump to bench"**: dropping a mover onto an occupied slot swaps the
+  two players — the displaced occupant lands in the *mover's own former slot* (which could be
+  Bench or another starting slot), verified eligible for them first. New
+  `swapLineupSlots` (`src/lib/lineups/mutations.ts`) does both writes in one transaction, reusing
+  a new shared `loadAndValidateLineupMove` gate helper that `setLineupSlot` was refactored to
+  use as well (same checks as before, no behavior change for the existing function).
+- **IR is a real destination tier**: healthy-but-still-IR-tagged active players can be moved
+  straight onto IR (still gated on the real `officialRosterStatus` check, no bypass); IR players
+  who've cleared can be activated into an empty slot, into Bench, or by swapping into an
+  occupied slot — which always bumps the displaced occupant to Bench specifically (not a real
+  IR-for-IR swap, since an IR player has no lineup slot of his own to hand back). New
+  `placeOnIrClearingLineup`/`activateFromIrIntoSlot` (`src/lib/rosters/mutations.ts`) compose the
+  existing `placeOnIR`/`activateFromIR` with the lineup-side write — two sequential mutations,
+  not one cross-table transaction (documented limitation: if the second leg fails, the player
+  ends up activated-but-benched rather than corrupted, matching `autoSetLineup`'s existing
+  tolerance for partial-loop failure).
+- **Real bug found and fixed while building this**: lineup-slot capacity checks
+  (`setLineupSlot`/`swapLineupSlots`) counted *every* `LineupEntry` row for a date/slot,
+  including stale rows left behind when a player was sent to Farm/IR without that row ever being
+  cleaned up (only the new IR path bothers to clean up after itself). A slot could read as full
+  from a player who'd long since left the active roster. Fixed at the root — both capacity
+  checks now filter to players currently on the ACTIVE roster — rather than chasing every
+  mutation that changes roster tier.
+- New `src/app/leagues/[id]/teams/[teamId]/RosterMoveBoard.tsx` (client component, owns the
+  `selected` state) and `moveTypes.ts` (shared plain types, no directive). `page.tsx` gained
+  `buildTierRows()`, computing every row (real + synthetic) and every eligible player's move
+  options entirely server-side; the client component only ever looks up precomputed options by
+  row key, no eligibility logic lives on the client. One dispatching Server Action,
+  `moveTeamPlayerAction`, picks the right mutation(s) based on source tier and destination kind.
+- Verified in a new `scripts/move-feature-check.ts` against the real DB: a true swap in both
+  directions; the stale-LineupEntry capacity fix (a farmed player's leftover row no longer
+  blocks a real teammate from taking that slot); `placeOnIrClearingLineup` clearing that date's
+  entry; `activateFromIrIntoSlot` into an empty slot and into an occupied one (confirming the
+  occupant lands on Bench); activation correctly blocked with no corruption when the active
+  roster is already full. Every pre-existing regression script re-run clean afterward (the one
+  failure, `roster-action-check.ts`, is the same pre-existing tsx/Clerk `server-only` import
+  issue already documented above, unrelated to this change). Checked live in a real browser
+  against the real "QTest" test team: Move → Here filling an empty C slot, then a genuine bench
+  player swapping into the now-full C slot with the displaced player correctly landing on
+  Bench — both moves persisted through a real page reload.
+
+## Trade builder stats, review screen, and counter-offer
+
+Second half of the same approved plan as the Move feature above. The trade builder showed
+just names; proposing or accepting committed immediately with no chance to actually evaluate
+value. Confirmed with the user: full stats everywhere, a review step before propose/accept
+actually commits, commissioner force-process stays one-click (no stats screen), and "Counter"
+in the simplest possible form.
+
+- **Full stats reused, not rebuilt** — `getPlayerStatsAggregate({ playerIds })`
+  (`src/lib/players/rankings.ts`) already supported fetching stats for an arbitrary specific
+  list of player IDs; no new stats-fetching code anywhere in this feature. New
+  `src/app/leagues/[id]/trades/TradeAssetSummary.tsx` (`PlayerStatLine`/`TradeAssetSummary`,
+  no directive — imported directly by both a Server Component and a Client Component) renders
+  the same `SKATER_COLUMNS`/`GOALIE_COLUMNS`/`POINTS_COLUMNS` set as the Players/team pages, as
+  an inline per-player stat strip rather than a full table, to keep the give/receive two-column
+  layout readable.
+- **Propose review is pure client-side staging** — `proposeTrade` commits immediately on call
+  (creates a real `PROPOSED` row), so the review-before-sending step happens entirely in
+  `TradeBuilder.tsx`'s own state (`step: "select" | "review"`, controlled checkboxes) *before*
+  ever calling the Server Action. Backing out via "Back" never leaves a half-created trade.
+  "Confirm & Send" is the one real `<form action={proposeTradeAction...}>`, with the selections
+  carried across as hidden inputs — `proposeTradeAction`/`proposeTrade` themselves are
+  unchanged.
+- **Accept review is a real detail page**, not staging — a `PROPOSED` row already exists by
+  this point. New route `/leagues/[id]/trades/[tradeId]/review`, backed by new
+  `getTradeDetailById` (`src/lib/trades/mutations.ts`), which shares a new private
+  `mapTradeToDetail` helper with `getTradesForLeague` rather than duplicating the mapping.
+  `TradeItemDetail` gained `playerId`/`pickId` fields (previously only derived display strings
+  `playerName`/`pickLabel`) so the review page and the counter-offer prefill can actually
+  reference the underlying assets, not just their labels. Only the counterparty manager sees
+  live Accept/Decline/Counter buttons; the "Needs your response" list's inline Accept/Decline
+  buttons were replaced with a link here — review is now mandatory for propose/accept, which
+  was the point. Commissioner force-process is untouched, still one-click, no stats screen.
+- **Counter, kept intentionally simple**: `counterTradeAction` declines the original trade
+  (reusing `respondToTrade`'s existing decline path verbatim) and redirects to
+  `/trades?counterFrom=<tradeId>`. `page.tsx` re-validates server-side that the current team
+  was genuinely the counterparty on that trade before trusting the query param, then builds
+  swapped `initialGive`/`initialReceive`/`initialCounterparty` props for `TradeBuilder` — what
+  the original proposer gave becomes what's now offered to receive, and vice versa, fully
+  editable before submitting as a brand-new, unlinked trade. No "countered" relationship in the
+  data model; no activity-feed changes needed (the feed only ever surfaced `PROCESSED`/`FORCED`
+  trade events already, so a decline-then-repropose is invisible there until it actually
+  completes, same as any ordinary trade).
+- `respondToTradeAction` gained a `redirect()` back to `/trades` after Accept/Decline, so acting
+  from the review page doesn't leave the manager sitting on a now-stale page.
+- Verified in a new `scripts/trade-review-check.ts` against the real DB: `getTradeDetailById`
+  returns the right shape including `playerId`; the counter flow (decline, then a fresh
+  `proposeTrade` with swapped give/receive) produces a wholly separate `tradeId` with no
+  linkage back to the original, which stays `DECLINED` and untouched;
+  `getPlayerStatsAggregate` covers every participant player ID pulled from a trade's items.
+  Every pre-existing regression script re-run clean afterward, including `trades-check.ts`
+  itself. Checked live in a real browser as two different identities against the real "QTest"
+  league: the builder showing full stats per player, Review Trade → Confirm & Send actually
+  creating the `PROPOSED` trade, the counterparty's review page rendering both sides with
+  stats, and clicking Counter correctly declining the original and landing back on the builder
+  with the swapped assets pre-checked and still fully editable.
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`

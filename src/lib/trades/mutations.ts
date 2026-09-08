@@ -488,7 +488,9 @@ export interface TradeItemDetail {
   itemType: "PLAYER" | "PICK" | "FAAB";
   fromTeamId: string;
   toTeamId: string;
+  playerId?: string;
   playerName?: string;
+  pickId?: string;
   pickLabel?: string;
   faabAmount?: number;
 }
@@ -506,6 +508,42 @@ export interface TradeDetail {
   items: TradeItemDetail[];
 }
 
+type TradeWithFullItems = Prisma.TradeGetPayload<{
+  include: { items: { include: { player: true; draftPick: true; fromTeam: true; toTeam: true } }; vetoes: true };
+}>;
+
+/** Shared by getTradesForLeague (list) and getTradeDetailById (single) — the
+ * counterparty/proposer team names have to be derived from the first item
+ * rather than a direct FK, since Trade itself only stores proposedByTeamId. */
+function mapTradeToDetail(t: TradeWithFullItems, viewingTeamId: string | null): TradeDetail | null {
+  const firstItem = t.items[0];
+  if (!firstItem) return null;
+  const counterpartyTeam = firstItem.fromTeamId === t.proposedByTeamId ? firstItem.toTeam : firstItem.fromTeam;
+  const proposedByTeam = firstItem.fromTeamId === t.proposedByTeamId ? firstItem.fromTeam : firstItem.toTeam;
+
+  return {
+    id: t.id,
+    state: t.state,
+    proposedAt: t.proposedAt,
+    reviewEndsAt: t.reviewEndsAt,
+    proposedByTeamId: t.proposedByTeamId,
+    proposedByTeamName: proposedByTeam.name,
+    counterpartyTeamId: counterpartyTeam.id,
+    counterpartyTeamName: counterpartyTeam.name,
+    hasVetoed: viewingTeamId ? t.vetoes.some((v) => v.teamId === viewingTeamId) : false,
+    items: t.items.map((i) => ({
+      itemType: i.itemType,
+      fromTeamId: i.fromTeamId,
+      toTeamId: i.toTeamId,
+      playerId: i.playerId ?? undefined,
+      playerName: i.player?.fullName,
+      pickId: i.draftPickId ?? undefined,
+      pickLabel: i.draftPick ? `${i.draftPick.season} Round ${i.draftPick.round}` : undefined,
+      faabAmount: i.faabAmount ?? undefined,
+    })),
+  };
+}
+
 /** Last 50 trades league-wide, shaped for the /trades hub page to filter
  * into "needs your response" / "pending" / "history" sections by state and
  * team membership. `viewingTeamId` is only used to compute `hasVetoed`. */
@@ -520,32 +558,20 @@ export async function getTradesForLeague(leagueId: string, viewingTeamId: string
     take: 50,
   });
 
-  const details: TradeDetail[] = [];
-  for (const t of trades) {
-    const firstItem = t.items[0];
-    if (!firstItem) continue;
-    const counterpartyTeam = firstItem.fromTeamId === t.proposedByTeamId ? firstItem.toTeam : firstItem.fromTeam;
-    const proposedByTeam = firstItem.fromTeamId === t.proposedByTeamId ? firstItem.fromTeam : firstItem.toTeam;
+  return trades
+    .map((t) => mapTradeToDetail(t, viewingTeamId))
+    .filter((d): d is TradeDetail => d !== null);
+}
 
-    details.push({
-      id: t.id,
-      state: t.state,
-      proposedAt: t.proposedAt,
-      reviewEndsAt: t.reviewEndsAt,
-      proposedByTeamId: t.proposedByTeamId,
-      proposedByTeamName: proposedByTeam.name,
-      counterpartyTeamId: counterpartyTeam.id,
-      counterpartyTeamName: counterpartyTeam.name,
-      hasVetoed: viewingTeamId ? t.vetoes.some((v) => v.teamId === viewingTeamId) : false,
-      items: t.items.map((i) => ({
-        itemType: i.itemType,
-        fromTeamId: i.fromTeamId,
-        toTeamId: i.toTeamId,
-        playerName: i.player?.fullName,
-        pickLabel: i.draftPick ? `${i.draftPick.season} Round ${i.draftPick.round}` : undefined,
-        faabAmount: i.faabAmount ?? undefined,
-      })),
-    });
-  }
-  return details;
+/** Single-trade fetch for the review screen (propose/accept review). */
+export async function getTradeDetailById(tradeId: string, viewingTeamId: string | null): Promise<TradeDetail | null> {
+  const t = await prisma.trade.findUnique({
+    where: { id: tradeId },
+    include: {
+      items: { include: { player: true, draftPick: true, fromTeam: true, toTeam: true } },
+      vetoes: true,
+    },
+  });
+  if (!t) return null;
+  return mapTradeToDetail(t, viewingTeamId);
 }

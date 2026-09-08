@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import {
   proposeTrade,
@@ -37,6 +38,18 @@ export async function respondToTradeAction(leagueId: string, tradeId: string, ac
   const { userId } = await auth.protect();
   await respondToTrade({ tradeId, managerUserId: userId, accept });
   revalidatePath(`/leagues/${leagueId}/trades`);
+  redirect(`/leagues/${leagueId}/trades`);
+}
+
+/** Simplest possible "counter" — decline the original, then send the user
+ * back to the builder pre-filled with the same two teams/assets (swapped),
+ * fully editable before it's sent as a brand-new, unlinked trade. No
+ * "countered" relationship in the data model. */
+export async function counterTradeAction(leagueId: string, tradeId: string) {
+  const { userId } = await auth.protect();
+  await respondToTrade({ tradeId, managerUserId: userId, accept: false });
+  revalidatePath(`/leagues/${leagueId}/trades`);
+  redirect(`/leagues/${leagueId}/trades?counterFrom=${tradeId}`);
 }
 
 export async function cancelTradeAction(leagueId: string, tradeId: string) {

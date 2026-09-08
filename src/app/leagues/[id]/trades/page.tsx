@@ -1,10 +1,27 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
-import { getTradesForLeague, getTradeableAssets, type TradeDetail } from "@/lib/trades/mutations";
+import {
+  getTradesForLeague,
+  getTradeableAssets,
+  getTradeDetailById,
+  type TradeDetail,
+  type TradeItemDetail,
+  type TradeAssetSelection,
+} from "@/lib/trades/mutations";
+import { getPlayerStatsAggregate, type PlayerStatsRow } from "@/lib/players/rankings";
 import { Card, SectionLabel } from "@/components/Card";
 import { TradeBuilder } from "./TradeBuilder";
-import { respondToTradeAction, cancelTradeAction, castVetoAction, forceProcessTradeAction } from "./actions";
+import { cancelTradeAction, castVetoAction, forceProcessTradeAction } from "./actions";
+
+function selectionFromItems(items: TradeItemDetail[]): TradeAssetSelection {
+  return {
+    playerIds: items.filter((i) => i.itemType === "PLAYER" && i.playerId).map((i) => i.playerId!),
+    pickIds: items.filter((i) => i.itemType === "PICK" && i.pickId).map((i) => i.pickId!),
+    faabAmount: items.find((i) => i.itemType === "FAAB")?.faabAmount ?? 0,
+  };
+}
 
 function itemLabel(item: TradeDetail["items"][number]): string {
   if (item.itemType === "PLAYER") return item.playerName ?? "a player";
@@ -36,6 +53,8 @@ function timeLeft(reviewEndsAt: Date | null): string {
 export default async function TradesPage(props: PageProps<"/leagues/[id]/trades">) {
   const { userId } = await auth.protect();
   const { id: leagueId } = await props.params;
+  const sp = await props.searchParams;
+  const counterFrom = Array.isArray(sp.counterFrom) ? sp.counterFrom[0] : sp.counterFrom;
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -44,6 +63,24 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
   const isCommissioner = await isLeagueCommissioner(leagueId, userId);
 
   const trades = await getTradesForLeague(leagueId, myTeam?.id ?? null);
+
+  // Counter-offer prefill — only trust a counterFrom trade the current team
+  // actually was the counterparty on (never trust the query param alone).
+  // What the original proposer gave becomes what's now offered to receive,
+  // and vice versa; fully editable from here, no data-model link retained.
+  let counterSeed: { counterpartyId: string; give: TradeAssetSelection; receive: TradeAssetSelection } | null = null;
+  if (counterFrom && myTeam) {
+    const original = await getTradeDetailById(counterFrom, myTeam.id);
+    if (original && original.counterpartyTeamId === myTeam.id) {
+      const proposerGave = original.items.filter((i) => i.fromTeamId === original.proposedByTeamId);
+      const counterpartyGave = original.items.filter((i) => i.fromTeamId === original.counterpartyTeamId);
+      counterSeed = {
+        counterpartyId: original.proposedByTeamId,
+        give: selectionFromItems(counterpartyGave),
+        receive: selectionFromItems(proposerGave),
+      };
+    }
+  }
 
   const isParticipant = (t: TradeDetail) => !!myTeam && (t.proposedByTeamId === myTeam.id || t.counterpartyTeamId === myTeam.id);
   const needsResponse = myTeam ? trades.filter((t) => t.state === "PROPOSED" && t.counterpartyTeamId === myTeam.id) : [];
@@ -72,12 +109,23 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
       getTradeableAssets(myTeam.id),
       ...otherTeams.map((t) => getTradeableAssets(t.id)),
     ]);
+
+    const allPlayerIds = [myAssets, ...otherAssets].flatMap((a) => a.players.map((p) => p.id));
+    const statsRows = allPlayerIds.length > 0
+      ? await getPlayerStatsAggregate({ playerIds: allPlayerIds, scoringConfig: settings.scoringConfig })
+      : [];
+    const statsById: Record<string, PlayerStatsRow> = Object.fromEntries(statsRows.map((r) => [r.id, r]));
+
     builderSection = (
       <TradeBuilder
         leagueId={leagueId}
         myTeamId={myTeam.id}
         myAssets={myAssets}
         otherTeams={otherTeams.map((t, i) => ({ teamId: t.id, teamName: t.name, assets: otherAssets[i] }))}
+        statsById={statsById}
+        initialCounterpartyId={counterSeed?.counterpartyId}
+        initialGive={counterSeed?.give}
+        initialReceive={counterSeed?.receive}
       />
     );
   }
@@ -106,18 +154,12 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
               {needsResponse.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
-                  <span className="flex shrink-0 gap-2">
-                    <form action={respondToTradeAction.bind(null, leagueId, t.id, true)}>
-                      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                        Accept
-                      </button>
-                    </form>
-                    <form action={respondToTradeAction.bind(null, leagueId, t.id, false)}>
-                      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                        Decline
-                      </button>
-                    </form>
-                  </span>
+                  <Link
+                    href={`/leagues/${leagueId}/trades/${t.id}/review`}
+                    className="shrink-0 rounded-full bg-navy px-3 py-1 text-xs font-medium text-navy-foreground hover:opacity-90"
+                  >
+                    Review
+                  </Link>
                 </li>
               ))}
             </ul>
