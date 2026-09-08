@@ -4,8 +4,9 @@ import { auth } from "@clerk/nextjs/server";
 import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getClaimablePlayers, getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { getRecentActivity } from "@/lib/activity/feed";
-import { getStandings } from "@/lib/matchups/standings";
+import { getStandings, getScoreboardForPeriod } from "@/lib/matchups/standings";
 import { Card, SectionLabel } from "@/components/Card";
+import { TeamLogo } from "@/components/TeamLogo";
 import { submitWaiverClaimAction, cancelWaiverClaimAction } from "./waivers/actions";
 
 function hoursRemaining(expiresAt: Date): string {
@@ -39,11 +40,12 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
   const settings = league.settingsJson as unknown as LeagueSettings;
   const yourTeam = league.teams.find((t) => isTeamManager(t, userId)) ?? null;
 
-  const [activity, claimable, priorityOrder, standings] = await Promise.all([
+  const [activity, claimable, priorityOrder, standings, scoreboard] = await Promise.all([
     getRecentActivity(id),
     getClaimablePlayers(id, yourTeam?.id ?? null),
     getOrInitWaiverPriority(id),
     getStandings(id, league.currentSeason, settings.scoringConfig),
+    getScoreboardForPeriod(id, league.currentSeason, settings.scoringConfig),
   ]);
   const teamNameById = new Map(league.teams.map((t) => [t.id, t.name]));
 
@@ -165,6 +167,47 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
         </div>
 
         <div className="space-y-6">
+          {scoreboard && (
+            <div>
+              <SectionLabel>
+                Scores
+                {scoreboard.isPlayoffs && <span className="ml-1 text-gold">· {scoreboard.roundLabel}</span>}
+              </SectionLabel>
+              <Card className="!p-0 overflow-hidden">
+                <ul className="divide-y divide-border">
+                  {scoreboard.matchups.length === 0 ? (
+                    <li className="px-4 py-3 text-sm text-muted">Bye week for every team.</li>
+                  ) : (
+                    scoreboard.matchups.map((m) => (
+                      <li key={m.matchupId} className="space-y-1.5 px-4 py-2.5">
+                        <div className="flex items-center justify-between gap-2 text-sm">
+                          <span className={`flex min-w-0 items-center gap-1.5 truncate ${m.homeScore >= m.awayScore ? "font-semibold" : ""}`}>
+                            <TeamLogo url={m.homeTeamLogoUrl} alt={m.homeTeamName} size={18} />
+                            <span className="truncate">{m.homeTeamName}</span>
+                          </span>
+                          <span className="shrink-0 tabular-nums">{m.homeScore.toFixed(1)}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-sm">
+                          <span className={`flex min-w-0 items-center gap-1.5 truncate ${m.awayScore >= m.homeScore ? "font-semibold" : ""}`}>
+                            <TeamLogo url={m.awayTeamLogoUrl} alt={m.awayTeamName} size={18} />
+                            <span className="truncate">{m.awayTeamName}</span>
+                          </span>
+                          <span className="shrink-0 tabular-nums">{m.awayScore.toFixed(1)}</span>
+                        </div>
+                      </li>
+                    ))
+                  )}
+                </ul>
+                <Link
+                  href={`/leagues/${id}/scoreboard`}
+                  className="block border-t border-border px-4 py-2 text-center text-xs text-blue hover:underline"
+                >
+                  View Full Scoreboard
+                </Link>
+              </Card>
+            </div>
+          )}
+
           <div>
             <SectionLabel>Standings</SectionLabel>
             <Card className="!p-0 overflow-hidden">

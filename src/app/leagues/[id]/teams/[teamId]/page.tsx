@@ -42,6 +42,17 @@ import { DateStrip } from "./DateStrip";
 import { AutoSetLineupButton } from "./AutoSetLineupButton";
 import { CommissionerAddPlayerBox } from "./CommissionerAddPlayerBox";
 import { LogoUploadForm } from "./LogoUploadForm";
+import { getTeamNotifications } from "@/lib/notifications/feed";
+
+const NOTIFICATION_DOT: Record<string, string> = {
+  TRADE_ACTION: "bg-gold",
+  TRADE_PENDING: "bg-blue",
+  WAIVER_PENDING: "bg-blue",
+  WAIVER_RESULT: "bg-gold",
+  FAAB_PENDING: "bg-blue",
+  FAAB_RESULT: "bg-gold",
+  ROSTER: "bg-red-500",
+};
 
 const SLOT_LABELS: Record<string, string> = { C: "C", L: "L", R: "R", F: "F", D: "D", G: "G", UTIL: "UTIL", BE: "Bench" };
 
@@ -258,6 +269,8 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
 
   const fullSchedule = await getTeamSchedule(teamId, leagueId, team.league.currentSeason, settings.scoringConfig);
   const upcomingMatchups = fullSchedule.filter((r) => r.endDate >= new Date()).slice(0, 2);
+
+  const notifications = isManager ? await getTeamNotifications(leagueId, teamId) : [];
 
   const draftPicks = tab === "draftpicks" ? await getTeamDraftPicks(teamId) : [];
 
@@ -626,6 +639,27 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           </div>
         )}
       </Card>
+
+      {notifications.length > 0 && (
+        <div className="mt-4">
+          <SectionLabel>Notifications</SectionLabel>
+          <Card className="!p-0 overflow-hidden">
+            <ul className="divide-y divide-border">
+              {notifications.map((n) => (
+                <li key={n.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${NOTIFICATION_DOT[n.kind]}`} />
+                    {n.text}
+                  </span>
+                  <Link href={n.href} className="shrink-0 text-xs text-blue hover:underline">
+                    View →
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      )}
 
       {fullSchedule.length > 0 && (
         <div className="mt-4">

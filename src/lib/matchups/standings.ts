@@ -41,6 +41,50 @@ export async function getTeamScoreForPeriod(
   return lines.reduce((sum, l) => sum + computeFantasyPoints(l.statsJson, scoringConfig), 0);
 }
 
+export interface TopScorer {
+  playerId: string;
+  fullName: string;
+  headshotUrl: string | null;
+  points: number;
+}
+
+/** Real per-player fantasy points within a period, for whoever was actually
+ * STARTED (non-BE) — same scope as getTeamScoreForPeriod, just broken out
+ * per player instead of summed. Used for the Scoreboard's "Top Scorers" row;
+ * this app has no stat-projection data source, so this is real results so
+ * far, not a projection (see PROGRESS.md's "Known gaps" on projections). */
+export async function getTeamTopScorersForPeriod(
+  teamId: string,
+  start: Date,
+  end: Date,
+  scoringConfig: ScoringConfig,
+  limit = 3,
+): Promise<TopScorer[]> {
+  const entries = await prisma.lineupEntry.findMany({
+    where: { teamId, gameDate: { gte: start, lte: end }, lineupSlot: { not: "BE" } },
+    include: { player: true },
+  });
+  if (entries.length === 0) return [];
+
+  const lines = await prisma.gameStatLine.findMany({
+    where: { OR: entries.map((e) => ({ playerId: e.playerId, gameDate: e.gameDate })) },
+  });
+
+  const pointsByPlayer = new Map<string, number>();
+  for (const line of lines) {
+    const pts = computeFantasyPoints(line.statsJson, scoringConfig);
+    pointsByPlayer.set(line.playerId, (pointsByPlayer.get(line.playerId) ?? 0) + pts);
+  }
+
+  const playerById = new Map(entries.map((e) => [e.playerId, e.player]));
+  const rows: TopScorer[] = [...pointsByPlayer.entries()].map(([playerId, points]) => {
+    const player = playerById.get(playerId)!;
+    return { playerId, fullName: player.fullName, headshotUrl: player.headshotUrl, points };
+  });
+  rows.sort((a, b) => b.points - a.points);
+  return rows.slice(0, limit);
+}
+
 export interface StandingsRow {
   teamId: string;
   teamName: string;
@@ -278,12 +322,16 @@ export interface ScoreboardMatchup {
   matchupId: string;
   homeTeamId: string;
   homeTeamName: string;
+  homeTeamLogoUrl: string | null;
   homeScore: number;
   homeSeed: number | null;
+  homeTopScorers: TopScorer[];
   awayTeamId: string;
   awayTeamName: string;
+  awayTeamLogoUrl: string | null;
   awayScore: number;
   awaySeed: number | null;
+  awayTopScorers: TopScorer[];
   final: boolean;
 }
 
@@ -423,20 +471,26 @@ export async function getScoreboardForPeriod(
   const final = target.endDate <= new Date();
   const results = await Promise.all(
     matchups.map(async (m) => {
-      const [homeScore, awayScore] = await Promise.all([
+      const [homeScore, awayScore, homeTopScorers, awayTopScorers] = await Promise.all([
         getTeamScoreForPeriod(m.homeTeamId, target.startDate, target.endDate, scoringConfig),
         getTeamScoreForPeriod(m.awayTeamId, target.startDate, target.endDate, scoringConfig),
+        getTeamTopScorersForPeriod(m.homeTeamId, target.startDate, target.endDate, scoringConfig),
+        getTeamTopScorersForPeriod(m.awayTeamId, target.startDate, target.endDate, scoringConfig),
       ]);
       return {
         matchupId: m.id,
         homeTeamId: m.homeTeamId,
         homeTeamName: m.homeTeam.name,
+        homeTeamLogoUrl: m.homeTeam.logoUrl,
         homeScore,
         homeSeed: m.homeSeed,
+        homeTopScorers,
         awayTeamId: m.awayTeamId,
         awayTeamName: m.awayTeam.name,
+        awayTeamLogoUrl: m.awayTeam.logoUrl,
         awayScore,
         awaySeed: m.awaySeed,
+        awayTopScorers,
         final,
       };
     }),

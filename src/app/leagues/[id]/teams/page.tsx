@@ -25,7 +25,15 @@ export default async function OtherTeamsPage(props: PageProps<"/leagues/[id]/tea
       <Link href={`/leagues/${id}`} className="text-sm text-muted hover:underline">
         ← {league.name}
       </Link>
-      <h1 className="mt-1 text-2xl font-semibold tracking-tight">Teams</h1>
+      <div className="mt-1 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Teams</h1>
+        <Link
+          href={`/leagues/${id}/teams/rosters`}
+          className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
+        >
+          View All Rosters
+        </Link>
+      </div>
 
       <div className="mt-6">
         <SectionLabel>All teams ({league.teams.length})</SectionLabel>

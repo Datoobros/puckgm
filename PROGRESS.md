@@ -1128,6 +1128,71 @@ not a simulation**.
   (DESIGN.md §2.4/§2.10) would actually show up if a league changed its config — and now a
   league can, via `/leagues/[id]/settings` (see above).
 
+## Requested-changes batch: watchlist, roster UX, league rosters page, scoreboard, notifications
+
+A list of ~15 ESPN-inspired requests came in together (see BACKLOG.md's two deferred items
+for what got pulled out of this batch). Broken down item by item with the user before
+building, then shipped in two commits, each verified against real data (a disposable test
+league plus the full existing regression suite for the first commit; the second commit's
+new read-only pages were checked directly against the user's own real "Experimenting"
+league, which surfaced genuinely real trades in the new Notifications section — not just a
+seeded fixture).
+
+**Watchlist** (new `WatchlistEntry` model, `src/lib/players/watchlist.ts`) — per-league,
+per-user. A ☆/★ toggle on every Players-page row plus a "My Watchlist" filter option, no
+roster mechanics involved.
+
+**Players page**: Add button restyled as a round gold "+" pill (ESPN-style) instead of a
+text link; the IR badge (`Player.officialRosterStatus`, already shown on the team roster
+page) now shows here too.
+
+**Add-when-full fixed**: `addPlayerToRoster` gained an optional `dropPlayerId` — adding a
+player when the active roster is already at cap no longer throws an unhandled error. Both
+the Players page and the new team-page Add box expand an inline "who do you want to drop?"
+picker and do the drop+add atomically in one transaction.
+
+**Team roster page decluttered**: new "+ Add" / "− Drop" pills (`RosterMoveBoard.tsx`,
+new `AddPlayerBox.tsx`) replace the always-visible inline Farm/Drop buttons — those only
+appear now behind the "− Drop" toggle, and dropping requires a second confirm click
+("Drop so-and-so? Confirm/Cancel") so a player can't be dropped in one accidental click.
+
+**Trade cancel restricted**: `cancelTrade` no longer lets a manager or commissioner back
+out of a trade once the counterparty has accepted (`UNDER_REVIEW`) — only the
+commissioner's force-process resolves a stuck one now. `startNewSeason`'s internal
+wipe-in-flight-trades path keeps working via a new `allowUnderReview` bypass, since that's
+a legitimate system-driven cancellation, not a manager backing out. `scripts/trades-check.ts`
+updated to assert the new behavior instead of the old one.
+
+**League Rosters page** (new `/leagues/[id]/teams/rosters`, linked from the Other Teams
+page) — every team's Active + Farm + IR roster side by side on one scrollable page.
+Position shown is `primaryPosition`, not a live lineup slot (this is an overview page, not
+a lineup tool); no "how acquired" column — no cheap pre-aggregated source for that per slot,
+and adding one just for this page wasn't worth the extra query weight.
+
+**Scoreboard redesigned** (`src/lib/matchups/standings.ts`'s new `getTeamTopScorersForPeriod`
++ `ScoreboardMatchup` gaining `homeTeamLogoUrl`/`awayTeamLogoUrl`/`homeTopScorers`/
+`awayTopScorers`) — team logos, bigger score display, and a real "top scorers this matchup
+so far" row per side. Deliberately **not** ESPN's "Projected Leaders" — this app has no
+stat-projection data source (same reason projections are already absent everywhere else),
+so this shows actual fantasy points scored within the period instead, confirmed with the
+user as the honest substitute. No "Matchup"/"Box Score" detail-page buttons — no such
+per-matchup detail page exists yet and building one wasn't asked for; flagged rather than
+adding dead links.
+
+**League home gained a "Scores" card** in the right-column sidebar (current week's matchups,
+team logos, scores, "View Full Scoreboard" link) — reuses `getScoreboardForPeriod`, no new
+query.
+
+**Team page Notifications section** (new `src/lib/notifications/feed.ts`) — renders just
+below the header identity card. Scoped to exactly what the user asked for: trades needing
+your response or awaiting the other side, your own pending waiver claims, your team's most
+recent resolved waiver/FAAB results (win **or** loss — unlike the league-wide activity feed,
+which only ever shows terminal wins), and a roster-deadline case (an IR player who's
+actually cleared but still sitting on your IR tier). Waiver/FAAB "recently resolved" scoping
+uses `createdAt` (submission time, not resolution time) since neither model has a
+resolved-at timestamp — close enough for a lightweight notification list, not worth a
+migration for.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - Draft, playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in
