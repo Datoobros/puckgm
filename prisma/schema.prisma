@@ -49,6 +49,7 @@ model Player {
   fabids        FaBid[]
   waiverClaims  WaiverClaim[]
   lineupEntries LineupEntry[]
+  watchlistedBy WatchlistEntry[]
 
   @@index([currentNhlOrg])
 }
@@ -123,6 +124,7 @@ model League {
   drafts           Draft[]
   trades           Trade[]
   matchupPeriods   MatchupPeriod[]
+  watchlistEntries WatchlistEntry[]
 }
 
 model LeagueSettingsLog {
@@ -504,4 +506,25 @@ model TransactionLog {
 
   @@index([leagueId, type])
   @@index([actorTeamId])
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist — per-user, per-league. Scoped to a league (not global to the
+// user) because a player's ownership/availability is itself league-scoped —
+// the same reason the Players page as a whole is league-scoped, not a
+// site-wide browse. No relation to Team: a user watches players as
+// themselves, not as any one team they manage.
+// ---------------------------------------------------------------------------
+
+model WatchlistEntry {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id])
+  userId    String
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([leagueId, userId, playerId])
+  @@index([leagueId, userId])
 }

@@ -231,16 +231,28 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
 export interface CancelTradeInput {
   tradeId: string;
   callerUserId: string;
+  /** Internal-only escape hatch for startNewSeason's forced wipe of every
+   * in-flight trade — never set this from a user-facing action. Once a
+   * trade has been accepted (UNDER_REVIEW), a manager or commissioner can no
+   * longer back out of it via the normal cancel path; only the commissioner's
+   * force-process, or the room opening up naturally, resolves it from there. */
+  allowUnderReview?: boolean;
 }
 
-/** Either trading manager, or the commissioner, can cancel — this is the
- * escape hatch for a trade stuck UNDER_REVIEW waiting on roster room, and
- * how the proposer backs out early. */
+/** Either trading manager, or the commissioner, can cancel a still-PROPOSED
+ * trade (the proposer backing out before the other side has even accepted).
+ * Once accepted (UNDER_REVIEW), cancelling is no longer allowed — a stuck
+ * trade's only way out is the commissioner's force-process. */
 export async function cancelTrade(input: CancelTradeInput): Promise<void> {
   const trade = await prisma.trade.findUnique({ where: { id: input.tradeId }, include: { items: true } });
   if (!trade) throw new Error("Trade not found.");
-  if (trade.state !== "PROPOSED" && trade.state !== "UNDER_REVIEW") {
-    throw new Error("This trade can no longer be cancelled.");
+  const cancellableStates = input.allowUnderReview ? ["PROPOSED", "UNDER_REVIEW"] : ["PROPOSED"];
+  if (!cancellableStates.includes(trade.state)) {
+    throw new Error(
+      trade.state === "UNDER_REVIEW"
+        ? "This trade has already been accepted and can no longer be cancelled — ask the commissioner to force it through if it's stuck."
+        : "This trade can no longer be cancelled.",
+    );
   }
 
   const counterpartyTeamId = getCounterpartyTeamId(trade);

@@ -772,6 +772,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
               moveOptionsByPlayerId={moveBoard.moveOptionsByPlayerId}
               sourceTierByPlayerId={moveBoard.sourceTierByPlayerId}
               farmSection={farmSectionNode}
+              activeCap={cap}
             />
           ) : (
             <>

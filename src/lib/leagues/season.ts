@@ -30,7 +30,7 @@ export async function startNewSeason(leagueId: string, callerUserId: string): Pr
     where: { leagueId, state: { in: ["PROPOSED", "UNDER_REVIEW"] } },
   });
   for (const trade of pendingTrades) {
-    await cancelTrade({ tradeId: trade.id, callerUserId });
+    await cancelTrade({ tradeId: trade.id, callerUserId, allowUnderReview: true });
   }
 
   // Release every rostered player back to free agency. No pending-WaiverClaim

@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { Card, SectionLabel } from "@/components/Card";
 import { moveTeamPlayerAction, sendToFarmAction, dropPlayerAction } from "./actions";
+import { AddPlayerBox } from "./AddPlayerBox";
 import type {
   MoveDestinationInput,
   MoveOption,
@@ -34,6 +35,7 @@ export function RosterMoveBoard({
   moveOptionsByPlayerId,
   sourceTierByPlayerId,
   farmSection,
+  activeCap,
 }: {
   leagueId: string;
   teamId: string;
@@ -47,10 +49,36 @@ export function RosterMoveBoard({
   moveOptionsByPlayerId: Record<string, MoveOption[]>;
   sourceTierByPlayerId: Record<string, MoveSourceTier>;
   farmSection: ReactNode;
+  activeCap: number;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [dropMode, setDropMode] = useState(false);
+  const [confirmDropId, setConfirmDropId] = useState<string | null>(null);
+  const [dropPending, setDropPending] = useState(false);
+
+  // Active roster occupants only — every occupant row across both tables,
+  // used both for the "roster full?" check and the AddPlayerBox's
+  // drop-to-make-room picker. Farm/IR players are separate tiers, not
+  // counted against the active cap.
+  const activeOccupants = [...skaterRows, ...goalieRows].filter(
+    (r): r is MoveBoardOccupantRow => r.kind === "occupant",
+  );
+
+  async function handleDrop(playerId: string) {
+    setDropPending(true);
+    setError(null);
+    try {
+      await dropPlayerAction(leagueId, teamId, playerId);
+      setConfirmDropId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't drop that player.");
+    } finally {
+      setDropPending(false);
+    }
+  }
 
   const options = selected ? (moveOptionsByPlayerId[selected] ?? []) : [];
   const destinationByRowKey = new Map(options.map((o) => [o.rowKey, o.destination] as const));
@@ -202,21 +230,48 @@ export function RosterMoveBoard({
                   ))}
                   <td className="py-2 pr-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      {r.canSendToFarm && (
-                        <form action={sendToFarmAction.bind(null, leagueId, teamId, r.playerId)}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                            → Farm
-                          </button>
-                        </form>
-                      )}
-                      {r.canDrop && (
-                        <form action={dropPlayerAction.bind(null, leagueId, teamId, r.playerId)}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                      {dropMode ? (
+                        r.canDrop &&
+                        (confirmDropId === r.playerId ? (
+                          <>
+                            <span className="text-xs text-muted">Drop {r.fullName}?</span>
+                            <button
+                              type="button"
+                              disabled={dropPending}
+                              onClick={() => handleDrop(r.playerId)}
+                              className="rounded-full bg-red-500 px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDropId(null)}
+                              className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDropId(r.playerId)}
+                            className="rounded-full border border-red-500/50 px-3 py-1 text-xs text-red-500 hover:bg-red-500/10"
+                          >
                             − Drop
                           </button>
-                        </form>
+                        ))
+                      ) : (
+                        <>
+                          {r.canSendToFarm && (
+                            <form action={sendToFarmAction.bind(null, leagueId, teamId, r.playerId)}>
+                              <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
+                                → Farm
+                              </button>
+                            </form>
+                          )}
+                          {moveButtonCell(r.playerId, r.rowKey, hasOptions, r.locked)}
+                        </>
                       )}
-                      {moveButtonCell(r.playerId, r.rowKey, hasOptions, r.locked)}
                     </div>
                   </td>
                 </tr>
@@ -277,6 +332,45 @@ export function RosterMoveBoard({
 
   return (
     <>
+      <div key="action-bar" className="mt-6 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setAddOpen((o) => !o);
+            setDropMode(false);
+            setConfirmDropId(null);
+          }}
+          className="rounded-full bg-gold px-3 py-1 text-xs font-medium text-gold-foreground hover:opacity-90"
+        >
+          + Add
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setDropMode((m) => !m);
+            setAddOpen(false);
+            setConfirmDropId(null);
+          }}
+          className={`rounded-full border px-3 py-1 text-xs ${
+            dropMode ? "border-red-500 text-red-500" : "border-border hover:bg-surface-tint"
+          }`}
+        >
+          − Drop
+        </button>
+        {dropMode && <span className="text-xs text-muted">Pick a player below to drop.</span>}
+      </div>
+      {addOpen && (
+        <div className="mt-3">
+          <AddPlayerBox
+            leagueId={leagueId}
+            teamId={teamId}
+            activeCount={activeOccupants.length}
+            activeCap={activeCap}
+            activeRosterPlayers={activeOccupants.map((o) => ({ id: o.playerId, fullName: o.fullName }))}
+            onAdded={() => setAddOpen(false)}
+          />
+        </div>
+      )}
       <div key="skaters" className="mt-6">
         <SectionLabel>Skaters</SectionLabel>
         {renderTable(skaterRows, skaterColumnDefs, "No skaters rostered yet.")}

@@ -2,9 +2,10 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
-import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
+import { getLeagueOwnershipMap, activeRosterCap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 import { getAvailableBudget, getMyPendingBids } from "@/lib/faab/mutations";
+import { getWatchlistedPlayerIds } from "@/lib/players/watchlist";
 import { PlayerStatsTable } from "./PlayerStatsTable";
 import { PlayerSearchBox } from "./PlayerSearchBox";
 import { cancelFaBidAction } from "./actions";
@@ -46,15 +47,29 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
 
   const ownershipMap = await getLeagueOwnershipMap(leagueId, rows.map((r) => r.id));
   const ownership = Object.fromEntries(ownershipMap);
-  const rosterContext = myTeam ? { leagueId, teamId: myTeam.id, isMyTeam: true } : null;
 
-  const [availableFaab, myPendingBids] =
-    myTeam && settings.faabEnabled
-      ? await Promise.all([
-          getAvailableBudget(myTeam.id, league.currentSeason, settings.faabBudget),
-          getMyPendingBids(leagueId, myTeam.id),
-        ])
-      : [null, []];
+  const [availableFaab, myPendingBids, myActiveRosterSlots, watchlistedIds] = await Promise.all([
+    myTeam && settings.faabEnabled ? getAvailableBudget(myTeam.id, league.currentSeason, settings.faabBudget) : Promise.resolve(null),
+    myTeam && settings.faabEnabled ? getMyPendingBids(leagueId, myTeam.id) : Promise.resolve([]),
+    myTeam
+      ? prisma.rosterSlot.findMany({
+          where: { teamId: myTeam.id, slotType: "ACTIVE", effectiveTo: null },
+          include: { player: { select: { id: true, fullName: true } } },
+        })
+      : Promise.resolve([]),
+    getWatchlistedPlayerIds(leagueId, userId),
+  ]);
+
+  const rosterContext = myTeam
+    ? {
+        leagueId,
+        teamId: myTeam.id,
+        isMyTeam: true,
+        activeCount: myActiveRosterSlots.length,
+        activeCap: activeRosterCap(settings),
+        activeRosterPlayers: myActiveRosterSlots.map((s) => ({ id: s.player.id, fullName: s.player.fullName })),
+      }
+    : null;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -106,6 +121,8 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
           rows={rows}
           rosterContext={rosterContext}
           ownership={ownership}
+          leagueId={leagueId}
+          watchlistedIds={[...watchlistedIds]}
           faab={
             settings.faabEnabled
               ? { minBid: settings.faabMinBid, maxBid: settings.faabMaxBid, pendingPlayerIds: myPendingBids.map((b) => b.playerId) }

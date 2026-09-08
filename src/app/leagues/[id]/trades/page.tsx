@@ -95,9 +95,6 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
     if (settings.tradeVetoMode === "COMMISSIONER") return isCommissioner && !isParticipant(t);
     return !!myTeam && !isParticipant(t) && !t.hasVetoed;
   }
-  function canCancel(t: TradeDetail): boolean {
-    return (t.state === "PROPOSED" || t.state === "UNDER_REVIEW") && (isParticipant(t) || isCommissioner);
-  }
   function canForceProcess(t: TradeDetail): boolean {
     return isCommissioner && !isParticipant(t);
   }
@@ -203,13 +200,6 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
                     <span className="shrink-0 text-xs text-muted">{timeLeft(t.reviewEndsAt)}</span>
                   </div>
                   <div className="mt-2 flex gap-2">
-                    {canCancel(t) && (
-                      <form action={cancelTradeAction.bind(null, leagueId, t.id)}>
-                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                          Cancel
-                        </button>
-                      </form>
-                    )}
                     {canVeto(t) && (
                       <form action={castVetoAction.bind(null, leagueId, t.id)}>
                         <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">

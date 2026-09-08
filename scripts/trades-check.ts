@@ -152,7 +152,7 @@ async function main() {
   const d1TradeState = await prisma.trade.findUniqueOrThrow({ where: { id: d1Id } });
   assert(d1TradeState.state === "UNDER_REVIEW", "still UNDER_REVIEW, not a failure state");
 
-  console.log("\n-- cancelTrade is the escape hatch for a stuck trade --");
+  console.log("\n-- cancelTrade can no longer resolve an already-accepted, stuck trade --");
   const { tradeId: h1Id } = await proposeTrade({
     leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
     give: { playerIds: [playerH1.id], pickIds: [], faabAmount: 0 },
@@ -160,9 +160,20 @@ async function main() {
   });
   await respondToTrade({ tradeId: h1Id, managerUserId: "trade-test-B", accept: true });
   await backdateReview(h1Id);
-  await cancelTrade({ tradeId: h1Id, callerUserId: "trade-test-A" });
+  let h1CancelThrew = false;
+  try {
+    await cancelTrade({ tradeId: h1Id, callerUserId: "trade-test-A" });
+  } catch {
+    h1CancelThrew = true;
+  }
+  assert(h1CancelThrew, "cancelTrade throws once a trade is UNDER_REVIEW — no more manager-side escape hatch");
   const h1TradeState = await prisma.trade.findUniqueOrThrow({ where: { id: h1Id } });
-  assert(h1TradeState.state === "CANCELLED", "cancelTrade cancels a stuck-pending trade");
+  assert(h1TradeState.state === "UNDER_REVIEW", "blocked cancel left the trade's state untouched");
+  // startNewSeason's internal bypass is the one caller still allowed to force this through —
+  // exercised directly here rather than via a full season rollover.
+  await cancelTrade({ tradeId: h1Id, callerUserId: "trade-test-A", allowUnderReview: true });
+  const h1TradeFinal = await prisma.trade.findUniqueOrThrow({ where: { id: h1Id } });
+  assert(h1TradeFinal.state === "CANCELLED", "the allowUnderReview bypass (season rollover's internal path) still cancels it");
   const h1StillA = await prisma.rosterSlot.findFirst({ where: { teamId: teamA, playerId: playerH1.id, effectiveTo: null } });
   assert(!!h1StillA, "cancelled trade moved nothing");
 

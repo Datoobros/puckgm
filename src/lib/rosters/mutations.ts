@@ -61,6 +61,12 @@ export interface AddPlayerInput {
   teamId: string;
   playerId: string;
   managerUserId: string;
+  /** When the active roster is already full, the caller can pick an
+   * existing ACTIVE player to drop in the same transaction rather than
+   * getting a bare "roster is full" error with no way forward. Must
+   * currently be on this team's ACTIVE roster — dropping a farm/IR player
+   * wouldn't free an active slot. */
+  dropPlayerId?: string;
 }
 
 export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
@@ -102,11 +108,35 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
   const activeCount = await prisma.rosterSlot.count({
     where: { teamId: input.teamId, slotType: "ACTIVE", effectiveTo: null },
   });
+
+  let dropSlotId: string | null = null;
+  let droppedPlayerId: string | null = null;
   if (activeCount >= cap) {
-    throw new Error(`Active roster is full (${cap} max).`);
+    if (!input.dropPlayerId) {
+      throw new Error(`Active roster is full (${cap} max).`);
+    }
+    const dropSlot = await prisma.rosterSlot.findFirst({
+      where: { teamId: input.teamId, playerId: input.dropPlayerId, slotType: "ACTIVE", effectiveTo: null },
+    });
+    if (!dropSlot) throw new Error("That player isn't on your active roster.");
+    dropSlotId = dropSlot.id;
+    droppedPlayerId = input.dropPlayerId;
   }
 
   await prisma.$transaction([
+    ...(dropSlotId && droppedPlayerId
+      ? [
+          prisma.rosterSlot.update({ where: { id: dropSlotId }, data: { effectiveTo: new Date() } }),
+          prisma.transactionLog.create({
+            data: {
+              leagueId: input.leagueId,
+              type: "ROSTER_DROP",
+              actorTeamId: input.teamId,
+              payload: { playerId: droppedPlayerId, reason: "MADE_ROOM_FOR_ADD" },
+            },
+          }),
+        ]
+      : []),
     prisma.rosterSlot.create({
       data: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE" },
     }),

@@ -19,6 +19,7 @@ export interface PlayerAggregateRow {
   currentNhlOrg: string | null;
   careerNhlGp: number;
   headshotUrl: string | null;
+  officialRosterStatus: string | null;
   gamesIngested: number;
   goals: number;
   assists: number;
@@ -77,6 +78,7 @@ export async function getPlayerStatsAggregate(opts?: {
       p."currentNhlOrg",
       p."careerNhlGp",
       p."headshotUrl",
+      p."officialRosterStatus",
       COUNT(g.id)::int AS "gamesIngested",
       COALESCE(SUM((g."statsJson"->>'goals')::numeric), 0)::float AS goals,
       COALESCE(SUM((g."statsJson"->>'assists')::numeric), 0)::float AS assists,
@@ -155,6 +157,7 @@ export async function getPlayerDailyStats(
       currentNhlOrg: line.player.currentNhlOrg,
       careerNhlGp: line.player.careerNhlGp,
       headshotUrl: line.player.headshotUrl,
+      officialRosterStatus: line.player.officialRosterStatus,
       gamesIngested: 1,
       goals: num("goals"),
       assists: num("assists"),

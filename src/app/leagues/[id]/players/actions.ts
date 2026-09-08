@@ -6,12 +6,18 @@ import { prisma } from "@/lib/db";
 import { addPlayerToRoster } from "@/lib/rosters/mutations";
 import { submitFaBid, cancelFaBid } from "@/lib/faab/mutations";
 import { searchPlayersByName, type PlayerSearchResult } from "@/lib/players/rankings";
+import { toggleWatchlist } from "@/lib/players/watchlist";
 
-export async function addPlayerAction(leagueId: string, teamId: string, playerId: string) {
+export async function addPlayerAction(leagueId: string, teamId: string, playerId: string, dropPlayerId?: string) {
   const { userId } = await auth.protect();
-  await addPlayerToRoster({ leagueId, teamId, playerId, managerUserId: userId });
+  await addPlayerToRoster({ leagueId, teamId, playerId, managerUserId: userId, dropPlayerId });
   revalidatePath(`/leagues/${leagueId}/players`);
   revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
+}
+
+export async function toggleWatchlistAction(leagueId: string, playerId: string): Promise<{ watching: boolean }> {
+  const { userId } = await auth.protect();
+  return toggleWatchlist(leagueId, userId, playerId);
 }
 
 export async function submitFaBidAction(leagueId: string, playerId: string, formData: FormData) {
