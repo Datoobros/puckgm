@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { setUpDraftAction } from "../draft/actions";
+import { Button } from "@/components/Button";
 
 export function DraftSetupForm({
   leagueId,
@@ -91,9 +92,9 @@ export function DraftSetupForm({
         </div>
       )}
 
-      <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint">
+      <Button type="submit" variant="primary" size="sm">
         Set Up Draft
-      </button>
+      </Button>
     </form>
   );
 }

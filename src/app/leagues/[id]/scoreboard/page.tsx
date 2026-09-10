@@ -9,6 +9,7 @@ import { Card } from "@/components/Card";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { TeamScheduleList } from "@/components/TeamScheduleList";
+import { LinkButton } from "@/components/Button";
 import { TeamScheduleSelect } from "./TeamScheduleSelect";
 import type { TopScorer } from "@/lib/matchups/standings";
 
@@ -63,14 +64,13 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
       ) : (
         <>
           <div className="mt-4 flex items-center gap-2">
-            <Link
+            <LinkButton
               href={`/leagues/${leagueId}/scoreboard?week=${Math.max(1, scoreboard.periodNo - 1)}`}
-              className={`rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint ${
-                scoreboard.periodNo <= 1 ? "pointer-events-none opacity-30" : ""
-              }`}
+              size="sm"
+              className={scoreboard.periodNo <= 1 ? "pointer-events-none opacity-30" : ""}
             >
               ← Prev
-            </Link>
+            </LinkButton>
             <span className="text-sm text-muted">
               {scoreboard.isPlayoffs && <span className="font-medium text-gold">{scoreboard.roundLabel} · </span>}
               Week {scoreboard.periodNo} of {periodCount}
@@ -79,14 +79,13 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
               {" · "}
               {scoreboard.matchups.some((m) => m.final) ? "Final" : "In progress"}
             </span>
-            <Link
+            <LinkButton
               href={`/leagues/${leagueId}/scoreboard?week=${Math.min(periodCount, scoreboard.periodNo + 1)}`}
-              className={`rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint ${
-                scoreboard.periodNo >= periodCount ? "pointer-events-none opacity-30" : ""
-              }`}
+              size="sm"
+              className={scoreboard.periodNo >= periodCount ? "pointer-events-none opacity-30" : ""}
             >
               Next →
-            </Link>
+            </LinkButton>
           </div>
 
           <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -96,26 +95,11 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
               </Card>
             ) : (
               scoreboard.matchups.map((m) => (
-                <Card key={m.matchupId} className="!p-0 overflow-hidden">
-                  <div className="divide-y divide-border">
-                    <MatchupSideRow
-                      name={m.homeTeamName}
-                      logoUrl={m.homeTeamLogoUrl}
-                      seed={m.homeSeed}
-                      score={m.homeScore}
-                      winning={m.homeScore >= m.awayScore}
-                      topScorers={m.homeTopScorers}
-                    />
-                    <MatchupSideRow
-                      name={m.awayTeamName}
-                      logoUrl={m.awayTeamLogoUrl}
-                      seed={m.awaySeed}
-                      score={m.awayScore}
-                      winning={m.awayScore >= m.homeScore}
-                      topScorers={m.awayTopScorers}
-                    />
-                  </div>
-                </Card>
+                <MatchupCard
+                  key={m.matchupId}
+                  home={{ name: m.homeTeamName, logoUrl: m.homeTeamLogoUrl, seed: m.homeSeed, score: m.homeScore, topScorers: m.homeTopScorers }}
+                  away={{ name: m.awayTeamName, logoUrl: m.awayTeamLogoUrl, seed: m.awaySeed, score: m.awayScore, topScorers: m.awayTopScorers }}
+                />
               ))
             )}
           </div>
@@ -125,37 +109,52 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
   );
 }
 
-/** One team's half of a matchup card — logo, name/seed, score, and up to 3
- * real top scorers for the period so far. Not "Projected Leaders" like
- * ESPN's — this app has no stat-projection data source, so this is actual
- * fantasy points scored within the period, honestly labeled as such. */
-function MatchupSideRow({
-  name,
-  logoUrl,
-  seed,
-  score,
-  winning,
-  topScorers,
-}: {
+interface MatchupSide {
   name: string;
   logoUrl: string | null;
   seed: number | null;
   score: number;
-  winning: boolean;
   topScorers: TopScorer[];
-}) {
+}
+
+/** Horizontal side-by-side matchup card — home team left, away team right,
+ * flanking a centered score, matching ESPN's actual scoreboard layout
+ * (this app previously stacked home-over-away instead). Top scorers are
+ * real fantasy points scored within the period so far, not "Projected
+ * Leaders" like ESPN's — this app has no stat-projection data source, so
+ * that's honestly labeled as what it actually is. */
+function MatchupCard({ home, away }: { home: MatchupSide; away: MatchupSide }) {
+  const homeWinning = home.score >= away.score;
+  const awayWinning = away.score >= home.score;
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <TeamLogo url={logoUrl} alt={name} size={40} />
-      <div className="min-w-0 flex-1">
-        <div className={`truncate text-sm ${winning ? "font-semibold" : ""}`}>
-          {seed !== null && <span className="text-muted">({seed}) </span>}
-          {name}
+    <Card className="!p-0 overflow-hidden">
+      <div className="flex items-center gap-3 p-4">
+        <MatchupTeamColumn side={home} winning={homeWinning} align="left" />
+        <div className="flex shrink-0 items-center gap-2 px-1">
+          <span className={`tabular-nums text-lg ${homeWinning ? "font-semibold" : "text-muted"}`}>{home.score.toFixed(1)}</span>
+          <span className="text-xs text-muted">–</span>
+          <span className={`tabular-nums text-lg ${awayWinning ? "font-semibold" : "text-muted"}`}>{away.score.toFixed(1)}</span>
         </div>
-        {topScorers.length > 0 && (
-          <div className="mt-1 flex items-center gap-3 overflow-x-auto">
-            {topScorers.map((p) => (
-              <div key={p.playerId} className="flex shrink-0 items-center gap-1" title={p.fullName}>
+        <MatchupTeamColumn side={away} winning={awayWinning} align="right" />
+      </div>
+    </Card>
+  );
+}
+
+function MatchupTeamColumn({ side, winning, align }: { side: MatchupSide; winning: boolean; align: "left" | "right" }) {
+  const isRight = align === "right";
+  return (
+    <div className={`flex min-w-0 flex-1 items-center gap-2 ${isRight ? "flex-row-reverse text-right" : ""}`}>
+      <TeamLogo url={side.logoUrl} alt={side.name} size={36} />
+      <div className="min-w-0">
+        <div className={`truncate text-sm ${winning ? "font-semibold" : ""}`}>
+          {side.seed !== null && <span className="text-muted">({side.seed}) </span>}
+          {side.name}
+        </div>
+        {side.topScorers.length > 0 && (
+          <div className={`mt-1 flex flex-wrap items-center gap-2 ${isRight ? "justify-end" : ""}`}>
+            {side.topScorers.map((p) => (
+              <div key={p.playerId} className={`flex shrink-0 items-center gap-1 ${isRight ? "flex-row-reverse" : ""}`} title={p.fullName}>
                 <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={18} />
                 <span className="text-[11px] text-muted">
                   {p.fullName.split(" ").slice(-1)[0]} {p.points.toFixed(1)}
@@ -165,9 +164,6 @@ function MatchupSideRow({
           </div>
         )}
       </div>
-      <span className={`shrink-0 tabular-nums text-lg ${winning ? "font-semibold" : "text-muted"}`}>
-        {score.toFixed(1)}
-      </span>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { getLeague, isTeamManager } from "@/lib/leagues/mutations";
 import { getTradeDetailById } from "@/lib/trades/mutations";
 import { getPlayerStatsAggregate, type PlayerStatsRow } from "@/lib/players/rankings";
 import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 import { TradeAssetSummary, type TradeAssetSummarySide } from "../../TradeAssetSummary";
 import { respondToTradeAction, counterTradeAction } from "../../actions";
 
@@ -65,19 +66,13 @@ export default async function TradeReviewPage(props: PageProps<"/leagues/[id]/tr
       {canAct ? (
         <div className="mt-6 flex flex-wrap gap-2">
           <form action={respondToTradeAction.bind(null, leagueId, trade.id, true)}>
-            <button type="submit" className="rounded-full bg-navy px-4 py-1.5 text-sm font-medium text-navy-foreground hover:opacity-90">
-              Accept
-            </button>
+            <Button type="submit" variant="primary">Accept</Button>
           </form>
           <form action={respondToTradeAction.bind(null, leagueId, trade.id, false)}>
-            <button type="submit" className="rounded-full border border-border px-4 py-1.5 text-sm hover:bg-surface-tint">
-              Decline
-            </button>
+            <Button type="submit">Decline</Button>
           </form>
           <form action={counterTradeAction.bind(null, leagueId, trade.id)}>
-            <button type="submit" className="rounded-full border border-border px-4 py-1.5 text-sm hover:bg-surface-tint">
-              Counter
-            </button>
+            <Button type="submit">Counter</Button>
           </form>
         </div>
       ) : (

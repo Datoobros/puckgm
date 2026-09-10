@@ -1,6 +1,7 @@
 "use client";
 
 import { startNewSeasonAction } from "@/app/leagues/actions";
+import { Button } from "./Button";
 
 export function StartNewSeasonButton({ leagueId, currentSeason }: { leagueId: string; currentSeason: number }) {
   return (
@@ -16,9 +17,9 @@ export function StartNewSeasonButton({ leagueId, currentSeason }: { leagueId: st
         }
       }}
     >
-      <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint">
+      <Button type="submit" variant="danger" size="sm">
         Start New Season
-      </button>
+      </Button>
     </form>
   );
 }

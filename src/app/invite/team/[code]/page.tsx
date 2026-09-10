@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getTeamByClaimCode, isTeamManager } from "@/lib/leagues/mutations";
 import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 import { claimTeamAction } from "../../actions";
 
 export default async function ClaimTeamPage(props: PageProps<"/invite/team/[code]">) {
@@ -25,9 +26,7 @@ export default async function ClaimTeamPage(props: PageProps<"/invite/team/[code
       ) : (
         <Card className="mt-6">
           <form action={claimTeamAction.bind(null, code)}>
-            <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
-              Claim this team
-            </button>
+            <Button type="submit" variant="primary">Claim this team</Button>
           </form>
         </Card>
       )}

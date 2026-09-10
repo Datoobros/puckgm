@@ -14,7 +14,7 @@ export function NavBar() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex items-center gap-1">
+    <nav className="flex items-center gap-4">
       {LINKS.map((link) => {
         const isActive =
           link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
@@ -22,8 +22,8 @@ export function NavBar() {
           <Link
             key={link.href}
             href={link.href}
-            className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-              isActive ? "bg-gold text-gold-foreground" : "text-navy-foreground/70 hover:text-navy-foreground"
+            className={`border-b-2 px-0.5 py-1.5 text-sm font-medium transition-colors ${
+              isActive ? "border-blue text-foreground" : "border-transparent text-muted hover:text-foreground"
             }`}
           >
             {link.label}

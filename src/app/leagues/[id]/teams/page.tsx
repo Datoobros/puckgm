@@ -5,6 +5,7 @@ import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mut
 import { getRosterCounts, activeRosterCap } from "@/lib/rosters/mutations";
 import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { Card, SectionLabel } from "@/components/Card";
+import { LinkButton, Badge } from "@/components/Button";
 
 export default async function OtherTeamsPage(props: PageProps<"/leagues/[id]/teams">) {
   const { userId } = await auth.protect();
@@ -27,12 +28,7 @@ export default async function OtherTeamsPage(props: PageProps<"/leagues/[id]/tea
       </Link>
       <div className="mt-1 flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Teams</h1>
-        <Link
-          href={`/leagues/${id}/teams/rosters`}
-          className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
-        >
-          View All Rosters
-        </Link>
+        <LinkButton href={`/leagues/${id}/teams/rosters`}>View All Rosters</LinkButton>
       </div>
 
       <div className="mt-6">
@@ -47,11 +43,7 @@ export default async function OtherTeamsPage(props: PageProps<"/leagues/[id]/tea
                 <Card className={`transition-colors hover:border-blue ${isYou ? "border-gold" : ""}`}>
                   <div className="flex items-center justify-between">
                     <p className="font-medium">{team.name}</p>
-                    {isYou && (
-                      <span className="rounded bg-gold px-1.5 py-0.5 text-[10px] font-semibold text-gold-foreground">
-                        YOU
-                      </span>
-                    )}
+                    {isYou && <Badge tone="gold" solid>You</Badge>}
                   </div>
                   <p className="mt-2 text-xs text-muted">
                     {rosterCount} / {cap} roster spots

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 import { proposeTradeAction } from "./actions";
 import { PlayerStatLine, TradeAssetSummary, type TradeAssetSummarySide } from "./TradeAssetSummary";
 import type { TradeableAssets, TradeAssetSelection } from "@/lib/trades/mutations";
@@ -125,13 +126,7 @@ export function TradeBuilder({
           </Card>
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setStep("select")}
-            className="rounded-full border border-border px-4 py-1.5 text-sm hover:bg-surface-tint"
-          >
-            Back
-          </button>
+          <Button type="button" onClick={() => setStep("select")}>Back</Button>
           <form action={proposeTradeAction.bind(null, leagueId, myTeamId)}>
             <input type="hidden" name="counterpartyTeamId" value={counterpartyId} />
             {give.playerIds.map((id) => (
@@ -148,9 +143,7 @@ export function TradeBuilder({
               <input key={id} type="hidden" name="receivePickIds" value={id} />
             ))}
             <input type="hidden" name="receiveFaab" value={receive.faabAmount} />
-            <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground hover:opacity-90">
-              Confirm & Send
-            </button>
+            <Button type="submit" variant="primary">Confirm & Send</Button>
           </form>
         </div>
       </div>
@@ -206,14 +199,9 @@ export function TradeBuilder({
         </Card>
       </div>
 
-      <button
-        type="button"
-        disabled={!canReview}
-        onClick={() => setStep("review")}
-        className="rounded-full bg-navy px-4 py-2 text-sm font-medium text-navy-foreground hover:opacity-90 disabled:opacity-40"
-      >
+      <Button type="button" variant="primary" disabled={!canReview} onClick={() => setStep("review")}>
         Review Trade
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { autoSetLineupAction } from "./actions";
+import { Button } from "@/components/Button";
 
 export function AutoSetLineupButton({
   leagueId,
@@ -22,12 +23,7 @@ export function AutoSetLineupButton({
         if (!confirm(confirmText)) e.preventDefault();
       }}
     >
-      <button
-        type="submit"
-        className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
-      >
-        {label}
-      </button>
+      <Button type="submit">{label}</Button>
     </form>
   );
 }

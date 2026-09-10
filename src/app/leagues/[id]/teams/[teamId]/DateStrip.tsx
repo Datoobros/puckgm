@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { shiftDate, todayUTC } from "@/lib/dates";
+import { Button } from "@/components/Button";
 
 const WINDOW_SIZE = 5;
 const WEEKDAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
@@ -29,14 +30,9 @@ export function DateStrip({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-sm font-medium text-muted">Set Lineup:</span>
-      <button
-        type="button"
-        onClick={() => go(shiftDate(selectedDate, -1))}
-        aria-label="Earlier day"
-        className="rounded-full border border-border px-2 py-1 text-sm hover:bg-surface-tint"
-      >
+      <Button type="button" size="sm" onClick={() => go(shiftDate(selectedDate, -1))} aria-label="Earlier day">
         ‹
-      </button>
+      </Button>
       {windowDates.map((d) => {
         const dt = new Date(`${d}T00:00:00.000Z`);
         const isSelected = d === selectedDate;
@@ -56,22 +52,13 @@ export function DateStrip({
           </button>
         );
       })}
-      <button
-        type="button"
-        onClick={() => go(shiftDate(selectedDate, 1))}
-        aria-label="Later days"
-        className="rounded-full border border-border px-2 py-1 text-sm hover:bg-surface-tint"
-      >
+      <Button type="button" size="sm" onClick={() => go(shiftDate(selectedDate, 1))} aria-label="Later days">
         ›
-      </button>
+      </Button>
       {selectedDate !== todayUTC() && (
-        <button
-          type="button"
-          onClick={() => go(todayUTC())}
-          className="rounded-full border border-border px-3 py-1.5 text-xs hover:bg-surface-tint"
-        >
+        <Button type="button" size="sm" onClick={() => go(todayUTC())}>
           Today
-        </button>
+        </Button>
       )}
       <input
         type="date"

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { updateDraftSetupAction, cancelDraftSetupAction } from "../draft/actions";
+import { Button } from "@/components/Button";
 
 export function DraftSetupEditForm({
   leagueId,
@@ -77,9 +78,7 @@ export function DraftSetupEditForm({
         )}
 
         <div className="flex gap-2">
-          <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint">
-            Save Draft Changes
-          </button>
+          <Button type="submit" size="sm">Save Draft Changes</Button>
         </div>
       </form>
       <form
@@ -90,9 +89,7 @@ export function DraftSetupEditForm({
           }
         }}
       >
-        <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-xs text-red-500 hover:bg-surface-tint">
-          Cancel this draft
-        </button>
+        <Button type="submit" variant="danger" size="sm">Cancel this draft</Button>
       </form>
     </div>
   );

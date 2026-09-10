@@ -34,11 +34,11 @@ export function LogoUploadForm({ leagueId, teamId }: { leagueId: string; teamId:
       }}
     >
       <input ref={hiddenInputRef} type="hidden" name="logoDataUrl" />
-      <label className="cursor-pointer rounded-full border border-border px-3 py-1.5 text-xs hover:bg-surface-tint">
+      <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface-tint">
         {pending ? "Uploading…" : "Change logo"}
         <input type="file" accept="image/*" className="hidden" disabled={pending} onChange={handleFileChange} />
       </label>
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
     </form>
   );
 }

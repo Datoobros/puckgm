@@ -1,24 +1,36 @@
 @import "tailwindcss";
 
-/* Navy / gold / white brand palette. Dark mode is the `prefers-color-scheme`
-   media strategy (unchanged from before) — every token flips below, so a
-   plain `bg-surface`/`text-muted`/etc. utility class adapts automatically
-   with no `dark:` variant needed anywhere in the app. */
+/* Navy / gold / white brand palette — light only. ESPN Fantasy has no dark
+   mode; this app previously followed the OS prefers-color-scheme, which is
+   why it could look "far too dark" regardless of anything else — that
+   media-query override is gone on purpose, not an oversight. Every page
+   uses these semantic tokens (bg-surface/text-muted/bg-navy/etc.) rather
+   than literal colors, so this file is the single place the whole app's
+   palette lives. */
 :root {
   color-scheme: light;
-  --background: #f7f9fc;
-  --foreground: #1b2430;
+  --background: #f5f6f8;
+  --foreground: #14181f;
   --surface: #ffffff;
-  --surface-tint: rgba(20, 51, 94, 0.05);
-  --border: #e1e7ef;
-  --muted: #5b6b82;
+  --surface-tint: #eef1f5;
+  --border: #dde3ea;
+  --muted: #5b6472;
   --navy: #14335e;
   --blue: #2c5ca6;
   --gold: #c9972e;
-  /* Static — gold and navy are used as fills in both modes, so the text that
-     sits on them doesn't need to flip. */
+  /* Static — gold and navy are used as fills, so the text that sits on them
+     doesn't need a separate light/dark treatment. */
   --navy-foreground: #ffffff;
   --gold-foreground: #3b2a08;
+  /* Semantic status tokens — replace the raw emerald-500/amber-500/red-500
+     Tailwind utilities that were scattered ad hoc across banners and
+     badges before this pass. */
+  --success: #1f8a5f;
+  --success-tint: rgba(31, 138, 95, 0.1);
+  --warning: #b7791f;
+  --warning-tint: rgba(183, 121, 31, 0.1);
+  --danger: #c0392b;
+  --danger-tint: rgba(192, 57, 43, 0.1);
 }
 
 @theme inline {
@@ -33,23 +45,14 @@
   --color-gold: var(--gold);
   --color-navy-foreground: var(--navy-foreground);
   --color-gold-foreground: var(--gold-foreground);
+  --color-success: var(--success);
+  --color-success-tint: var(--success-tint);
+  --color-warning: var(--warning);
+  --color-warning-tint: var(--warning-tint);
+  --color-danger: var(--danger);
+  --color-danger-tint: var(--danger-tint);
   --font-sans: var(--font-inter);
   --font-heading: var(--font-oswald);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --background: #081120;
-    --foreground: #eaf0f8;
-    --surface: #132a4d;
-    --surface-tint: rgba(126, 164, 214, 0.08);
-    --border: rgba(126, 164, 214, 0.2);
-    --muted: #9db6d6;
-    --navy: #1d3f72;
-    --blue: #7eb0ff;
-    --gold: #e3b84a;
-  }
 }
 
 body {

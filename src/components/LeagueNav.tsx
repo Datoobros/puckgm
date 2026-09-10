@@ -26,15 +26,15 @@ export function LeagueNav({
   ].filter((l): l is { href: string; label: string } => l !== null);
 
   return (
-    <nav className="flex items-center gap-1 border-b border-border bg-surface px-6 py-2">
+    <nav className="flex items-center gap-4 border-b border-border bg-surface px-6">
       {links.map((link) => {
         const isActive = pathname === link.href;
         return (
           <Link
             key={link.href}
             href={link.href}
-            className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-              isActive ? "bg-gold text-gold-foreground" : "text-muted hover:text-foreground"
+            className={`border-b-2 px-0.5 py-2.5 text-sm font-medium transition-colors ${
+              isActive ? "border-blue text-foreground" : "border-transparent text-muted hover:text-foreground"
             }`}
           >
             {link.label}
@@ -44,8 +44,8 @@ export function LeagueNav({
       {isCommissioner && (
         <Link
           href={`/leagues/${leagueId}/settings`}
-          className={`ml-auto rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-            pathname === `/leagues/${leagueId}/settings` ? "bg-gold text-gold-foreground" : "text-gold hover:text-gold/80"
+          className={`ml-auto border-b-2 px-0.5 py-2.5 text-sm font-medium transition-colors ${
+            pathname === `/leagues/${leagueId}/settings` ? "border-gold text-gold" : "border-transparent text-gold hover:text-gold/80"
           }`}
         >
           Commissioner Settings

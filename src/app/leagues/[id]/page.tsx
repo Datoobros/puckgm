@@ -8,6 +8,7 @@ import { getStandings, getScoreboardForPeriod } from "@/lib/matchups/standings";
 import { Card, SectionLabel } from "@/components/Card";
 import { TeamLogo } from "@/components/TeamLogo";
 import { submitWaiverClaimAction, cancelWaiverClaimAction } from "./waivers/actions";
+import { Button } from "@/components/Button";
 
 function hoursRemaining(expiresAt: Date): string {
   const ms = expiresAt.getTime() - Date.now();
@@ -121,21 +122,11 @@ export default async function LeagueDetailPage(props: PageProps<"/leagues/[id]">
                             <span className="text-xs text-muted">your demotion</span>
                           ) : !yourTeam ? null : p.myPendingClaimId ? (
                             <form action={cancelWaiverClaimAction.bind(null, id, p.myPendingClaimId)}>
-                              <button
-                                type="submit"
-                                className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
-                              >
-                                Claim pending · Cancel
-                              </button>
+                              <Button type="submit" size="sm">Claim pending · Cancel</Button>
                             </form>
                           ) : (
                             <form action={submitWaiverClaimAction.bind(null, id, p.playerId)}>
-                              <button
-                                type="submit"
-                                className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
-                              >
-                                Claim
-                              </button>
+                              <Button type="submit" size="sm">Claim</Button>
                             </form>
                           )}
                         </span>

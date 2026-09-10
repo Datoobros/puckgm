@@ -8,9 +8,9 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
   );
 }
 
-export function SectionLabel({ children }: { children: ReactNode }) {
+export function SectionLabel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <h2 className="mb-3 font-heading text-xs font-medium uppercase tracking-wide text-muted">
+    <h2 className={`mb-3 font-heading text-xs font-medium uppercase tracking-wide text-muted ${className}`}>
       {children}
     </h2>
   );

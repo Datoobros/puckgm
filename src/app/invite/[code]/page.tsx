@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeagueByInviteCode, isTeamManager } from "@/lib/leagues/mutations";
 import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 import { joinLeagueAction } from "../actions";
 
 export default async function InvitePage(props: PageProps<"/invite/[code]">) {
@@ -34,9 +35,7 @@ export default async function InvitePage(props: PageProps<"/invite/[code]">) {
               placeholder="Your team name"
               className="flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-blue"
             />
-            <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
-              Join
-            </button>
+            <Button type="submit" variant="primary">Join</Button>
           </form>
         </Card>
       )}

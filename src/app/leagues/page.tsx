@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 import { listLeagues, isTeamManager } from "@/lib/leagues/mutations";
+import { LinkButton } from "@/components/Button";
 
 export default async function LeaguesPage() {
   const { userId } = await auth.protect();
@@ -10,12 +11,7 @@ export default async function LeaguesPage() {
     <div className="mx-auto max-w-2xl px-6 py-12">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Leagues</h1>
-        <Link
-          href="/leagues/new"
-          className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
-        >
-          Create a league
-        </Link>
+        <LinkButton href="/leagues/new" variant="primary">Create a league</LinkButton>
       </div>
 
       {leagues.length === 0 ? (

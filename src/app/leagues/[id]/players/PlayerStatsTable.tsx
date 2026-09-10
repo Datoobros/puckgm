@@ -6,6 +6,7 @@ import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import { addPlayerAction, submitFaBidAction, toggleWatchlistAction } from "./actions";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
+import { Button, Badge } from "@/components/Button";
 
 interface RosterContext {
   leagueId: string;
@@ -129,24 +130,21 @@ export function PlayerStatsTable({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-4 border-b border-border pb-3">
-        <div className="flex items-center gap-1 text-sm">
-          <span className="mr-1 text-muted">Position:</span>
-          {(["SKATERS", "F", "D", "G"] as PositionFilter[]).map((p) => (
-            <button
-              key={p}
-              onClick={() => handlePositionChange(p)}
-              className={`rounded px-2 py-1 font-medium ${
-                position === p
-                  ? "bg-gold text-gold-foreground"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              {p === "SKATERS" ? "All Skaters" : p}
-            </button>
-          ))}
-        </div>
+      <div className="flex items-center gap-5 border-b border-border">
+        {(["SKATERS", "F", "D", "G"] as PositionFilter[]).map((p) => (
+          <button
+            key={p}
+            onClick={() => handlePositionChange(p)}
+            className={`border-b-2 px-0.5 pb-2 text-sm font-medium transition-colors ${
+              position === p ? "border-blue text-foreground" : "border-transparent text-muted hover:text-foreground"
+            }`}
+          >
+            {p === "SKATERS" ? "All Skaters" : p}
+          </button>
+        ))}
+      </div>
 
+      <div className="mt-3 flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-sm text-muted">
           Pro Team
           <select
@@ -155,7 +153,7 @@ export function PlayerStatsTable({
               setProTeam(e.target.value);
               setPage(0);
             }}
-            className="rounded border border-border bg-transparent px-2 py-1 text-sm"
+            className="rounded border border-border bg-surface px-2 py-1 text-sm text-foreground"
           >
             <option value="ALL">All</option>
             {NHL_TEAM_ABBREVS.map((abbrev) => (
@@ -175,7 +173,7 @@ export function PlayerStatsTable({
                 setAvailability(e.target.value as "ALL" | "AVAILABLE" | "WATCHLIST");
                 setPage(0);
               }}
-              className="rounded border border-border bg-transparent px-2 py-1 text-sm"
+              className="rounded border border-border bg-surface px-2 py-1 text-sm text-foreground"
             >
               <option value="ALL">All</option>
               <option value="AVAILABLE">Available</option>
@@ -215,12 +213,9 @@ export function PlayerStatsTable({
                     <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
                     {r.fullName}
                     {r.officialRosterStatus === "IR" && (
-                      <span
-                        title="Officially on Injured Reserve — eligible to be placed on your IR slot"
-                        className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400"
-                      >
+                      <Badge tone="danger" title="Officially on Injured Reserve — eligible to be placed on your IR slot">
                         IR
-                      </span>
+                      </Badge>
                     )}
                     {rosterContext && (
                       <button
@@ -273,9 +268,7 @@ export function PlayerStatsTable({
                             <option value="ACTIVE">Active</option>
                             <option value="FARM">Farm</option>
                           </select>
-                          <button type="submit" className="text-xs font-medium text-blue underline">
-                            Bid
-                          </button>
+                          <Button type="submit" variant="ghost">Bid</Button>
                         </form>
                       )
                     ) : (
@@ -422,7 +415,7 @@ function AddPlayerCell({
             Cancel
           </button>
         </div>
-        {error && <span className="text-[10px] text-red-500">{error}</span>}
+        {error && <span className="text-[10px] text-danger">{error}</span>}
       </div>
     );
   }
@@ -438,7 +431,7 @@ function AddPlayerCell({
       >
         +
       </button>
-      {error && <span className="text-[10px] text-red-500">{error}</span>}
+      {error && <span className="text-[10px] text-danger">{error}</span>}
     </div>
   );
 }

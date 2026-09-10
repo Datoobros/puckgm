@@ -4,6 +4,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { getTeamsForUser, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getRosterCounts, activeRosterCap } from "@/lib/rosters/mutations";
 import { Card, SectionLabel } from "@/components/Card";
+import { LinkButton } from "@/components/Button";
 
 export default async function Home() {
   const user = await currentUser();
@@ -40,18 +41,8 @@ export default async function Home() {
           <Card className="mt-6 flex flex-col items-center gap-3 py-12 text-center">
             <p className="text-sm text-muted">You&apos;re not in any leagues yet.</p>
             <div className="flex gap-3">
-              <Link
-                href="/leagues/new"
-                className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
-              >
-                Create a league
-              </Link>
-              <Link
-                href="/leagues"
-                className="rounded border border-border px-4 py-2 text-sm font-medium"
-              >
-                Browse leagues
-              </Link>
+              <LinkButton href="/leagues/new" variant="primary">Create a league</LinkButton>
+              <LinkButton href="/leagues" variant="secondary">Browse leagues</LinkButton>
             </div>
           </Card>
         ) : (

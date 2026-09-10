@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { Card, SectionLabel } from "@/components/Card";
+import { Button, Badge } from "@/components/Button";
 import { moveTeamPlayerAction, sendToFarmAction, dropPlayerAction } from "./actions";
 import { AddPlayerBox } from "./AddPlayerBox";
 import type {
@@ -15,12 +16,6 @@ import type {
   MoveBoardIrRow,
   MoveBoardIrOccupantRow,
 } from "./moveTypes";
-
-const badgeClasses: Record<string, string> = {
-  muted: "bg-surface-tint text-muted",
-  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  red: "bg-red-500/10 text-red-600 dark:text-red-400",
-};
 
 export function RosterMoveBoard({
   leagueId,
@@ -111,37 +106,29 @@ export function RosterMoveBoard({
 
     if (isSelected) {
       return (
-        <button
-          type="button"
-          onClick={() => toggleSelect(playerId)}
-          disabled={pending}
-          className="rounded-full bg-navy px-3 py-1 text-xs font-medium text-navy-foreground hover:opacity-90 disabled:opacity-50"
-        >
+        <Button type="button" size="sm" onClick={() => toggleSelect(playerId)} disabled={pending}>
           Cancel
-        </button>
+        </Button>
       );
     }
     if (isDestination) {
       return (
-        <button
+        <Button
           type="button"
+          size="sm"
           onClick={() => handleHere(rowKey)}
           disabled={pending}
-          className="rounded-full border border-blue px-3 py-1 text-xs font-medium text-blue hover:bg-blue/10 disabled:opacity-50"
+          className="!border-blue !text-blue hover:!bg-blue/10"
         >
           Here
-        </button>
+        </Button>
       );
     }
     if (selected === null && canMove && !locked) {
       return (
-        <button
-          type="button"
-          onClick={() => toggleSelect(playerId)}
-          className="rounded-full bg-navy px-3 py-1 text-xs font-medium text-navy-foreground hover:opacity-90"
-        >
+        <Button type="button" variant="primary" size="sm" onClick={() => toggleSelect(playerId)}>
           Move
-        </button>
+        </Button>
       );
     }
     return null;
@@ -150,14 +137,15 @@ export function RosterMoveBoard({
   function hereOnlyCell(rowKey: string) {
     if (selected === null || !destinationByRowKey.has(rowKey)) return null;
     return (
-      <button
+      <Button
         type="button"
+        size="sm"
         onClick={() => handleHere(rowKey)}
         disabled={pending}
-        className="rounded-full border border-blue px-3 py-1 text-xs font-medium text-blue hover:bg-blue/10 disabled:opacity-50"
+        className="!border-blue !text-blue hover:!bg-blue/10"
       >
         Here
-      </button>
+      </Button>
     );
   }
 
@@ -211,13 +199,9 @@ export function RosterMoveBoard({
                       <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
                       {r.fullName}
                       {r.badges.map((b) => (
-                        <span
-                          key={b.label}
-                          title={b.title}
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClasses[b.tone]}`}
-                        >
+                        <Badge key={b.label} tone={b.tone} title={b.title} className="normal-case">
                           {b.label}
-                        </span>
+                        </Badge>
                       ))}
                       <span className="text-xs text-muted">{r.currentNhlOrg ?? "—"}</span>
                     </span>
@@ -235,38 +219,23 @@ export function RosterMoveBoard({
                         (confirmDropId === r.playerId ? (
                           <>
                             <span className="text-xs text-muted">Drop {r.fullName}?</span>
-                            <button
-                              type="button"
-                              disabled={dropPending}
-                              onClick={() => handleDrop(r.playerId)}
-                              className="rounded-full bg-red-500 px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
-                            >
+                            <Button type="button" variant="danger" size="sm" disabled={dropPending} onClick={() => handleDrop(r.playerId)}>
                               Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDropId(null)}
-                              className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
-                            >
+                            </Button>
+                            <Button type="button" size="sm" onClick={() => setConfirmDropId(null)}>
                               Cancel
-                            </button>
+                            </Button>
                           </>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDropId(r.playerId)}
-                            className="rounded-full border border-red-500/50 px-3 py-1 text-xs text-red-500 hover:bg-red-500/10"
-                          >
+                          <Button type="button" variant="danger" size="sm" onClick={() => setConfirmDropId(r.playerId)}>
                             − Drop
-                          </button>
+                          </Button>
                         ))
                       ) : (
                         <>
                           {r.canSendToFarm && (
                             <form action={sendToFarmAction.bind(null, leagueId, teamId, r.playerId)}>
-                              <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                                → Farm
-                              </button>
+                              <Button type="submit" size="sm">→ Farm</Button>
                             </form>
                           )}
                           {moveButtonCell(r.playerId, r.rowKey, hasOptions, r.locked)}
@@ -311,9 +280,7 @@ export function RosterMoveBoard({
                   <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
                   {r.fullName}
                   <span className="text-xs text-muted">{r.currentNhlOrg ?? "—"}</span>
-                  <span className="rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                    {r.officialRosterStatus ?? "IR"}
-                  </span>
+                  <Badge tone="muted">{r.officialRosterStatus ?? "IR"}</Badge>
                 </span>
                 {hasOptions ? (
                   moveButtonCell(r.playerId, r.rowKey, true, false)
@@ -333,30 +300,30 @@ export function RosterMoveBoard({
   return (
     <>
       <div key="action-bar" className="mt-6 flex flex-wrap items-center gap-2">
-        <button
+        <Button
           type="button"
+          variant="primary"
+          size="sm"
           onClick={() => {
             setAddOpen((o) => !o);
             setDropMode(false);
             setConfirmDropId(null);
           }}
-          className="rounded-full bg-gold px-3 py-1 text-xs font-medium text-gold-foreground hover:opacity-90"
         >
           + Add
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant={dropMode ? "danger" : "secondary"}
+          size="sm"
           onClick={() => {
             setDropMode((m) => !m);
             setAddOpen(false);
             setConfirmDropId(null);
           }}
-          className={`rounded-full border px-3 py-1 text-xs ${
-            dropMode ? "border-red-500 text-red-500" : "border-border hover:bg-surface-tint"
-          }`}
         >
           − Drop
-        </button>
+        </Button>
         {dropMode && <span className="text-xs text-muted">Pick a player below to drop.</span>}
       </div>
       {addOpen && (
@@ -385,7 +352,7 @@ export function RosterMoveBoard({
         {renderIrList()}
       </div>
       {error && (
-        <p key="move-error" className="mt-2 text-xs text-red-500">
+        <p key="move-error" className="mt-2 text-xs text-danger">
           {error}
         </p>
       )}

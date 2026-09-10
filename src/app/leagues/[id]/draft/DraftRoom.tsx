@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/Card";
+import { Button, Badge } from "@/components/Button";
 import { resolveDraftStateAction, makeDraftPickAction } from "./actions";
 import type { DraftStateView } from "@/lib/draft/mutations";
 
@@ -79,11 +80,20 @@ export function DraftRoom({
     }
   }
 
+  const progress =
+    view.totalPicks > 0 ? (
+      <p className="mb-4 text-xs font-medium uppercase tracking-wide text-muted">
+        Round {view.currentPick?.round ?? view.totalRounds} of {view.totalRounds}
+        {view.currentPick && <> · Pick {view.currentPick.overallPick} of {view.totalPicks} overall</>}
+      </p>
+    ) : null;
+
   if (view.status === "COMPLETE") {
     return (
       <div className="space-y-6">
-        <Card className="!bg-emerald-500/10 !border-emerald-500/20">
-          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Draft complete.</p>
+        {progress}
+        <Card className="!border-success/20 !bg-success-tint">
+          <p className="text-sm font-medium text-success">Draft complete.</p>
         </Card>
         <RecentPicks recentPicks={view.recentPicks} />
       </div>
@@ -92,6 +102,8 @@ export function DraftRoom({
 
   return (
     <div className="space-y-6">
+      {progress}
+
       {view.currentPick && (
         <Card className={isMyTurn ? "!border-gold !bg-gold/10" : ""}>
           <div className="flex items-center justify-between">
@@ -101,7 +113,11 @@ export function DraftRoom({
               </p>
               <p className="text-lg font-semibold">
                 {view.currentPick.teamName}
-                {isMyTurn && <span className="ml-2 rounded bg-gold px-2 py-0.5 text-xs font-medium text-gold-foreground">Your pick</span>}
+                {isMyTurn && (
+                  <Badge tone="gold" solid className="ml-2 normal-case">
+                    Your pick
+                  </Badge>
+                )}
               </p>
             </div>
             <p className="font-mono text-2xl tabular-nums">{formatClock(msRemaining)}</p>
@@ -110,8 +126,8 @@ export function DraftRoom({
       )}
 
       {error && (
-        <Card className="!bg-red-500/10 !border-red-500/20">
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <Card className="!border-danger/20 !bg-danger-tint">
+          <p className="text-sm text-danger">{error}</p>
         </Card>
       )}
 
@@ -133,14 +149,9 @@ export function DraftRoom({
                     {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
                   </span>
                 </span>
-                <button
-                  type="button"
-                  disabled={!isMyTurn || pending}
-                  onClick={() => handlePick(p.id)}
-                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint disabled:cursor-not-allowed disabled:opacity-40"
-                >
+                <Button type="button" size="sm" disabled={!isMyTurn || pending} onClick={() => handlePick(p.id)}>
                   Draft
-                </button>
+                </Button>
               </li>
             ))}
             {filteredPool.length === 0 && <li className="px-4 py-3 text-sm text-muted">No players match.</li>}
@@ -172,7 +183,7 @@ function RecentPicks({ recentPicks }: { recentPicks: DraftStateView["recentPicks
                   </span>{" "}
                   {p.teamName} — {p.playerName}
                 </span>
-                {p.autopicked && <span className="shrink-0 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">AUTO</span>}
+                {p.autopicked && <Badge tone="muted">Auto</Badge>}
               </li>
             ))}
           </ul>

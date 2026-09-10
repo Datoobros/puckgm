@@ -12,6 +12,7 @@ import {
 } from "@/lib/trades/mutations";
 import { getPlayerStatsAggregate, type PlayerStatsRow } from "@/lib/players/rankings";
 import { Card, SectionLabel } from "@/components/Card";
+import { Button, LinkButton, Badge } from "@/components/Button";
 import { TradeBuilder } from "./TradeBuilder";
 import { cancelTradeAction, castVetoAction, forceProcessTradeAction } from "./actions";
 
@@ -151,12 +152,9 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
               {needsResponse.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
-                  <Link
-                    href={`/leagues/${leagueId}/trades/${t.id}/review`}
-                    className="shrink-0 rounded-full bg-navy px-3 py-1 text-xs font-medium text-navy-foreground hover:opacity-90"
-                  >
+                  <LinkButton href={`/leagues/${leagueId}/trades/${t.id}/review`} variant="primary" size="sm" className="shrink-0">
                     Review
-                  </Link>
+                  </LinkButton>
                 </li>
               ))}
             </ul>
@@ -173,9 +171,7 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
                   <form action={cancelTradeAction.bind(null, leagueId, t.id)}>
-                    <button type="submit" className="shrink-0 rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                      Withdraw
-                    </button>
+                    <Button type="submit" size="sm" className="shrink-0">Withdraw</Button>
                   </form>
                 </li>
               ))}
@@ -202,16 +198,12 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
                   <div className="mt-2 flex gap-2">
                     {canVeto(t) && (
                       <form action={castVetoAction.bind(null, leagueId, t.id)}>
-                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                          Veto
-                        </button>
+                        <Button type="submit" variant="danger" size="sm">Veto</Button>
                       </form>
                     )}
                     {canForceProcess(t) && (
                       <form action={forceProcessTradeAction.bind(null, leagueId, t.id)}>
-                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                          Force through now
-                        </button>
+                        <Button type="submit" size="sm">Force through now</Button>
                       </form>
                     )}
                   </div>
@@ -234,9 +226,7 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
               {history.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <TradeSummary trade={t} />
-                  <span className="shrink-0 rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                    {t.state}
-                  </span>
+                  <Badge tone="muted" className="shrink-0">{t.state}</Badge>
                 </li>
               ))}
             </ul>

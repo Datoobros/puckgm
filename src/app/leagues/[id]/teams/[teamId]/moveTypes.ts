@@ -26,7 +26,7 @@ export interface MoveBoardStatCell {
 export interface MoveBoardBadge {
   label: string;
   title?: string;
-  tone: "muted" | "amber" | "red";
+  tone: "muted" | "warning" | "danger";
 }
 
 // Table rows (Skaters/Goalies) — a mix of real occupants and synthetic empty

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getTeamsForUser } from "@/lib/leagues/mutations";
+import { LinkButton } from "@/components/Button";
 
 // Players now live under a league (/leagues/[id]/players) since scoring is
 // league-specific — this route just routes you there instead of being a
@@ -22,12 +23,7 @@ export default async function PlayersRedirectPage() {
         scoring.
       </p>
       {teams.length === 0 ? (
-        <Link
-          href="/leagues"
-          className="mt-6 inline-block rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
-        >
-          Browse leagues
-        </Link>
+        <LinkButton href="/leagues" variant="primary" className="mt-6">Browse leagues</LinkButton>
       ) : (
         <ul className="mt-6 space-y-2">
           {teams.map((t) => (

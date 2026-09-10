@@ -15,6 +15,7 @@ import { getTeamDraftPicks } from "@/lib/draft/mutations";
 import { getUserDisplayName } from "@/lib/users/display";
 import { todayUTC, shiftDate, DATE_RE } from "@/lib/dates";
 import { Card, SectionLabel } from "@/components/Card";
+import { Button, LinkButton, Badge } from "@/components/Button";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { TeamLogo } from "@/components/TeamLogo";
 import { TeamScheduleList } from "@/components/TeamScheduleList";
@@ -51,7 +52,7 @@ const NOTIFICATION_DOT: Record<string, string> = {
   WAIVER_RESULT: "bg-gold",
   FAAB_PENDING: "bg-blue",
   FAAB_RESULT: "bg-gold",
-  ROSTER: "bg-red-500",
+  ROSTER: "bg-danger",
 };
 
 const SLOT_LABELS: Record<string, string> = { C: "C", L: "L", R: "R", F: "F", D: "D", G: "G", UTIL: "UTIL", BE: "Bench" };
@@ -98,12 +99,12 @@ function playerBadges(player: RosterSlotWithPlayer["player"], eligible: string[]
   if (player.careerNhlGp >= waiverGpThreshold) {
     badges.push({
       label: `${waiverGpThreshold}+ GP`,
-      tone: "amber",
+      tone: "warning",
       title: `${player.careerNhlGp} career GP — sending him to farm exposes him to demotion waivers`,
     });
   }
   if (player.officialRosterStatus === "IR" || player.officialRosterStatus === "LTIR") {
-    badges.push({ label: player.officialRosterStatus, tone: "red" });
+    badges.push({ label: player.officialRosterStatus, tone: "danger" });
   }
   return badges;
 }
@@ -492,12 +493,9 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                       {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                     </span>
                     {s.waiverExpiresAt && s.waiverExpiresAt > new Date() && (
-                      <span
-                        title="Another team can claim him until this passes — see the Waivers page"
-                        className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                      >
+                      <Badge tone="warning" title="Another team can claim him until this passes — see the Waivers page" className="ml-2 normal-case">
                         claimable until {s.waiverExpiresAt.toLocaleString()}
-                      </span>
+                      </Badge>
                     )}
                   </span>
                   <span className="flex items-center gap-3">
@@ -508,8 +506,9 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                     )}
                     {isManager && (
                       <form action={callUpAction.bind(null, leagueId, teamId, s.playerId)}>
-                        <button
+                        <Button
                           type="submit"
+                          size="sm"
                           disabled={activeFull || callupLimitReached}
                           title={
                             activeFull
@@ -518,28 +517,21 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                                 ? "Weekly callup limit reached"
                                 : undefined
                           }
-                          className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint disabled:opacity-30"
                         >
                           ↑ Call Up
-                        </button>
+                        </Button>
                       </form>
                     )}
                     {!isManager && isCommissionerViewing && (
                       <span className="flex items-center gap-1.5">
                         <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "ACTIVE")}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                            → Active
-                          </button>
+                          <Button type="submit" size="sm">→ Active</Button>
                         </form>
                         <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "IR")}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                            → IR
-                          </button>
+                          <Button type="submit" size="sm">→ IR</Button>
                         </form>
                         <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, s.playerId)}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
-                            − Drop
-                          </button>
+                          <Button type="submit" variant="danger" size="sm">− Drop</Button>
                         </form>
                       </span>
                     )}
@@ -566,9 +558,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-semibold tracking-tight">{team.name}</h1>
-                <span className="rounded-full bg-surface-tint px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                  {settings.leagueType === "REDRAFT" ? "Redraft" : "Dynasty"}
-                </span>
+                <Badge tone="muted">{settings.leagueType === "REDRAFT" ? "Redraft" : "Dynasty"}</Badge>
               </div>
               <p className="mt-1 text-sm text-muted">
                 Managed by {primaryManagerName}
@@ -582,18 +572,8 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           <div className="flex items-center gap-2">
             {isManager && (
               <>
-                <Link
-                  href={`/leagues/${leagueId}/trades`}
-                  className="rounded-full bg-navy px-4 py-1.5 text-sm font-medium text-navy-foreground hover:opacity-90"
-                >
-                  Propose Trade
-                </Link>
-                <Link
-                  href={`/leagues/${leagueId}/players`}
-                  className="rounded-full border border-border px-4 py-1.5 text-sm font-medium hover:bg-surface-tint"
-                >
-                  + Add
-                </Link>
+                <LinkButton href={`/leagues/${leagueId}/trades`} variant="primary">Propose Trade</LinkButton>
+                <LinkButton href={`/leagues/${leagueId}/players`}>+ Add</LinkButton>
               </>
             )}
           </div>
@@ -614,7 +594,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   action={removeCoManagerAction.bind(null, leagueId, teamId)}
                   confirmText={`Remove ${coManagerName} as co-manager of ${team.name}?`}
                   label="Remove co-manager"
-                  className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint"
+                  size="sm"
                 />
               </div>
             ) : team.secondManagerClaimCode ? (
@@ -624,16 +604,12 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   {origin}/invite/team/co-manager/{team.secondManagerClaimCode}
                 </p>
                 <form action={regenerateCoManagerClaimCodeAction.bind(null, leagueId, teamId)}>
-                  <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                    Regenerate link
-                  </button>
+                  <Button type="submit" size="sm">Regenerate link</Button>
                 </form>
               </div>
             ) : (
               <form action={regenerateCoManagerClaimCodeAction.bind(null, leagueId, teamId)}>
-                <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                  Invite a co-manager
-                </button>
+                <Button type="submit" size="sm">Invite a co-manager</Button>
               </form>
             )}
           </div>
@@ -689,12 +665,9 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   </span>
                 ))}
               </div>
-              <Link
-                href={`/leagues/${leagueId}/teams/${teamId}?tab=schedule`}
-                className="rounded-full border border-border px-3 py-1.5 text-xs hover:bg-surface-tint"
-              >
+              <LinkButton href={`/leagues/${leagueId}/teams/${teamId}?tab=schedule`} size="sm">
                 My Schedule →
-              </Link>
+              </LinkButton>
             </div>
           </Card>
         </div>
@@ -863,26 +836,18 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                             <span className="text-xs text-muted">
                               {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                             </span>
-                            <span className="rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                              {s.player.officialRosterStatus ?? "IR"}
-                            </span>
+                            <Badge tone="muted">{s.player.officialRosterStatus ?? "IR"}</Badge>
                           </span>
                           {isCommissionerViewing && (
                             <span className="flex items-center gap-1.5">
                               <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "ACTIVE")}>
-                                <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                                  → Active
-                                </button>
+                                <Button type="submit" size="sm">→ Active</Button>
                               </form>
                               <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "FARM")}>
-                                <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                                  → Farm
-                                </button>
+                                <Button type="submit" size="sm">→ Farm</Button>
                               </form>
                               <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, s.playerId)}>
-                                <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
-                                  − Drop
-                                </button>
+                                <Button type="submit" variant="danger" size="sm">− Drop</Button>
                               </form>
                             </span>
                           )}
@@ -977,23 +942,14 @@ function RosterTable({
                   <span className="flex items-center gap-2">
                     <PlayerHeadshot url={player.headshotUrl} alt={player.fullName} size={28} />
                     {player.fullName}
-                    {eligible.length > 0 && (
-                      <span className="rounded bg-surface-tint px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                        {eligible.join("/")}
-                      </span>
-                    )}
+                    {eligible.length > 0 && <Badge tone="muted">{eligible.join("/")}</Badge>}
                     {player.careerNhlGp >= waiverGpThreshold && (
-                      <span
-                        title={`${player.careerNhlGp} career GP — sending him to farm exposes him to demotion waivers`}
-                        className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                      >
+                      <Badge tone="warning" title={`${player.careerNhlGp} career GP — sending him to farm exposes him to demotion waivers`}>
                         {waiverGpThreshold}+ GP
-                      </span>
+                      </Badge>
                     )}
                     {(player.officialRosterStatus === "IR" || player.officialRosterStatus === "LTIR") && (
-                      <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400">
-                        {player.officialRosterStatus}
-                      </span>
+                      <Badge tone="danger">{player.officialRosterStatus}</Badge>
                     )}
                     <span className="text-xs text-muted">{player.currentNhlOrg ?? "—"}</span>
                   </span>
@@ -1018,29 +974,21 @@ function RosterTable({
                     <div className="flex justify-end gap-1.5">
                       {s.slotType !== "ACTIVE" && (
                         <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "ACTIVE")}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                            → Active
-                          </button>
+                          <Button type="submit" size="sm">→ Active</Button>
                         </form>
                       )}
                       {s.slotType !== "FARM" && (
                         <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "FARM")}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                            → Farm
-                          </button>
+                          <Button type="submit" size="sm">→ Farm</Button>
                         </form>
                       )}
                       {s.slotType !== "IR" && (
                         <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "IR")}>
-                          <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                            → IR
-                          </button>
+                          <Button type="submit" size="sm">→ IR</Button>
                         </form>
                       )}
                       <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, playerId)}>
-                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
-                          − Drop
-                        </button>
+                        <Button type="submit" variant="danger" size="sm">− Drop</Button>
                       </form>
                     </div>
                   </td>

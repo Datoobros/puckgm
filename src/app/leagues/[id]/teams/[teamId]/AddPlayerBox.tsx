@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { searchPlayersAction } from "../../players/actions";
 import { addPlayerAction } from "../../players/actions";
 import type { PlayerSearchResult } from "@/lib/players/rankings";
+import { Button } from "@/components/Button";
 
 const MIN_CHARS = 2;
 const DEBOUNCE_MS = 200;
@@ -102,26 +103,21 @@ export function AddPlayerBox({
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            disabled={!dropChoice || pending}
-            onClick={() => doAdd(picked.id, dropChoice)}
-            className="rounded-full bg-gold px-3 py-1 text-xs font-medium text-gold-foreground hover:opacity-90 disabled:opacity-50"
-          >
+          <Button type="button" variant="primary" size="sm" disabled={!dropChoice || pending} onClick={() => doAdd(picked.id, dropChoice)}>
             Drop &amp; Add
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            size="sm"
             onClick={() => {
               setPicked(null);
               setDropChoice("");
             }}
-            className="text-xs text-muted hover:text-foreground"
           >
             Cancel
-          </button>
+          </Button>
         </div>
-        {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+        {error && <p className="mt-1 text-xs text-danger">{error}</p>}
       </div>
     );
   }
@@ -140,7 +136,7 @@ export function AddPlayerBox({
         disabled={pending}
         className="w-full rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-blue disabled:opacity-50"
       />
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
       {results.length > 0 && (
         <div className="absolute z-10 mt-1 w-full rounded border border-border bg-surface shadow-lg">
           <ul className="divide-y divide-border">

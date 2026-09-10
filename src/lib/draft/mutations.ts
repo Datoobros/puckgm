@@ -343,6 +343,8 @@ export interface DraftStateView {
   draftId: string;
   status: "SETUP" | "IN_PROGRESS" | "COMPLETE";
   pickTimerSeconds: number;
+  totalRounds: number;
+  totalPicks: number;
   currentPick: { round: number; overallPick: number; teamId: string; teamName: string; msRemaining: number } | null;
   recentPicks: { round: number; overallPick: number; teamName: string; playerName: string; autopicked: boolean }[];
   pool: DraftPoolPlayer[];
@@ -351,6 +353,11 @@ export interface DraftStateView {
 async function buildView(draft: DraftRow): Promise<DraftStateView> {
   const current = draft.status === "IN_PROGRESS" ? await getCurrentPick(draft.id) : null;
   const pool = draft.status === "IN_PROGRESS" ? await getDraftPool(draft) : [];
+  const [totalPicks, lastPick] = await Promise.all([
+    prisma.draftPick.count({ where: { draftId: draft.id } }),
+    prisma.draftPick.findFirst({ where: { draftId: draft.id }, orderBy: { round: "desc" } }),
+  ]);
+  const totalRounds = lastPick?.round ?? 0;
   const recent = await prisma.draftPick.findMany({
     where: { draftId: draft.id, usedOnPlayerId: { not: null } },
     orderBy: { overallPick: "desc" },
@@ -376,6 +383,8 @@ async function buildView(draft: DraftRow): Promise<DraftStateView> {
     draftId: draft.id,
     status: draft.status,
     pickTimerSeconds: draft.pickTimerSeconds,
+    totalRounds,
+    totalPicks,
     currentPick: current
       ? {
           round: current.round,

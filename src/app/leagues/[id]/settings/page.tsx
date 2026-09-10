@@ -10,6 +10,7 @@ import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
 import { StartNewSeasonButton } from "@/components/StartNewSeasonButton";
 import { ResetScheduleButton } from "@/components/ResetScheduleButton";
 import { ConfirmActionButton } from "@/components/ConfirmActionButton";
+import { Button, LinkButton } from "@/components/Button";
 import { DraftSetupForm } from "./DraftSetupForm";
 import { DraftSetupEditForm } from "./DraftSetupEditForm";
 import { TeamManagementCard } from "./TeamManagementCard";
@@ -74,13 +75,13 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
       <h1 className="mt-1 text-2xl font-semibold tracking-tight">Commissioner Settings</h1>
 
       {justSaved && (
-        <Card className="mt-4 !bg-emerald-500/10 !border-emerald-500/20">
-          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Settings saved.</p>
+        <Card className="mt-4 !border-success/20 !bg-success-tint">
+          <p className="text-sm font-medium text-success">Settings saved.</p>
         </Card>
       )}
 
-      <Card className="mt-4 !bg-amber-500/5 !border-amber-500/20">
-        <p className="text-xs text-amber-700 dark:text-amber-400">
+      <Card className="mt-4 !border-warning/20 !bg-warning-tint">
+        <p className="text-xs text-warning">
           DESIGN.md §2.10: these settings are meant to change <strong>between seasons, by league
           vote</strong> — not mid-season, and not unilaterally, since they affect real asset value
           (a farm-slot cut devalues prospects people traded picks for). This app has no voting
@@ -89,7 +90,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         </p>
       </Card>
 
-      <div className="mt-6">
+      <div className="mt-8">
         <SectionLabel>Locked forever</SectionLabel>
         <Card>
           <p className="text-xs text-muted">Roster composition, league size, scoring format, and league type never change once the league is created.</p>
@@ -106,7 +107,14 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         </Card>
       </div>
 
-      <form action={updateLeagueSettingsAction.bind(null, leagueId)} className="mt-6 space-y-6">
+      <form action={updateLeagueSettingsAction.bind(null, leagueId)} className="mt-8 space-y-6">
+        <div className="flex items-center justify-between gap-3">
+          <SectionLabel className="!mb-0">League settings</SectionLabel>
+          <Button type="submit" variant="primary" size="sm">
+            Save Settings
+          </Button>
+        </div>
+
         <div>
           <SectionLabel>Roster limits</SectionLabel>
           <Card className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -313,13 +321,9 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
             ))}
           </Card>
         </div>
-
-        <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
-          Save settings
-        </button>
       </form>
 
-      <div className="mt-10">
+      <div className="mt-8">
         <SectionLabel>Draft</SectionLabel>
         <Card>
           {drafts.length > 0 && (
@@ -333,15 +337,13 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                     </span>
                     {d.status === "SETUP" && (
                       <form action={startDraftAction.bind(null, leagueId, d.id)}>
-                        <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs hover:bg-surface-tint">
-                          Start Draft
-                        </button>
+                        <Button type="submit" size="sm">Start Draft</Button>
                       </form>
                     )}
                     {d.status !== "SETUP" && (
-                      <Link href={`/leagues/${leagueId}/draft`} className="shrink-0 text-xs underline">
+                      <LinkButton href={`/leagues/${leagueId}/draft`} variant="ghost">
                         Open room
-                      </Link>
+                      </LinkButton>
                     )}
                   </div>
                   {d.status === "SETUP" && (
@@ -363,13 +365,13 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
               action={resetDraftPickOwnershipAction.bind(null, leagueId)}
               confirmText="Revert every traded, still-unused draft pick in this league back to its original owner? Already-drafted picks are untouched."
               label="Reset draft pick ownership"
-              className="rounded-full border border-border px-3 py-1.5 text-xs hover:bg-surface-tint"
+              size="sm"
             />
           </div>
         </Card>
       </div>
 
-      <div className="mt-10">
+      <div className="mt-8">
         <SectionLabel>Schedule</SectionLabel>
         <Card>
           {hasSchedule ? (
@@ -422,18 +424,15 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                   <option value={8}>8 teams (3 rounds — Quarterfinal, Semifinal, Championship)</option>
                 </select>
               </label>
-              <button
-                type="submit"
-                className="mt-1 rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"
-              >
+              <Button type="submit" variant="primary" size="sm" className="mt-1">
                 Generate Schedule
-              </button>
+              </Button>
             </form>
           )}
         </Card>
       </div>
 
-      <div className="mt-10">
+      <div className="mt-8">
         <SectionLabel>Teams &amp; managers</SectionLabel>
         <p className="mb-3 text-xs text-muted">
           Rename any team, group teams into divisions (display/standings only — schedule and
@@ -445,7 +444,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
       </div>
 
       {settings.leagueType === "REDRAFT" && (
-        <div className="mt-10">
+        <div className="mt-8">
           <SectionLabel>Season</SectionLabel>
           <Card className="flex items-center justify-between gap-3">
             <div>
@@ -461,7 +460,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
         </div>
       )}
 
-      <div className="mt-10">
+      <div className="mt-8">
         <SectionLabel>Invite link</SectionLabel>
         <Card>
           <p className="text-xs text-muted">
@@ -477,14 +476,14 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
             <p className="mt-2 text-sm text-muted">No invite link generated yet.</p>
           )}
           <form action={regenerateInviteCodeAction.bind(null, leagueId)} className="mt-3">
-            <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint">
+            <Button type="submit" size="sm">
               {inviteUrl ? "Regenerate link" : "Generate invite link"}
-            </button>
+            </Button>
           </form>
         </Card>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-8">
         <SectionLabel>Danger zone</SectionLabel>
         <Card>
           <DeleteLeagueButton leagueId={league.id} leagueName={league.name} />

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { searchPlayersAction } from "./actions";
 import type { PlayerSearchResult } from "@/lib/players/rankings";
+import { Button } from "@/components/Button";
 
 // Debounced typeahead over the same exhaustive name search the plain <form
 // method="get"> already used (?q=, src/app/leagues/[id]/players/page.tsx) —
@@ -71,9 +72,7 @@ export function PlayerSearchBox({ initialQuery }: { initialQuery: string }) {
           autoComplete="off"
           className="flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-blue"
         />
-        <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
-          Search
-        </button>
+        <Button type="submit" variant="primary">Search</Button>
       </form>
 
       {open && results.length > 0 && (

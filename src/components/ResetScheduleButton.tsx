@@ -1,6 +1,7 @@
 "use client";
 
 import { resetScheduleAction } from "@/app/leagues/actions";
+import { Button } from "./Button";
 
 export function ResetScheduleButton({ leagueId, season }: { leagueId: string; season: number }) {
   return (
@@ -12,9 +13,9 @@ export function ResetScheduleButton({ leagueId, season }: { leagueId: string; se
         }
       }}
     >
-      <button type="submit" className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint">
+      <Button type="submit" variant="danger" size="sm">
         Reset schedule
-      </button>
+      </Button>
     </form>
   );
 }

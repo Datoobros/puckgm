@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { createLeagueAction } from "@/app/leagues/actions";
+import { Button } from "@/components/Button";
 import { LeagueTypeAndRosterFields } from "./LeagueTypeAndRosterFields";
 
 export default async function NewLeaguePage() {
@@ -46,12 +47,7 @@ export default async function NewLeaguePage() {
 
         <LeagueTypeAndRosterFields />
 
-        <button
-          type="submit"
-          className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground"
-        >
-          Create league
-        </button>
+        <Button type="submit" variant="primary">Create league</Button>
       </form>
     </div>
   );

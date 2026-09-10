@@ -1120,6 +1120,68 @@ not a simulation**.
   columns (including a live sort-direction indicator), and the bracket page correctly pairing
   seeds 1v4 and 2v3 from real current standings.
 
+## App-wide light redesign: design system, light-only theme, ESPN-style structure
+
+The app previously followed the OS `prefers-color-scheme` for dark mode — since the user's
+system defaults to dark, they were always seeing the dark navy variant, which read as "far too
+dark" regardless of anything else. Fixed at the root rather than tuned: light is now the
+*only* theme (the whole `@media (prefers-color-scheme: dark)` block in `globals.css` is gone),
+matching ESPN Fantasy having no dark mode at all. Research (three parallel Explore passes over
+every built page) also surfaced a real, independent problem worth fixing at the same time:
+**three incompatible button systems** had grown across the app — a `rounded-full border` pill
+(dominant), a `rounded bg-navy` solid CTA (oddly used for both top-level page actions *and* the
+Commissioner Settings save button), and Players-page-only gold variants — with no shared
+`Button` component anywhere.
+
+- **`src/app/globals.css`** — new light palette (near-white background, white cards, near-black
+  text, existing navy/gold accent identity kept rather than switching to ESPN's own blue —
+  confirmed with the user as the preferred direction). Added semantic `--success`/`--warning`/
+  `--danger` tokens (+ tints), replacing raw `emerald-500`/`amber-500`/`red-500` Tailwind
+  utilities that were scattered ad hoc across banners and badges.
+- **New `src/components/Button.tsx`** — `Button`/`LinkButton` (four variants: `primary` solid
+  navy, `secondary` bordered, `danger` outlined red, `ghost` text-link; small rounded-rect
+  corners matching ESPN's actual button shape, not a pill) and `Badge` (the pill shape moved
+  here, reserved for non-interactive tags — YOU, AUTO, ORPHANED, IR, GP+ threshold, etc.). Every
+  raw `<button>`/`<Link>`-as-button across the app (~50 call sites) now goes through this.
+- **Global chrome** (`src/app/layout.tsx`, `src/components/NavBar.tsx`,
+  `src/components/LeagueNav.tsx`) — root header switched from a filled navy bar to a white
+  header with a bottom border; both nav bars switched from a filled-gold active pill to an
+  ESPN-style underline-tab treatment (matches the tab convention already used on the team/
+  standings pages). Commissioner Settings stays visually distinct (gold text) without needing
+  to look like every other tab.
+- **Commissioner Settings restructured, not just reskinned** — the single `<form>` wrapping six
+  settings sections had its "Save settings" button buried at the very bottom in the one
+  primary-CTA style used nowhere else on the page; it now sits in a visible header row at the
+  *top* of that form group. Inconsistent section spacing (mixed `mt-4`/`mt-6`/`mt-10`) is now
+  one rhythm. Destructive actions (delete league/team, cancel a draft, reset a schedule, start a
+  new season) get the new `danger` variant — a real distinct visual tier for the first time,
+  rather than red text on the same pill as every other button.
+- **Players page** — the filter row used to mix position tabs + two `<select>`s + a count in
+  one flex-wrap row; split into ESPN's actual layout, a full-width position-tab strip on its
+  own line with filters on the row below.
+- **Draft room** (`src/app/leagues/[id]/draft/DraftRoom.tsx`) — gained a persistent "Round X of
+  Y · Pick Z overall" progress header, which didn't exist before. Required extending
+  `DraftStateView` (`src/lib/draft/mutations.ts`) with `totalRounds`/`totalPicks`, computed from
+  the draft's own `DraftPick` rows (max round / total count) — a small, additive, display-only
+  change with no effect on draft logic itself; `scripts/draft-check.ts` re-run clean afterward.
+- **Scoreboard** (`src/app/leagues/[id]/scoreboard/page.tsx`) — matchup cards flipped from
+  vertically-stacked home-then-away rows to ESPN's actual horizontal side-by-side layout (team
+  left, team right, flanking a centered score).
+- **Honest scope note**: this applies ESPN's well-established, consistently-observed
+  conventions (confirmed via live unauthenticated browsing of ESPN Fantasy Hockey's mock-draft
+  lobby/waiting room, plus two real reference screenshots the user provided earlier for the team
+  and standings pages) — there's no login to a real ESPN league, so authenticated screens
+  (Settings/Draft/Scoreboard) are matched by convention, not pixel-copied coordinates.
+- Verified with `npx tsc --noEmit` → `npm run build` after each phase, every pre-existing
+  regression script re-run clean (this was a styling/structure pass with no other business-logic
+  changes besides the additive `DraftStateView` fields). Checked live in a real browser via the
+  `// TEMP:` bypass (reverted, `grep -rn "TEMP:" src/` clean): the redesigned header/nav, League
+  home, Commissioner Settings (new Save-button placement, all sections), the team page's Move UI
+  action bar and header card, the Players page's split filter row, and the Draft/Scoreboard/
+  Trades pages' empty states — all rendering correctly on the new light theme with no console
+  errors beyond one pre-existing, unrelated 404 (a missing static asset, not caused by this
+  pass).
+
 ## Recent, worth knowing
 
 - `getPlayerStatsAggregate` (`src/lib/players/rankings.ts`) now takes a `scoringConfig`

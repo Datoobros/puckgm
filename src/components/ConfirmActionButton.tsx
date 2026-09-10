@@ -1,14 +1,20 @@
 "use client";
 
+import { Button, type ButtonVariant, type ButtonSize } from "./Button";
+
 export function ConfirmActionButton({
   action,
   confirmText,
   label,
+  variant = "secondary",
+  size = "md",
   className,
 }: {
   action: () => Promise<void>;
   confirmText: string;
   label: string;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   className?: string;
 }) {
   return (
@@ -18,12 +24,9 @@ export function ConfirmActionButton({
         if (!confirm(confirmText)) e.preventDefault();
       }}
     >
-      <button
-        type="submit"
-        className={className ?? "rounded-full border border-border px-3 py-1.5 text-sm hover:bg-surface-tint"}
-      >
+      <Button type="submit" variant={variant} size={size} className={className}>
         {label}
-      </button>
+      </Button>
     </form>
   );
 }

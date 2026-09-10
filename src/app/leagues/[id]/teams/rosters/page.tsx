@@ -6,6 +6,7 @@ import { getTeamRosterView } from "@/lib/rosters/mutations";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { TeamLogo } from "@/components/TeamLogo";
 import { Card } from "@/components/Card";
+import { Badge } from "@/components/Button";
 
 const TIER_LABELS: Record<"ACTIVE" | "FARM" | "IR", string> = {
   ACTIVE: "Active",
@@ -70,9 +71,7 @@ export default async function LeagueRostersPage(props: PageProps<"/leagues/[id]/
                             <span className="w-6 shrink-0 text-xs text-muted">{s.player.primaryPosition ?? "—"}</span>
                             <span className="truncate">{s.player.fullName}</span>
                             {s.player.officialRosterStatus === "IR" && tier !== "IR" && (
-                              <span className="ml-auto shrink-0 rounded bg-red-500/10 px-1 py-0.5 text-[9px] font-medium text-red-600 dark:text-red-400">
-                                IR
-                              </span>
+                              <Badge tone="danger" className="ml-auto shrink-0">IR</Badge>
                             )}
                           </li>
                         ))}

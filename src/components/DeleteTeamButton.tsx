@@ -1,6 +1,7 @@
 "use client";
 
 import { deleteTeamAction } from "@/app/leagues/actions";
+import { Button } from "./Button";
 
 export function DeleteTeamButton({ leagueId, teamId, teamName }: { leagueId: string; teamId: string; teamName: string }) {
   return (
@@ -12,9 +13,9 @@ export function DeleteTeamButton({ leagueId, teamId, teamName }: { leagueId: str
         }
       }}
     >
-      <button type="submit" className="rounded-full border border-border px-3 py-1 text-xs text-red-500 hover:bg-surface-tint">
+      <Button type="submit" variant="danger" size="sm">
         Delete
-      </button>
+      </Button>
     </form>
   );
 }

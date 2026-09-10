@@ -35,9 +35,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         className={`${inter.variable} ${oswald.variable} h-full antialiased`}
       >
         <body className="min-h-full flex flex-col">
-          <header className="flex items-center gap-4 bg-navy px-4 py-3 text-navy-foreground">
-            <Link href="/" className="font-heading text-base font-semibold tracking-tight text-gold">
-              PuckGM
+          <header className="flex items-center gap-4 border-b border-border bg-surface px-4 py-3">
+            <Link href="/" className="font-heading text-base font-semibold tracking-tight text-navy">
+              Puck<span className="text-gold">GM</span>
             </Link>
             <Show when="signed-in">
               <NavBar />
@@ -45,10 +45,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <div className="ml-auto flex items-center gap-3">
               <Show when="signed-out">
                 <SignInButton mode="modal">
-                  <button className="text-sm text-navy-foreground/80 hover:text-navy-foreground">Sign in</button>
+                  <button className="text-sm text-muted hover:text-foreground">Sign in</button>
                 </SignInButton>
                 <SignUpButton mode="modal">
-                  <button className="rounded border border-gold px-3 py-1.5 text-sm font-medium text-gold hover:bg-gold hover:text-gold-foreground">
+                  <button className="rounded-md bg-navy px-4 py-1.5 text-sm font-medium text-navy-foreground hover:opacity-90">
                     Sign up
                   </button>
                 </SignUpButton>

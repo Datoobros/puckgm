@@ -1,6 +1,7 @@
 "use client";
 
 import { deleteLeagueAction } from "@/app/leagues/actions";
+import { Button } from "./Button";
 
 export function DeleteLeagueButton({ leagueId, leagueName }: { leagueId: string; leagueName: string }) {
   return (
@@ -12,9 +13,9 @@ export function DeleteLeagueButton({ leagueId, leagueName }: { leagueId: string;
         }
       }}
     >
-      <button type="submit" className="text-xs text-red-500 underline">
+      <Button type="submit" variant="danger" size="sm">
         Delete league
-      </button>
+      </Button>
     </form>
   );
 }

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getTeamByCoManagerClaimCode } from "@/lib/leagues/mutations";
 import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 import { claimCoManagerAction } from "../../../actions";
 
 export default async function ClaimCoManagerPage(props: PageProps<"/invite/team/co-manager/[code]">) {
@@ -34,9 +35,7 @@ export default async function ClaimCoManagerPage(props: PageProps<"/invite/team/
             picks — shared with its primary manager.
           </p>
           <form action={claimCoManagerAction.bind(null, code)}>
-            <button type="submit" className="rounded bg-navy px-4 py-2 text-sm font-medium text-navy-foreground">
-              Become co-manager
-            </button>
+            <Button type="submit" variant="primary">Become co-manager</Button>
           </form>
         </Card>
       )}
