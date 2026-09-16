@@ -12,6 +12,8 @@ import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/
 import { isLeagueCommissioner, isTeamManager, managerOrCoManagerWhere, type LeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
 import { getTeamSchedule } from "@/lib/matchups/standings";
 import { getTeamDraftPicks } from "@/lib/draft/mutations";
+import { getTradeLockedPlayerIds } from "@/lib/trades/locks";
+import { getTradeDetailById, computeTradeFit } from "@/lib/trades/mutations";
 import { getUserDisplayName } from "@/lib/users/display";
 import { todayUTC, shiftDate, DATE_RE } from "@/lib/dates";
 import { Card, SectionLabel } from "@/components/Card";
@@ -118,13 +120,19 @@ function buildTierRows(params: {
   columns: StatColumn[];
   waiverGpThreshold: number;
   farmEnabled: boolean;
+  // Trades batch Task 3 — playerId -> tradeId for every player locked by an
+  // UNDER_REVIEW trade (src/lib/trades/locks.ts). Disables Drop/Farm for
+  // that row and adds a "Pending trade" badge; deliberately does NOT affect
+  // `locked` (the per-game lock) — a trade-locked player's lineup slot stays
+  // freely editable, per the Task 1 rules this UI is surfacing.
+  lockedPlayerIds: Map<string, string>;
 }): {
   rows: MoveBoardRow[];
   moveOptions: Record<string, MoveOption[]>;
   sourceTier: Record<string, MoveSourceTier>;
   occupantsBySlot: Map<string, RosterSlotWithPlayer[]>;
 } {
-  const { tablePrefix, startingSlots, dividerGroups, occupants, lineupFor, comp, positionMode, statsById, columns, waiverGpThreshold, farmEnabled } =
+  const { tablePrefix, startingSlots, dividerGroups, occupants, lineupFor, comp, positionMode, statsById, columns, waiverGpThreshold, farmEnabled, lockedPlayerIds } =
     params;
 
   const occupantsBySlot = new Map<string, RosterSlotWithPlayer[]>();
@@ -159,6 +167,15 @@ function buildTierRows(params: {
       const lineup = lineupFor(s);
       const stats = statsById.get(playerId);
       const eligible = eligibleSlotsForPosition(player.primaryPosition, positionMode);
+      const tradeLocked = lockedPlayerIds.has(playerId);
+      const badges = playerBadges(player, eligible, waiverGpThreshold);
+      if (tradeLocked) {
+        badges.push({
+          label: "Pending trade",
+          tone: "navy",
+          title: "Locked in a pending trade — it must process or be cancelled first.",
+        });
+      }
 
       rows.push({
         kind: "occupant",
@@ -168,14 +185,14 @@ function buildTierRows(params: {
         fullName: player.fullName,
         headshotUrl: player.headshotUrl,
         currentNhlOrg: player.currentNhlOrg,
-        badges: playerBadges(player, eligible, waiverGpThreshold),
+        badges,
         opponentLabel: lineup.game
           ? `${lineup.game.home ? "vs" : "@"} ${lineup.game.opponent}${lineup.locked ? " · locked" : ""}`
           : "No game",
         locked: lineup.locked,
         statCells: formatStatCells(stats, columns),
-        canSendToFarm: farmEnabled,
-        canDrop: true,
+        canSendToFarm: farmEnabled && !tradeLocked,
+        canDrop: !tradeLocked,
         isGroupStart: firstInBatch && lastGroupIdx !== -1 && groupIdx !== lastGroupIdx,
       });
       firstInBatch = false;
@@ -234,6 +251,13 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const rawView = Array.isArray(sp.view) ? sp.view[0] : sp.view;
   const rawTab = Array.isArray(sp.tab) ? sp.tab[0] : sp.tab;
   const rawSent = Array.isArray(sp.sent) ? sp.sent[0] : sp.sent;
+  // Trades batch Task 3 (roster-fit UX) — a link into drop mode from the
+  // builder's "Roster too full" modal, the review page's accept-overflow
+  // modal, or a stuck-trade notification.
+  const rawDropMode = Array.isArray(sp.dropMode) ? sp.dropMode[0] : sp.dropMode;
+  const rawReturnTo = Array.isArray(sp.returnTo) ? sp.returnTo[0] : sp.returnTo;
+  const rawPendingTrade = Array.isArray(sp.pendingTrade) ? sp.pendingTrade[0] : sp.pendingTrade;
+  const initialDropMode = rawDropMode === "1";
   const date = rawDate && DATE_RE.test(rawDate) ? rawDate : todayUTC();
   const view = rawView ?? "daily";
   const tab: Tab = rawTab === "schedule" || rawTab === "draftpicks" ? rawTab : "stats";
@@ -280,6 +304,33 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const farmSlots = allSlots.filter((s) => s.slotType === "FARM");
   const irSlots = allSlots.filter((s) => s.slotType === "IR");
   const playerIds = allSlots.map((s) => s.playerId);
+
+  // Trades batch Task 3 — every player on this roster (any tier) who's a
+  // PLAYER item in an UNDER_REVIEW trade. Only the manager's own board shows
+  // Drop/Farm/Call-up/IR-activate controls at all, so this is only fetched
+  // for that path. Scoped to this team's whole roster (not just ACTIVE) —
+  // Farm's Call Up and the IR list's activation both need it too.
+  const lockedPlayerMap = isManager ? await getTradeLockedPlayerIds(leagueId, playerIds) : new Map<string, string>();
+
+  // "Return to trade builder" banner — only honour a returnTo that actually
+  // points back at this league's builder (no open redirect).
+  const returnTo = rawReturnTo && rawReturnTo.startsWith(`/leagues/${leagueId}/trades/new`) ? rawReturnTo : null;
+
+  // "Drop N more player(s) to accept" countdown banner — the trade is still
+  // PROPOSED at this point (the review page's Accept-with-overflow modal
+  // sends the manager here *before* actually accepting); ignore an unknown,
+  // non-party, or no-longer-PROPOSED trade id silently rather than erroring.
+  let pendingTradeInfo: { tradeId: string; otherTeamName: string; excess: number } | null = null;
+  if (isManager && rawPendingTrade) {
+    const trade = await getTradeDetailById(rawPendingTrade, teamId);
+    if (trade && trade.state === "PROPOSED" && (trade.proposedByTeamId === teamId || trade.counterpartyTeamId === teamId)) {
+      const fit = await computeTradeFit(leagueId, trade.items);
+      const rows = fit.overflow.filter((o) => o.teamId === teamId);
+      const excess = rows.length > 0 ? Math.max(...rows.map((r) => r.excess)) : 0;
+      const otherTeamName = trade.proposedByTeamId === teamId ? trade.counterpartyTeamName : trade.proposedByTeamName;
+      pendingTradeInfo = { tradeId: trade.id, otherTeamName, excess };
+    }
+  }
 
   // Resolved once here so both the stats query and the non-daily label
   // (below) agree on exactly the same range — falls back to 2025-26 for an
@@ -379,6 +430,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
       columns: skaterColumns,
       waiverGpThreshold: settings.waiverGpThreshold,
       farmEnabled: settings.farmSlots > 0,
+      lockedPlayerIds: lockedPlayerMap,
     });
     const goalieBuild = buildTierRows({
       tablePrefix: "G",
@@ -392,6 +444,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
       columns: goalieColumns,
       waiverGpThreshold: settings.waiverGpThreshold,
       farmEnabled: settings.farmSlots > 0,
+      lockedPlayerIds: lockedPlayerMap,
     });
 
     const moveOptionsByPlayerId: Record<string, MoveOption[]> = { ...skaterBuild.moveOptions, ...goalieBuild.moveOptions };
@@ -406,6 +459,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
     for (const s of activeSlots) {
       const isIrEligible = s.player.officialRosterStatus === "IR" || s.player.officialRosterStatus === "LTIR";
       if (!isIrEligible || irEmptyCount === 0) continue;
+      if (lockedPlayerMap.has(s.playerId)) continue; // trade-locked — can't be placed on IR (Task 1's placeOnIR gate)
       const existing = moveOptionsByPlayerId[s.playerId];
       if (!existing) continue; // his own game is locked — can't be moved at all right now
       existing.push({ rowKey: "IR:empty:0", destination: { kind: "IR_PLACE" } });
@@ -417,15 +471,18 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
     const activeFull = activeSlots.length >= cap;
     for (const s of irSlots) {
       const stillIr = s.player.officialRosterStatus === "IR" || s.player.officialRosterStatus === "LTIR";
+      const tradeLocked = lockedPlayerMap.has(s.playerId);
       const game = s.player.currentNhlOrg ? teamGames.get(s.player.currentNhlOrg) : undefined;
       const locked = game ? isLocked(game) : false;
       const disabledReason = stillIr
         ? "Still officially on IR"
-        : activeFull
-          ? "Active roster full — send someone down first"
-          : locked
-            ? "Game already started"
-            : null;
+        : tradeLocked
+          ? "Locked in a pending trade"
+          : activeFull
+            ? "Active roster full — send someone down first"
+            : locked
+              ? "Game already started"
+              : null;
 
       if (!disabledReason) {
         const isGoalie = s.player.primaryPosition === "G";
@@ -460,6 +517,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         headshotUrl: s.player.headshotUrl,
         currentNhlOrg: s.player.currentNhlOrg,
         officialRosterStatus: s.player.officialRosterStatus,
+        tradeLocked,
         disabledReason,
       });
     }
@@ -500,6 +558,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
               const played = stats && stats.gamesIngested > 0;
               const activeFull = activeSlots.length >= cap;
               const callupLimitReached = callupsUsed >= settings.callupsPerWeek;
+              const tradeLocked = lockedPlayerMap.has(s.playerId);
               return (
                 <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
                   <span className="flex items-center gap-2">
@@ -511,6 +570,11 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                     {s.waiverExpiresAt && s.waiverExpiresAt > new Date() && (
                       <Badge tone="warning" title="Another team can claim him until this passes — see the Waivers page" className="ml-2 normal-case">
                         claimable until {s.waiverExpiresAt.toLocaleString()}
+                      </Badge>
+                    )}
+                    {tradeLocked && (
+                      <Badge tone="navy" title="Locked in a pending trade — it must process or be cancelled first." className="ml-2 normal-case">
+                        Pending trade
                       </Badge>
                     )}
                   </span>
@@ -525,13 +589,15 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                         <Button
                           type="submit"
                           size="sm"
-                          disabled={activeFull || callupLimitReached}
+                          disabled={tradeLocked || activeFull || callupLimitReached}
                           title={
-                            activeFull
-                              ? "Active roster is full"
-                              : callupLimitReached
-                                ? "Weekly callup limit reached"
-                                : undefined
+                            tradeLocked
+                              ? "Locked in a pending trade"
+                              : activeFull
+                                ? "Active roster is full"
+                                : callupLimitReached
+                                  ? "Weekly callup limit reached"
+                                  : undefined
                           }
                         >
                           ↑ Call Up
@@ -570,6 +636,40 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
       {sentFromTeam && (
         <Card className="mt-2 !border-success/20 !bg-success-tint">
           <p className="text-sm font-medium text-success">Trade proposal sent to {sentFromTeam.name}.</p>
+        </Card>
+      )}
+
+      {returnTo && (
+        <Card className="mt-2 !border-blue/20 !bg-blue/5">
+          <p className="text-sm">
+            You&apos;re making room for a trade.{" "}
+            <Link href={returnTo} className="font-medium text-blue hover:underline">
+              Return to trade builder →
+            </Link>
+          </p>
+        </Card>
+      )}
+
+      {pendingTradeInfo && (
+        <Card className="mt-2 !border-blue/20 !bg-blue/5">
+          <p className="text-sm">
+            {pendingTradeInfo.excess > 0 ? (
+              <>
+                Drop <strong>{pendingTradeInfo.excess}</strong> more player(s) to accept the trade with{" "}
+                {pendingTradeInfo.otherTeamName}
+              </>
+            ) : (
+              <>
+                Roster has room —{" "}
+                <Link
+                  href={`/leagues/${leagueId}/trades/${pendingTradeInfo.tradeId}/review`}
+                  className="font-medium text-blue hover:underline"
+                >
+                  Back to trade →
+                </Link>
+              </>
+            )}
+          </p>
         </Card>
       )}
 
@@ -780,6 +880,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
               moveOptionsByPlayerId={moveBoard.moveOptionsByPlayerId}
               sourceTierByPlayerId={moveBoard.sourceTierByPlayerId}
               farmSection={farmSectionNode}
+              initialDropMode={initialDropMode}
             />
           ) : (
             <>

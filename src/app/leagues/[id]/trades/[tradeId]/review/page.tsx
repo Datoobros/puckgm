@@ -2,12 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, isTeamManager } from "@/lib/leagues/mutations";
-import { getTradeDetailById } from "@/lib/trades/mutations";
+import { getTradeDetailById, computeTradeFit } from "@/lib/trades/mutations";
 import { getPlayerStatsAggregate, type PlayerStatsRow } from "@/lib/players/rankings";
 import { Card } from "@/components/Card";
-import { Button } from "@/components/Button";
 import { TradeAssetSummary, type TradeAssetSummarySide } from "../../TradeAssetSummary";
-import { respondToTradeAction, counterTradeAction } from "../../actions";
+import { AcceptTradeControls } from "../../AcceptTradeControls";
 
 export default async function TradeReviewPage(props: PageProps<"/leagues/[id]/trades/[tradeId]/review">) {
   const { userId } = await auth.protect();
@@ -22,6 +21,20 @@ export default async function TradeReviewPage(props: PageProps<"/leagues/[id]/tr
 
   const isCounterparty = !!myTeam && myTeam.id === trade.counterpartyTeamId;
   const canAct = isCounterparty && trade.state === "PROPOSED";
+
+  // Roster-fit pre-flight (plans/trades-batch.md Task 3) — computed here,
+  // server-side, so AcceptTradeControls just renders what it's told rather
+  // than re-deriving fit itself. respondToTrade (Task 1) still re-checks
+  // this for real at accept time; this is only what decides which UI the
+  // Accept button shows.
+  let acceptOverflowExcess: number | null = null;
+  if (canAct) {
+    const fit = await computeTradeFit(leagueId, trade.items);
+    const rows = fit.overflow.filter((o) => o.teamId === myTeam!.id);
+    if (rows.length > 0) {
+      acceptOverflowExcess = rows.reduce((worst, r) => Math.max(worst, r.excess), 0);
+    }
+  }
 
   const playerIds = trade.items.filter((i) => i.itemType === "PLAYER" && i.playerId).map((i) => i.playerId!);
   const statsRows = playerIds.length > 0 ? await getPlayerStatsAggregate({ playerIds }) : [];
@@ -64,17 +77,12 @@ export default async function TradeReviewPage(props: PageProps<"/leagues/[id]/tr
       </div>
 
       {canAct ? (
-        <div className="mt-6 flex flex-wrap gap-2">
-          <form action={respondToTradeAction.bind(null, leagueId, trade.id, true)}>
-            <Button type="submit" variant="primary">Accept</Button>
-          </form>
-          <form action={respondToTradeAction.bind(null, leagueId, trade.id, false)}>
-            <Button type="submit">Decline</Button>
-          </form>
-          <form action={counterTradeAction.bind(null, leagueId, trade.id)}>
-            <Button type="submit">Counter</Button>
-          </form>
-        </div>
+        <AcceptTradeControls
+          leagueId={leagueId}
+          tradeId={trade.id}
+          myTeamId={myTeam!.id}
+          overflowExcess={acceptOverflowExcess}
+        />
       ) : (
         <p className="mt-6 text-sm text-muted">
           {trade.state !== "PROPOSED"

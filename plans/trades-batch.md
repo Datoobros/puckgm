@@ -510,7 +510,9 @@ current shape in PROGRESS.md if you touch that section.
 
 ## Checklist
 
+**Batch shipped 2026-09-16** — all four tasks complete.
+
 - [x] Task 1 — trade integrity backend (#4/#5)
 - [x] Task 1b — trade hardening (loophole audit)
 - [x] Task 2 — page split + ESPN builder + confirm modal + redirect (#1/#2/#3)
-- [ ] Task 3 — fit UX + locked-player UI (#4/#5)
+- [x] Task 3 — fit UX + locked-player UI (#4/#5)

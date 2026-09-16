@@ -16,11 +16,23 @@ import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { TradeRosterTable } from "./TradeRosterTable";
-import { proposeTradeAction } from "./actions";
-import type { TradeableAssets, TradeAssetSelection } from "@/lib/trades/mutations";
+import { proposeTradeAction, checkTradeFitAction } from "./actions";
+import type { TradeableAssets, TradeAssetSelection, TradeFit } from "@/lib/trades/mutations";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
 
 const EMPTY_SELECTION: TradeAssetSelection = { playerIds: [], pickIds: [], faabAmount: 0 };
+
+const TIER_LABEL: Record<"ACTIVE" | "FARM" | "IR", string> = { ACTIVE: "Active", FARM: "Farm", IR: "IR" };
+
+/** The single worst (highest-excess) overflow row for one team, or null —
+ * mirrors trades/mutations.ts's private worstOverflowForTeam, duplicated
+ * here since this runs client-side against the TradeFit the server already
+ * computed (plans/trades-batch.md Task 3). */
+function worstOverflow(fit: TradeFit, teamId: string): TradeFit["overflow"][number] | null {
+  const rows = fit.overflow.filter((o) => o.teamId === teamId);
+  if (rows.length === 0) return null;
+  return rows.reduce((worst, r) => (r.excess > worst.excess ? r : worst));
+}
 
 function totalItems(sel: TradeAssetSelection): number {
   return sel.playerIds.length + sel.pickIds.length + (sel.faabAmount > 0 ? 1 : 0);
@@ -75,6 +87,13 @@ export function TradeBuilder({
   const [modalOpen, setModalOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Roster-fit pre-flight (Task 3) — Continue checks fit before deciding
+  // which modal to open.
+  const [fitChecking, setFitChecking] = useState(false);
+  const [fitError, setFitError] = useState<string | null>(null);
+  const [fitModalOpen, setFitModalOpen] = useState(false);
+  const [proposerOverflow, setProposerOverflow] = useState<TradeFit["overflow"][number] | null>(null);
+  const [counterpartyOverflow, setCounterpartyOverflow] = useState<TradeFit["overflow"][number] | null>(null);
 
   const playerLookup = useMemo(() => {
     const map = new Map<string, AssetPlayerInfo>();
@@ -101,6 +120,43 @@ export function TradeBuilder({
   }
 
   const canContinue = totalItems(give) + totalItems(receive) > 0;
+
+  /** The current /trades/new URL for this exact selection — what "Go drop
+   * players →" encodes into `returnTo` so the team page's "Return to trade
+   * builder" link restores both the counterparty and the full give/receive
+   * selection (Task 3; the param-parsing side already shipped in Task 2). */
+  function buildBuilderUrl(): string {
+    const params = new URLSearchParams();
+    params.set("with", counterpartyId);
+    if (give.playerIds.length) params.set("give", give.playerIds.join(","));
+    if (receive.playerIds.length) params.set("receive", receive.playerIds.join(","));
+    if (give.pickIds.length) params.set("givePicks", give.pickIds.join(","));
+    if (receive.pickIds.length) params.set("receivePicks", receive.pickIds.join(","));
+    if (give.faabAmount > 0) params.set("giveFaab", String(give.faabAmount));
+    if (receive.faabAmount > 0) params.set("receiveFaab", String(receive.faabAmount));
+    return `/leagues/${leagueId}/trades/new?${params.toString()}`;
+  }
+
+  async function handleContinue() {
+    setFitError(null);
+    setFitChecking(true);
+    try {
+      const fit = await checkTradeFitAction(leagueId, myTeamId, counterpartyId, give, receive);
+      const mine = worstOverflow(fit, myTeamId);
+      if (mine) {
+        setProposerOverflow(mine);
+        setFitModalOpen(true);
+      } else {
+        setCounterpartyOverflow(worstOverflow(fit, counterpartyId));
+        setSendError(null);
+        setModalOpen(true);
+      }
+    } catch (e) {
+      setFitError(e instanceof Error ? e.message : "Couldn't check roster fit.");
+    } finally {
+      setFitChecking(false);
+    }
+  }
 
   async function handleSend() {
     setSending(true);
@@ -266,23 +322,52 @@ export function TradeBuilder({
             <Button type="button" variant="secondary" onClick={handleCancelTrade}>
               Cancel Trade
             </Button>
-            <Button
-              type="button"
-              variant="primary"
-              disabled={!canContinue}
-              onClick={() => {
-                setSendError(null);
-                setModalOpen(true);
-              }}
-            >
-              Continue
+            <Button type="button" variant="primary" disabled={!canContinue || fitChecking} onClick={handleContinue}>
+              {fitChecking ? "Checking…" : "Continue"}
             </Button>
           </div>
         </div>
+        {fitError && <p className="mt-2 text-xs text-danger">{fitError}</p>}
       </div>
+
+      {/* Roster-too-full — the proposer's own roster wouldn't fit what
+          they'd receive. Send Trade Proposal isn't offered here; the only
+          way forward is dropping players or trimming the offer, matching
+          proposeTrade's real server-side guard (Task 1). */}
+      <Modal open={fitModalOpen} onClose={() => setFitModalOpen(false)} title="Roster too full">
+        <div className="space-y-4 p-4">
+          {proposerOverflow && (
+            <p className="text-sm">
+              This trade would leave you {proposerOverflow.excess} over your {TIER_LABEL[proposerOverflow.slotType]} roster
+              cap. Drop {proposerOverflow.excess} player(s) first, or add more of your players to the offer.
+            </p>
+          )}
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <Button type="button" onClick={() => setFitModalOpen(false)}>
+              Adjust trade
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() =>
+                router.push(
+                  `/leagues/${leagueId}/teams/${myTeamId}?dropMode=1&returnTo=${encodeURIComponent(buildBuilderUrl())}`,
+                )
+              }
+            >
+              Go drop players →
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={modalOpen} onClose={() => !sending && setModalOpen(false)} title="Confirm Trade">
         <div className="space-y-4 p-4">
+          {counterpartyOverflow && (
+            <p className="text-xs text-muted">
+              {counterpartyName} will need to drop {counterpartyOverflow.excess} player(s) to accept.
+            </p>
+          )}
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Receiving from {counterpartyName}</p>
             <div className="divide-y divide-border">{renderConfirmSide(receive, "in")}</div>

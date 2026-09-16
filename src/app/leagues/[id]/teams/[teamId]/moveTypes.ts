@@ -26,7 +26,7 @@ export interface MoveBoardStatCell {
 export interface MoveBoardBadge {
   label: string;
   title?: string;
-  tone: "muted" | "warning" | "danger";
+  tone: "muted" | "warning" | "danger" | "navy";
 }
 
 // Table rows (Skaters/Goalies) — a mix of real occupants and synthetic empty
@@ -70,6 +70,11 @@ export interface MoveBoardIrOccupantRow {
   currentNhlOrg: string | null;
   officialRosterStatus: string | null;
   disabledReason: string | null; // shown instead of a Move button when set
+  // Trades batch Task 3 (issues #4/#5's UI half) — true when this player is
+  // a PLAYER item in an UNDER_REVIEW trade (src/lib/trades/locks.ts). Drives
+  // the "Pending trade" badge; disabledReason already carries the reason
+  // text when this is what's blocking activation.
+  tradeLocked: boolean;
 }
 
 export interface MoveBoardIrEmptyRow {

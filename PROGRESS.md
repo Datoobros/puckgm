@@ -1936,6 +1936,121 @@ task splits it into a short list page and a dedicated ESPN-style builder, and fi
   and the accept-side "you must drop N" flow on the review page. All are exactly what Task 3
   is scoped to build; this task's give/receive param-restore path is what it builds on top of.
 
+## Roster-fit UX and locked-player UI (trades batch, Task 3) — batch complete
+
+Last of the three-task trades batch (`plans/trades-batch.md`), finishing issues #4/#5's UI
+half — Task 1 built the server-side locks/fit checks, Task 1b hardened nine loopholes, Task 2
+built the ESPN-style builder; this task is the part the user actually sees when a trade would
+overflow a roster, and marks the players a pending trade already has locked.
+
+- **`Continue` on the builder now runs a pre-flight fit check first**, instead of always
+  opening the confirm modal. New `checkTradeFitAction` (`src/app/leagues/[id]/trades/actions.ts`)
+  is a pure read — `buildProposalItems` + `computeTradeFit` (both already exported from Task 1)
+  — called imperatively from `TradeBuilder.tsx` so the pre-flight check can never drift from
+  `proposeTrade`'s real server-side guard; the guard itself is unchanged, this is UX layered on
+  top of it. If the **proposer** would overflow, a **Roster too full** modal opens instead of
+  the confirm modal: "This trade would leave you N over your `<Active/Farm/IR>` roster cap.
+  Drop N player(s) first, or add more of your players to the offer." with `Adjust trade`
+  (closes it) and `Go drop players →`. That link encodes the *entire current selection* (give/
+  receive/picks/FAAB, plus the chosen counterparty) into the same `give`/`receive`/`givePicks`/
+  `receivePicks`/`giveFaab`/`receiveFaab`/`with` params `/trades/new` has parsed since Task 2,
+  then navigates to `/leagues/[id]/teams/[myTeamId]?dropMode=1&returnTo=<that URL, encoded>`.
+  If the proposer fits but the **counterparty** would overflow, the confirm modal opens as
+  before with one added muted line: "`<Team>` will need to drop N player(s) to accept." —
+  informational only, doesn't block sending.
+- **Drop mode is now URL-driven**, not just a manual toggle. `RosterMoveBoard` gained an
+  `initialDropMode?: boolean` prop that seeds its existing `dropMode` state; the team page reads
+  `?dropMode=1` and passes it through. `?returnTo=` is only honored when it starts with
+  `/leagues/<leagueId>/trades/new` (no open redirect) and renders a banner: "You're making room
+  for a trade. **Return to trade builder →**" — clicking it lands back on the builder with the
+  counterparty and full selection restored via Task 2's already-built param-parsing path; this
+  task only had to generate the query string; the restore side shipped with Task 2 for exactly
+  this reason.
+- **The accept side gets the same pre-flight treatment.** The review page now computes
+  `computeTradeFit` server-side (reusing the trade's own `items`, no new query shape needed) and
+  hands the acceptor's overflow excess into a new client `AcceptTradeControls.tsx` (Accept /
+  Decline / Counter, replacing the old inline buttons). Decline and Counter are **untouched** —
+  still plain `<form action={respondToTradeAction/counterTradeAction}>` submits. Accept is the
+  only one that changed: the submit button's `onClick` calls `e.preventDefault()` and opens a
+  "Roster too full" modal ("You must drop N player(s) in order for this trade to go through." +
+  `Go to my team →`) **only when there's overflow**; with no overflow the click falls through and
+  the form submits exactly as it always did. This was deliberate, not a stylistic choice — both
+  `respondToTradeAction`/`counterTradeAction` end in `redirect()`, and `next/navigation`'s own
+  docs say `redirect()` can't be called from a client event handler, only during render or a
+  real `<form action>` submission (the same reasoning already documented for
+  `proposeTradeAction` in Task 2's section above). Calling them imperatively from a click handler
+  the way `proposeTradeAction` is called would have broken the redirect silently.
+  `Go to my team →` lands on `/leagues/[id]/teams/[myTeamId]?dropMode=1&pendingTrade=<tradeId>`.
+- **The countdown banner.** `pendingTrade` on the team page loads that trade (`getTradeDetailById`,
+  requiring it still be `PROPOSED` and this team actually a party — an unknown, non-party, or
+  no-longer-pending id is ignored silently, not erroring) and runs `computeTradeFit` against its
+  *current* items on every page load, so the banner is always live, not a snapshot from when the
+  modal first opened: "Drop **N** more player(s) to accept the trade with `<team>`" while N > 0,
+  flipping to "Roster has room — **Back to trade →**" (linking to the review page) once it hits
+  zero. Verified live in the browser that this actually recomputes and decrements after each
+  individual drop, not just on a hard reload.
+- **Locked players are now visibly marked everywhere a manager could otherwise act on them.**
+  `getTradeLockedPlayerIds(leagueId, playerIds)` (Task 1's `src/lib/trades/locks.ts`) is queried
+  once per team-page render, scoped to the **whole roster** (Active + Farm + IR — the plan's own
+  wording only mentioned "activePlayerIds" but Farm's Call Up and the IR list's activation both
+  needed the same data, so it's fetched for every tier a locked player could be sitting in) and
+  threaded through as a `Map<playerId, tradeId>`:
+  - **Active roster rows** (`RosterMoveBoard`'s Skaters/Goalies tables): a `Pending trade` badge
+    (`tone="navy"`, new addition to `MoveBoardBadge`'s tone union), `canDrop: false`, and
+    `canSendToFarm: false` — so in drop mode the row shows no Drop button at all, and outside
+    drop mode no `→ Farm` button. **Lineup `Move` deliberately stays enabled** — a trade-locked
+    player still plays for his current owner until the trade actually processes (Task 1's own
+    rule), verified live by actually opening Move on a locked player and confirming real
+    destination options appeared.
+  - **IR placement** — the healthy-active-player-to-IR option that gets appended onto an
+    already-eligible player's move list is now skipped entirely for a locked player (would just
+    hit `placeOnIR`'s existing lock guard from Task 1 anyway).
+  - **Farm list**: `↑ Call Up` gains `tradeLocked` to its existing disabled/title logic
+    (`"Locked in a pending trade"`, ahead of the active-full/callup-limit reasons), plus the same
+    `Pending trade` badge next to the player's name.
+  - **IR list**: `tradeLocked` is now a `disabledReason` cause (ahead of active-full/game-locked,
+    behind "still officially on IR" since that's the more fundamental block), and a new
+    `tradeLocked` field on `MoveBoardIrOccupantRow` drives the same badge in `RosterMoveBoard`'s
+    IR list rendering.
+  - The builder (`TradeRosterTable.tsx`) already disabled locked rows with a badge as of Task 2 —
+    nothing more needed there.
+- Verified end-to-end in a disposable 3-team league (`scripts/fit-ux-test-league.ts`, small
+  6-slot active cap so a 2-player overflow is trivial to hit, rostered from real `Player` rows —
+  copied and adapted from Task 2's `builder-test-league.ts` rather than reused as-is, per the
+  shared-database convention, so each script's `--cleanup` only ever touches its own league) in a
+  real browser using the `// TEMP:` hardcoded-userId technique (five places: the league layout,
+  all three trade pages, and both actions files — reverted before commit,
+  `grep -rn "TEMP:" src/` clean): as the proposer, building a 2-for-0 into a full 6/6 roster and
+  clicking `Continue` produced the Roster-too-full modal with the exact text and N=2; `Go drop
+  players →` opened the team page in drop mode with the return banner; dropping two players
+  brought the roster to 4/6; `Return to trade builder →` restored the counterparty and both
+  selections exactly; `Continue` now opened the real Confirm Trade modal (the fit modal was
+  present-but-closed in the DOM the whole time — native `<dialog>` doesn't unmount, confirmed by
+  checking both dialogs' `.open` property directly rather than trusting which one a screenshot
+  happened to show); `Send Trade Proposal` landed on the team page with the "sent to" banner. As
+  the acceptor on a **second**, pre-seeded trade (Bravo gives 2 players to an already-full
+  Charlie): `Accept` on the review page produced "You must drop 2 player(s) in order for this
+  trade to go through."; `Go to my team →` opened drop mode with "Drop 2 more player(s) to
+  accept the trade with Bravo"; dropping one player live-decremented the banner to "Drop 1 more
+  player(s)"; dropping the second flipped it to "Roster has room — Back to trade →"; that link
+  returned to the review page; `Accept` there succeeded for real, confirmed `UNDER_REVIEW` in the
+  database. Then, back on the proposer's (Bravo's) team page: both traded players (Doughty,
+  Hellebuyck) showed the `Pending trade` badge (confirmed `bg-navy/10 text-navy`, not just
+  visually similar to the existing `80+ GP` warning badge), had no `→ Farm` button and no `− Drop`
+  button in drop mode, while `Move` was present and actually opened real destination options when
+  clicked. `npx tsc --noEmit` and `npm run build` both clean before driving the browser and again
+  after reverting every `// TEMP:` bypass. Cleaned up by exact league name afterward — never
+  touched the real "Experimenting" league.
+- **One real bug found and fixed while driving this through the browser, not by inspection**: the
+  review page's `respondToTradeAction`/`counterTradeAction` `redirect()` to `/leagues/[id]/trades`
+  hit that route's own independent `auth.protect()` — a page this task's own `// TEMP:` sweep had
+  initially missed, since accepting from the review page had never been exercised against it in
+  this session before. Caught immediately (redirected to Clerk's real sign-in instead of the
+  bypassed page) and fixed by adding the same bypass there; confirmed the underlying accept had
+  already committed to the database before the redirect misfired, so nothing about the actual
+  fix (Task 3's product code) was at fault — purely a gap in which files the verification sweep
+  had touched.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

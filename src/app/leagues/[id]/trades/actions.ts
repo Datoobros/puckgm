@@ -9,7 +9,10 @@ import {
   cancelTrade,
   castTradeVeto,
   forceProcessTrade,
+  buildProposalItems,
+  computeTradeFit,
   type TradeAssetSelection,
+  type TradeFit,
 } from "@/lib/trades/mutations";
 
 // Called imperatively from TradeBuilder.tsx (not a <form action>), and
@@ -46,6 +49,23 @@ export async function proposeTradeAction(
   revalidatePath(`/leagues/${leagueId}/teams/${proposingTeamId}`);
   revalidatePath(`/leagues/${leagueId}/teams/${counterpartyTeamId}`);
   return { ok: true, redirectTo: `/leagues/${leagueId}/teams/${proposingTeamId}?sent=${counterpartyTeamId}` };
+}
+
+// Trades batch Task 3 (roster-fit UX) — a pure read, called imperatively from
+// TradeBuilder.tsx's Continue button before opening either modal. Reuses
+// buildProposalItems + computeTradeFit (Task 1) so the pre-flight check and
+// proposeTrade's real server-side guard can never drift apart into two
+// different fit calculations.
+export async function checkTradeFitAction(
+  leagueId: string,
+  proposingTeamId: string,
+  counterpartyTeamId: string,
+  give: TradeAssetSelection,
+  receive: TradeAssetSelection,
+): Promise<TradeFit> {
+  await auth.protect();
+  const items = buildProposalItems({ proposingTeamId, counterpartyTeamId, give, receive });
+  return computeTradeFit(leagueId, items);
 }
 
 export async function respondToTradeAction(leagueId: string, tradeId: string, accept: boolean) {

@@ -29,6 +29,7 @@ export function RosterMoveBoard({
   moveOptionsByPlayerId,
   sourceTierByPlayerId,
   farmSection,
+  initialDropMode,
 }: {
   leagueId: string;
   teamId: string;
@@ -42,11 +43,16 @@ export function RosterMoveBoard({
   moveOptionsByPlayerId: Record<string, MoveOption[]>;
   sourceTierByPlayerId: Record<string, MoveSourceTier>;
   farmSection: ReactNode;
+  // Trades batch Task 3 — a link (a modal's "Go drop players →", a
+  // notification, the accept-overflow "Go to my team →") can open the page
+  // straight into drop mode via ?dropMode=1; the existing toggle button
+  // keeps working on top of whatever this seeds.
+  initialDropMode?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dropMode, setDropMode] = useState(false);
+  const [dropMode, setDropMode] = useState(initialDropMode ?? false);
   const [confirmDropId, setConfirmDropId] = useState<string | null>(null);
   const [dropPending, setDropPending] = useState(false);
 
@@ -269,6 +275,11 @@ export function RosterMoveBoard({
                   {r.fullName}
                   <span className="text-xs text-muted">{r.currentNhlOrg ?? "—"}</span>
                   <Badge tone="muted">{r.officialRosterStatus ?? "IR"}</Badge>
+                  {r.tradeLocked && (
+                    <Badge tone="navy" title="Locked in a pending trade — it must process or be cancelled first.">
+                      Pending trade
+                    </Badge>
+                  )}
                 </span>
                 {hasOptions ? (
                   moveButtonCell(r.playerId, r.rowKey, true, false)
