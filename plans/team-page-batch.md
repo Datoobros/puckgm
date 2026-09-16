@@ -397,4 +397,4 @@ returning to the team page shows the new player in an open slot.
 - [x] Task 2 — header + notifications modal (#1, #3)
 - [x] Task 3 — free agency gate (#5)
 - [x] Task 3b — Experimenting roster reset + stale test league deleted (run once, record date in PROGRESS.md)
-- [ ] Task 4 — persistent lineups (#4)
+- [x] Task 4 — persistent lineups (#4)

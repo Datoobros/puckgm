@@ -42,6 +42,11 @@ export async function startNewSeason(leagueId: string, callerUserId: string): Pr
     data: { effectiveTo: new Date() },
   });
 
+  // Every LineupEntry in the league is now stale — same reasoning as
+  // deleteLeague's own teardown (src/lib/leagues/mutations.ts): a wiped
+  // roster has no business still having players "started" anywhere.
+  await prisma.lineupEntry.deleteMany({ where: { team: { leagueId } } });
+
   const newSeason = league.currentSeason + 1;
   await prisma.league.update({ where: { id: leagueId }, data: { currentSeason: newSeason } });
 

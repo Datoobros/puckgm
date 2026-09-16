@@ -15,8 +15,9 @@ import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
-import { parseGameDate, setLineupSlot, swapLineupSlots } from "@/lib/lineups/mutations";
+import { setLineupSlot, swapLineupSlots, ensureLineupMaterialized, clearLineupFrom } from "@/lib/lineups/mutations";
 import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
+import { todayUTC } from "@/lib/dates";
 
 export function activeRosterCap(settings: LeagueSettings): number {
   // Object.values would also pick up positionMode ("SEPARATE"/"COMBINED"), a
@@ -151,6 +152,16 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
       },
     }),
   ]);
+
+  // Whoever just made room by being dropped has no business still counting
+  // toward this team's lineup/score from today forward (see
+  // src/lib/lineups/mutations.ts's clearLineupFrom). The new arrival gets
+  // the opposite treatment — placed into the first open slot he's eligible
+  // for today, rather than sitting on the bench until someone notices.
+  if (droppedPlayerId) {
+    await clearLineupFrom(input.teamId, droppedPlayerId);
+  }
+  await ensureLineupMaterialized(input.teamId, todayUTC());
 }
 
 export interface DropPlayerInput {
@@ -183,6 +194,8 @@ export async function dropPlayerFromRoster(input: DropPlayerInput): Promise<void
       },
     }),
   ]);
+
+  await clearLineupFrom(input.teamId, input.playerId);
 }
 
 export interface SendToFarmInput {
@@ -250,6 +263,8 @@ export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExpose
     }),
   ]);
 
+  await clearLineupFrom(input.teamId, input.playerId);
+
   return { waiverExposed };
 }
 
@@ -302,6 +317,8 @@ export async function callUpToActive(input: CallUpInput): Promise<void> {
   // any claims other teams had in flight on him are moot. See
   // src/lib/waivers/mutations.ts.
   await voidPendingClaimsForPlayer(input.playerId);
+
+  await ensureLineupMaterialized(input.teamId, todayUTC());
 }
 
 export interface PlaceOnIrInput {
@@ -352,6 +369,8 @@ export async function placeOnIR(input: PlaceOnIrInput): Promise<void> {
       },
     }),
   ]);
+
+  await clearLineupFrom(input.teamId, input.playerId);
 }
 
 export interface ActivateFromIrInput {
@@ -403,21 +422,23 @@ export async function activateFromIR(input: ActivateFromIrInput): Promise<void> 
       },
     }),
   ]);
+
+  await ensureLineupMaterialized(input.teamId, todayUTC());
 }
 
 export interface PlaceOnIrClearingLineupInput extends PlaceOnIrInput {
   date: string;
 }
 
-/** Same gate as placeOnIR, plus clears that date's now-stale LineupEntry —
- * a player who leaves the active roster has no business still counting
- * against a lineup slot's capacity. Used by the Move UI, which lets a
- * manager send a player straight to IR from a lineup row. */
+/** Was its own single-date LineupEntry delete before Task 4 — placeOnIR now
+ * clears from today forward itself (clearLineupFrom), a superset of the old
+ * one-date-only behavior and the right fix for the stale-row scoring bug
+ * (a player already materialized into a future date's lineup before landing
+ * on IR needs those rows gone too, not just the one date being viewed). This
+ * wrapper is kept only so the Move UI's `date`-carrying call sites don't need
+ * to change. */
 export async function placeOnIrClearingLineup(input: PlaceOnIrClearingLineupInput): Promise<void> {
   await placeOnIR(input);
-  await prisma.lineupEntry.deleteMany({
-    where: { teamId: input.teamId, playerId: input.playerId, gameDate: parseGameDate(input.date) },
-  });
 }
 
 export interface ActivateFromIrIntoSlotInput extends ActivateFromIrInput {
@@ -503,6 +524,8 @@ export async function commissionerAddPlayer(input: CommissionerRosterInput): Pro
       },
     }),
   ]);
+
+  await ensureLineupMaterialized(input.teamId, todayUTC());
 }
 
 export async function commissionerDropPlayer(input: CommissionerRosterInput): Promise<void> {
@@ -525,6 +548,8 @@ export async function commissionerDropPlayer(input: CommissionerRosterInput): Pr
       },
     }),
   ]);
+
+  await clearLineupFrom(input.teamId, input.playerId);
 }
 
 export interface CommissionerMovePlayerInput extends CommissionerRosterInput {
@@ -556,6 +581,14 @@ export async function commissionerMovePlayer(input: CommissionerMovePlayerInput)
       },
     }),
   ]);
+
+  // Same materialize-on-arrival / clear-on-departure treatment as every
+  // other path that moves a player into or out of ACTIVE.
+  if (slot.slotType === "ACTIVE") {
+    await clearLineupFrom(input.teamId, input.playerId);
+  } else if (input.targetSlotType === "ACTIVE") {
+    await ensureLineupMaterialized(input.teamId, todayUTC());
+  }
 }
 
 export async function getTeamRosterView(teamId: string) {

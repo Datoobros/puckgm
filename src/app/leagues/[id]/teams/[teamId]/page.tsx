@@ -7,7 +7,7 @@ import { getTeamRosterView, getCallupsUsedThisWeek, activeRosterCap } from "@/li
 import { getPlayerStatsAggregate, getPlayerDailyStats, type PlayerStatsRow } from "@/lib/players/rankings";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import { resolveStatRange } from "@/lib/players/seasons";
-import { getLineupForDate, capFor, eligibleSlotsForPosition, lineupSlotsFor } from "@/lib/lineups/mutations";
+import { ensureLineupMaterialized, getLineupForDate, capFor, eligibleSlotsForPosition, lineupSlotsFor } from "@/lib/lineups/mutations";
 import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/schedule";
 import { isLeagueCommissioner, isTeamManager, type LeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
 import { getTeamSchedule } from "@/lib/matchups/standings";
@@ -277,6 +277,13 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   // unrecognized/stale `view` value (e.g. an old bookmarked URL).
   const resolvedRange = view === "daily" ? null : resolveStatRange(view) ?? resolveStatRange("2025")!;
 
+  // Write-on-read, same pattern the draft room's clock already uses: any date
+  // the manager browses (past or future) gets carried-forward/auto-filled
+  // before getLineupForDate reads it below, so a team page never shows a
+  // freshly-eligible player sitting on the bench for no reason. See
+  // src/lib/lineups/mutations.ts's ensureLineupMaterialized doc comment.
+  await ensureLineupMaterialized(teamId, date);
+
   const [statsById, lineupEntries, teamGames, callupsUsed] = await Promise.all([
     view === "daily"
       ? getPlayerDailyStats(playerIds, date, settings.scoringConfig)
@@ -292,6 +299,10 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
 
   const lineupBySlot = new Map(lineupEntries.map((e) => [e.playerId, e.lineupSlot]));
 
+  // "BE" here is just the display default for "no row" — ensureLineupMaterialized
+  // above already ran, so a genuinely no-row player has already been through
+  // auto-fill and simply had no open eligible slot (implicit bench, not a
+  // stale/unmaterialized state).
   function lineupFor(s: RosterSlotWithPlayer): LineupInfo {
     const currentSlot = lineupBySlot.get(s.playerId) ?? "BE";
     const game = s.player.currentNhlOrg ? teamGames.get(s.player.currentNhlOrg) : undefined;

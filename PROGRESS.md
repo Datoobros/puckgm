@@ -1473,8 +1473,122 @@ duplicate "reset happened" event every time it's invoked).
   "Roster Action Test League (delete me)" no longer exists; "Experimenting", "QTest League",
   "QTest 2" all still do; total leagues went from 4 to 3, exactly as expected.
 
+## Persistent lineups + auto-fill (team-page batch, Task 4)
+
+Last of the four-task batch (`plans/team-page-batch.md`), issue #4 — the largest task, biggest
+blast radius, done last on purpose. Before this, `LineupEntry` only ever got a row when a
+manager explicitly clicked Move/Auto-Set for that exact date — every date nobody had touched
+yet started completely empty, so cycling to a new day (or September, before the season starts)
+showed the whole roster on the bench even for a team a manager had carefully set. `autoSetLineup`
+made this worse by explicitly benching everyone without an NHL game that day, which is every
+player during the entire off-season.
+
+- **Two invariants, enforced by one idempotent function** — `ensureLineupMaterialized(teamId,
+  date)` (`src/lib/lineups/mutations.ts`):
+  1. **Carry-forward.** If `date` has no explicit rows yet, copy the most recent earlier date's
+     rows (filtered to players still on the ACTIVE roster) forward as `date`'s starting point.
+     No prior date with rows means an empty starting point.
+  2. **Auto-fill.** Every active player with no row in that starting point (an explicit `"BE"`
+     row means "benched on purpose" and is left alone) is ranked by career fantasy points and
+     assigned into whatever slot capacity is still open (position slots first, then UTIL),
+     skipping only a player whose own game has already started. A player with *no* game at all
+     is still a valid candidate — nobody without a game can be locked — which is what lets a
+     lineup auto-fill correctly even during a stretch with zero NHL games (September). Players
+     with no open eligible slot get no row at all, so they're re-evaluated fresh the next time
+     a slot opens rather than being stuck.
+  All reads (roster, existing/prior rows, the NHL schedule, the stats query) happen before any
+  write, and the writes (`createMany({ skipDuplicates: true })`, safe under concurrent calls for
+  the same team/date via the `(teamId, playerId, gameDate)` unique key) go in one transaction.
+- **Where it runs**: before `getLineupForDate` on every team-page view (any date, past or
+  future — a write-on-read, same pattern the draft room's clock already used);
+  **before the capacity check** in `setLineupSlot`/`swapLineupSlots`/`autoSetLineup` specifically
+  (materializing after the check would let inherited-but-unmaterialized occupants slip past
+  capacity); after the transaction in every interactive acquisition path (`addPlayerToRoster`,
+  `callUpToActive`, `activateFromIR`, `commissionerAddPlayer`, `commissionerMovePlayer` when the
+  target is ACTIVE, `forceProcessTrade` for both teams); and by the daily cron
+  (`src/app/api/cron/daily-ingest/route.ts`), for **every team in every league**, for
+  **yesterday and today**, placed after the waiver/FAAB/trade-processing calls so anyone awarded
+  overnight lands in an open slot before anyone checks their team that morning — this is the
+  primary mechanism that gives scoring real rows; page views are the fallback for any team the
+  cron missed. `recordPick` (draft) deliberately does **not** materialize per-pick (a 200-pick
+  draft shouldn't do 200 schedule fetches — the first team-page view after the draft auto-fills
+  the whole roster at once, ranked, which is a better default anyway), and the cron-driven
+  FAAB/waiver/trade *award* paths themselves don't materialize individually — the cron's own
+  bulk materialize step, placed right after those processing calls, covers them.
+- **`clearLineupFrom(teamId, playerId, fromDate = todayUTC())`** — the other half: deletes every
+  `LineupEntry` row for that player from `fromDate` forward. Called from `dropPlayerFromRoster`,
+  `sendToFarm`, `placeOnIR` (folded into `placeOnIR` itself now, superseding
+  `placeOnIrClearingLineup`'s old single-date-only delete — a player already materialized into a
+  *future* date's lineup before landing on IR needs those rows gone too, not just the one date
+  being viewed), `commissionerDropPlayer`, `commissionerMovePlayer` (leaving ACTIVE),
+  `addPlayerToRoster`'s drop-to-make-room branch, `executeTradeTransfers` (every PLAYER item, for
+  the sending team — runs regardless of caller, cron or `forceProcessTrade`, since it's fixing a
+  real bug, not an interactive-only convenience), and `startNewSeason` (every row for the
+  league's teams, mirroring `deleteLeague`'s own teardown).
+- **This closes a real, quietly-live scoring bug**: `dropPlayerFromRoster`/`sendToFarm`/trades
+  never deleted a departing player's `LineupEntry` rows before this — `getTeamScoreForPeriod`
+  sums fantasy points for every non-BE row in range, so a player dropped at noon could still
+  score for his old team that night, and a stale row could block a real teammate from taking
+  that slot (the "Click-to-move" pass partially worked around the capacity-blocking half by
+  filtering counts to active-roster players, but never touched the scoring half). `clearLineupFrom`
+  fixes the root cause directly instead of filtering around it.
+- **`autoSetLineup` change**: players without a game that date are no longer forced to `"BE"`.
+  Two candidate tiers, each ranked by points: players with a game fill slots first (depleting
+  capacity), then whatever's left over goes to players without one. This is what makes Auto-Set
+  usable during a real no-games stretch instead of benching the entire roster, while still
+  preferring an actual game when there's a genuine choice. The shared slot-assignment loop
+  (position slots first, then UTIL absorbs the rest) was extracted into a pure
+  `assignStarters(candidates, remainingCap, positionMode)` helper reused by both
+  `ensureLineupMaterialized`'s auto-fill step and `autoSetLineup`'s two tiers, instead of two
+  copies of the same logic drifting apart.
+- Verified in `scripts/persistent-lineup-check.ts` against the real DB (disposable league, far-
+  future 2031 dates so nothing is ever locked, cleaned up by exact name): all 7 scenarios from
+  the plan — position-slots-before-UTIL overflow ordering, a third same-position player getting
+  no row once every eligible slot is full, sticky explicit `BE` surviving carry-forward while an
+  auto-filled vacancy gets picked up by the next-best eligible player, `clearLineupFrom`'s
+  date-scoping (a date before `fromDate` untouched, everything from `fromDate` on gone) plus
+  `dropPlayerFromRoster`'s real wiring on top of it, a materialize call correctly reaching back
+  through two empty intermediate dates to the last date that actually had rows, `autoSetLineup`
+  filling real slots on a date with zero NHL games instead of an all-bench result, and the
+  capacity guard correctly rejecting a move into a slot that's full only through inheritance
+  (no explicit rows yet on that date). Free agency is gated (Task 3) — the script runs a real
+  1-round/2-team startup draft first (rather than the ungated `commissionerAddPlayer` override)
+  specifically so `addPlayerToRoster`'s own materialize-on-acquire call site gets exercised for
+  real; the forced draft pick is a goalie on purpose, since G-only eligibility can never
+  interfere with any C/L/D/UTIL assertion.
+- **Two pre-existing regression scripts needed real adaptation, not just a re-run** — both
+  because their fixture setups pre-dated auto-fill-on-first-touch and became ambiguous once
+  `setLineupSlot` started materializing before its own capacity check:
+  `scripts/move-feature-check.ts` rostered three real Centers against a league with a single C
+  lineup slot, then made bare `setLineupSlot` calls assuming an empty lineup — the very first
+  call now auto-fills two of the three centers into C/UTIL before the script's own explicit
+  placement runs, and whichever one auto-fill picked might not be the one the test wanted in C.
+  Fixed by explicitly benching all three centers first (bench has no capacity limit, so this
+  always succeeds) before making the intended explicit placements. The same script's TEST B
+  specifically checked that a farmed player's `LineupEntry` row survived *stale* (proving
+  capacity checks filtered it out) — Task 4's `sendToFarm` now calls `clearLineupFrom` directly,
+  so the row is deleted outright instead of left stale, which is strictly the better fix for the
+  same bug. Updated the assertion to check the row is actually gone, then re-proved the older
+  "capacity ignores non-active rows" fix still holds by using the now-vacant slot for a different
+  active player. `scripts/score-check.ts` needed no changes and passed as-is.
+- Checked live in a real browser (`// TEMP:` bypass in `layout.tsx` and the team page — both
+  needed, each has its own independent `auth.protect()`; reverted, `grep -rn "TEMP:" src/`
+  clean) against a disposable seeded league on the real current date: a team rostered with
+  exactly enough players to fill every position slot (2C/2LW/2RW/4D/2G, no overflow) showed
+  every one of them auto-filled into their correct C/L/R/D/G group the moment the team page was
+  first viewed — confirmed against the raw `LineupEntry` rows, not just the rendered page, since
+  the owner-view Move UI conveys current slot via row grouping/divider lines rather than a text
+  label per row. A 13th rostered player (a 3rd goalie, over the G:2 cap) correctly got no row at
+  all. The next day's date showed the identical 12-row lineup, carried forward byte-for-byte.
+  Adding a 14th player via `commissionerAddPlayer` and reloading the team page showed him
+  auto-filled into the one open UTIL slot immediately — no manual lineup action needed.
+
 ## Known gaps, deliberately not built (ask before building)
 
+- **Dropping a player whose game already started forfeits his points that day** —
+  `clearLineupFrom` deletes from today forward, including a slot whose game is already in
+  progress; ESPN would block that drop outright instead. Blocking it is a separate rules change,
+  not built here (`plans/team-page-batch.md`'s Task 4).
 - Draft, playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in
   per schedule generation (see below); FAAB is per-league opt-in,
   default off (a league that hasn't turned it on still uses free instant add exactly as

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
 import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
 import { syncTeamsRosters } from "@/lib/players/sync";
 import { syncInjuryStatuses } from "@/lib/players/injuries";
@@ -6,6 +7,8 @@ import { processExpiredWaivers } from "@/lib/waivers/mutations";
 import { processFaabBids } from "@/lib/faab/mutations";
 import { processDueTrades } from "@/lib/trades/mutations";
 import { processDuePlayoffs } from "@/lib/matchups/playoffs";
+import { ensureLineupMaterialized } from "@/lib/lineups/mutations";
+import { todayUTC } from "@/lib/dates";
 
 // Vercel Hobby allows up to 60s per serverless function (default is much
 // lower). The first production run of this route did a full 32-team roster
@@ -42,6 +45,24 @@ export async function GET(request: Request) {
   const waiverResults = await processExpiredWaivers();
   const faabResults = await processFaabBids();
   const tradeResults = await processDueTrades();
+
+  // The persistent-lineup feature's primary write path — see
+  // src/lib/lineups/mutations.ts's ensureLineupMaterialized doc comment.
+  // Placed after the waiver/FAAB/trade processing above so anyone awarded
+  // overnight lands in an open slot before anyone checks their team this
+  // morning; page views are the fallback for any team nobody's cron missed.
+  // Yesterday's included so one missed cron run heals itself the next
+  // morning, same reliability model as ingestDate(yesterdayUTC()).
+  const teams = await prisma.team.findMany({ select: { id: true } });
+  const materializeDates = Array.from(new Set([date, todayUTC()]));
+  let lineupsMaterialized = 0;
+  for (const team of teams) {
+    for (const d of materializeDates) {
+      await ensureLineupMaterialized(team.id, d);
+      lineupsMaterialized++;
+    }
+  }
+
   await processDuePlayoffs();
 
   const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
@@ -55,5 +76,6 @@ export async function GET(request: Request) {
     waivers: waiverResults,
     faab: faabResults,
     trades: tradeResults,
+    lineups: { teams: teams.length, dates: materializeDates, materialized: lineupsMaterialized },
   });
 }

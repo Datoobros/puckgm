@@ -24,6 +24,8 @@ import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isLeagueCommissioner, isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
 import { activeRosterCap } from "@/lib/rosters/mutations";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
+import { clearLineupFrom, ensureLineupMaterialized } from "@/lib/lineups/mutations";
+import { todayUTC } from "@/lib/dates";
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -415,6 +417,7 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
   const now = new Date();
 
   const ops: Prisma.PrismaPromise<unknown>[] = [];
+  const playerMovesForLineupClear: { teamId: string; playerId: string }[] = [];
   for (const item of trade.items) {
     if (item.itemType === "PLAYER" && item.playerId) {
       const oldSlot = await prisma.rosterSlot.findFirst({
@@ -427,6 +430,7 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
           data: { teamId: item.toTeamId, playerId: item.playerId, slotType: oldSlot.slotType, tradeAcquiredAt: now },
         }),
       );
+      playerMovesForLineupClear.push({ teamId: item.fromTeamId, playerId: item.playerId });
     } else if (item.itemType === "FAAB" && item.faabAmount) {
       const [fromBudget, toBudget] = await Promise.all([
         getOrInitFaabBudget(item.fromTeamId, league.currentSeason, settings.faabBudget),
@@ -452,6 +456,16 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
     }),
   ]);
 
+  // A traded-away player has no business still counting toward his old
+  // team's lineup/score from today forward — same stale-LineupEntry scoring
+  // bug already fixed for drops/farm/IR moves (src/lib/rosters/mutations.ts).
+  // Runs regardless of caller (cron-driven processDueTrades or a
+  // commissioner's forceProcessTrade) since it's fixing a real bug, not an
+  // interactive-only convenience.
+  for (const { teamId, playerId } of playerMovesForLineupClear) {
+    await clearLineupFrom(teamId, playerId);
+  }
+
   return "PROCESSED";
 }
 
@@ -473,7 +487,17 @@ export async function forceProcessTrade(input: ForceProcessTradeInput): Promise<
   }
   if (trade.state !== "UNDER_REVIEW") throw new Error("Only an accepted (under-review) trade can be forced through.");
 
-  await executeTradeTransfers(input.tradeId, { bypassRoomCheck: true });
+  const outcome = await executeTradeTransfers(input.tradeId, { bypassRoomCheck: true });
+  // Interactive path (unlike the cron's processDueTrades, which is followed
+  // by its own bulk yesterday+today materialize step for every team) — both
+  // sides need their lineups materialized right away so a newly-acquired
+  // player shows up in an open slot instead of waiting for tomorrow's cron.
+  if (outcome === "PROCESSED") {
+    await Promise.all([
+      ensureLineupMaterialized(trade.proposedByTeamId, todayUTC()),
+      ensureLineupMaterialized(counterpartyTeamId, todayUTC()),
+    ]);
+  }
 }
 
 export interface TradeDueResult {

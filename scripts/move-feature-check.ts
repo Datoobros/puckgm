@@ -69,13 +69,28 @@ async function main() {
       await setIr(p.id);
     }
 
+    // Task 4 (persistent lineups): setLineupSlot now materializes the date
+    // before its capacity check, and materialization auto-fills every
+    // never-placed active player by career points. p1/p5/p6 are all real
+    // Centers competing for this league's single C slot (with the runner-up
+    // also UTIL-eligible) — the very first setLineupSlot call below would
+    // auto-fill two of the three into C/UTIL before this script's own
+    // explicit placements even run, and whichever one auto-fill picked for
+    // C might not be p1. Bench all three explicitly first (BE has no
+    // capacity limit, so this always succeeds regardless of what auto-fill
+    // did) to clear C/UTIL back to empty, then place everyone exactly as
+    // this test intends.
+    await setLineupSlot({ leagueId, teamId, playerId: p1.id, date: DATE, slot: "BE", managerUserId: MANAGER });
+    await setLineupSlot({ leagueId, teamId, playerId: p5.id, date: DATE, slot: "BE", managerUserId: MANAGER });
+    await setLineupSlot({ leagueId, teamId, playerId: p6.id, date: DATE, slot: "BE", managerUserId: MANAGER });
+
     await setLineupSlot({ leagueId, teamId, playerId: p1.id, date: DATE, slot: "C", managerUserId: MANAGER });
     await setLineupSlot({ leagueId, teamId, playerId: p2.id, date: DATE, slot: "L", managerUserId: MANAGER });
     await setLineupSlot({ leagueId, teamId, playerId: p3.id, date: DATE, slot: "D", managerUserId: MANAGER });
     await setLineupSlot({ leagueId, teamId, playerId: p4.id, date: DATE, slot: "D", managerUserId: MANAGER });
     await setLineupSlot({ leagueId, teamId, playerId: p5.id, date: DATE, slot: "UTIL", managerUserId: MANAGER });
-    // p6 stays unset -> defaults to Bench.
-    console.log("setup complete: p1=C p2=L p3=D p4=D p5=UTIL p6=BE(implicit), p7/p8 on IR");
+    // p6 stays explicitly Bench (set above).
+    console.log("setup complete: p1=C p2=L p3=D p4=D p5=UTIL p6=BE(explicit), p7/p8 on IR");
 
     console.log("\n-- TEST A: swapLineupSlots — bench player swaps into a full C slot --");
     await swapLineupSlots({
@@ -93,19 +108,25 @@ async function main() {
     assert(slotOf(afterA, p6.id) === "C", "mover (p6) landed in the target slot C");
     assert(slotOf(afterA, p1.id) === "BE", "displaced occupant (p1) landed on Bench (mover's own origin)");
 
-    console.log("\n-- TEST B: stale LineupEntry no longer blocks slot capacity --");
+    console.log("\n-- TEST B: sendToFarm clears the farmed player's LineupEntry outright (Task 4), and the older capacity fix still holds --");
     await sendToFarm({ leagueId, teamId, playerId: p5.id, managerUserId: MANAGER });
-    // p5's UTIL LineupEntry row for DATE is now stale (rosterSlot moved to FARM,
-    // nothing cleared it — sendToFarm itself is untouched by this feature).
-    const staleEntry = await prisma.lineupEntry.findUnique({
+    // Before Task 4 (persistent lineups), p5's UTIL LineupEntry row for DATE
+    // would have been left stale (rosterSlot moved to FARM, nothing cleared
+    // the lineup row) and this test proved capacity checks correctly
+    // filtered it out. Task 4's sendToFarm now calls clearLineupFrom
+    // directly, so the row is gone outright — a strictly better fix for the
+    // same underlying scoring bug (a farmed player's row could otherwise
+    // still count toward this team's score). Assert the row is really gone,
+    // then re-prove the older "capacity ignores non-active rows" fix still
+    // holds by using it for something else: a still-active player claiming
+    // that same now-vacant UTIL slot.
+    const clearedEntry = await prisma.lineupEntry.findUnique({
       where: { teamId_playerId_gameDate: { teamId, playerId: p5.id, gameDate: new Date(`${DATE}T00:00:00.000Z`) } },
     });
-    assert(!!staleEntry && staleEntry.lineupSlot === "UTIL", "p5's stale UTIL LineupEntry still exists after being farmed");
-    // Before the fix this would throw ("All 1 UTIL slots are already filled")
-    // because the count query didn't filter to currently-active players.
+    assert(clearedEntry === null, "p5's UTIL LineupEntry was cleared by sendToFarm, not left stale");
     await setLineupSlot({ leagueId, teamId, playerId: p4.id, date: DATE, slot: "UTIL", managerUserId: MANAGER });
     const afterB = await getLineupForDate(teamId, DATE);
-    assert(slotOf(afterB, p4.id) === "UTIL", "p4 moved into UTIL despite p5's stale row — capacity check ignores non-active players");
+    assert(slotOf(afterB, p4.id) === "UTIL", "p4 moved into the vacated UTIL slot cleanly");
 
     console.log("\n-- TEST C: placeOnIrClearingLineup clears that date's LineupEntry --");
     await setIr(p2.id);
