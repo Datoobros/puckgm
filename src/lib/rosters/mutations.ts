@@ -17,6 +17,7 @@ import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 import { setLineupSlot, swapLineupSlots, ensureLineupMaterialized, clearLineupFrom } from "@/lib/lineups/mutations";
 import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
+import { assertPlayersNotTradeLocked } from "@/lib/trades/locks";
 import { todayUTC } from "@/lib/dates";
 
 export function activeRosterCap(settings: LeagueSettings): number {
@@ -118,6 +119,9 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
     if (!input.dropPlayerId) {
       throw new Error(`Active roster is full (${cap} max).`);
     }
+    // Trade integrity (plans/trades-batch.md Task 1) — can't make room by
+    // dropping a player who's locked in a pending (UNDER_REVIEW) trade.
+    await assertPlayersNotTradeLocked(input.leagueId, [input.dropPlayerId], "dropped");
     const dropSlot = await prisma.rosterSlot.findFirst({
       where: { teamId: input.teamId, playerId: input.dropPlayerId, slotType: "ACTIVE", effectiveTo: null },
     });
@@ -177,6 +181,7 @@ export async function dropPlayerFromRoster(input: DropPlayerInput): Promise<void
     throw new Error("You don't manage this team.");
   }
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't drop players.");
+  await assertPlayersNotTradeLocked(team.leagueId, [input.playerId], "dropped");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, effectiveTo: null },
@@ -222,6 +227,7 @@ export async function sendToFarm(input: SendToFarmInput): Promise<{ waiverExpose
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't send players down.");
+  await assertPlayersNotTradeLocked(input.leagueId, [input.playerId], "sent to the farm");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE", effectiveTo: null },
@@ -280,6 +286,7 @@ export async function callUpToActive(input: CallUpInput): Promise<void> {
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't call up players.");
+  await assertPlayersNotTradeLocked(input.leagueId, [input.playerId], "called up");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "FARM", effectiveTo: null },
@@ -338,6 +345,7 @@ export async function placeOnIR(input: PlaceOnIrInput): Promise<void> {
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't place a player on IR.");
+  await assertPlayersNotTradeLocked(input.leagueId, [input.playerId], "placed on IR");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE", effectiveTo: null },
@@ -390,6 +398,7 @@ export async function activateFromIR(input: ActivateFromIrInput): Promise<void> 
   if (!team || team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   if (!isTeamManager(team, input.managerUserId)) throw new Error("You don't manage this team.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't activate a player from IR.");
+  await assertPlayersNotTradeLocked(input.leagueId, [input.playerId], "activated");
 
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, slotType: "IR", effectiveTo: null },

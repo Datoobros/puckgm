@@ -375,6 +375,6 @@ current shape in PROGRESS.md if you touch that section.
 
 ## Checklist
 
-- [ ] Task 1 — trade integrity backend (#4/#5)
+- [x] Task 1 — trade integrity backend (#4/#5)
 - [ ] Task 2 — page split + ESPN builder + confirm modal + redirect (#1/#2/#3)
 - [ ] Task 3 — fit UX + locked-player UI (#4/#5)

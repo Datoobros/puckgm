@@ -7,8 +7,12 @@
 // pulled from a real trade's items.
 
 import { prisma } from "@/lib/db";
-import { createLeague, createTeam } from "@/lib/leagues/mutations";
-import { addPlayerToRoster } from "@/lib/rosters/mutations";
+import { createLeague, createTeam, deleteLeague } from "@/lib/leagues/mutations";
+// commissionerAddPlayer, not addPlayerToRoster: free agency is gated until a
+// league's startup draft completes (team-page batch Task 3), and this
+// disposable league never runs one — same trades-batch Task 1 adaptation as
+// scripts/trades-check.ts.
+import { commissionerAddPlayer } from "@/lib/rosters/mutations";
 import { proposeTrade, respondToTrade, getTradeDetailById } from "@/lib/trades/mutations";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
@@ -37,8 +41,8 @@ async function main() {
   const giveMe = await fixture("Give");
   const receiveMe = await fixture("Receive");
 
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: giveMe.id, managerUserId: "trade-review-test-A" });
-  await addPlayerToRoster({ leagueId, teamId: teamB, playerId: receiveMe.id, managerUserId: "trade-review-test-B" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: giveMe.id, callerUserId: "trade-review-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamB, playerId: receiveMe.id, callerUserId: "trade-review-test-A" });
 
   console.log("\n-- getTradeDetailById returns the right shape, incl. playerId --");
   const { tradeId } = await proposeTrade({
@@ -94,13 +98,19 @@ async function main() {
   console.log("\nAll trade-review checks passed.");
 
   console.log("\n-- cleanup --");
-  await prisma.tradeVeto.deleteMany({ where: { trade: { leagueId } } });
-  await prisma.tradeItem.deleteMany({ where: { trade: { leagueId } } });
-  await prisma.trade.deleteMany({ where: { leagueId } });
-  await prisma.transactionLog.deleteMany({ where: { leagueId } });
-  await prisma.rosterSlot.deleteMany({ where: { team: { leagueId } } });
-  await prisma.team.deleteMany({ where: { leagueId } });
-  await prisma.league.delete({ where: { id: leagueId } });
+  // Task 1 adaptation (plans/trades-batch.md): this script's cleanup used to
+  // be a hand-rolled FK teardown list (TradeVeto -> TradeItem -> Trade ->
+  // TransactionLog -> RosterSlot -> Team -> League) written before the
+  // team-page batch's Task 4 (persistent lineups) shipped. commissionerAddPlayer
+  // now calls ensureLineupMaterialized, which creates real LineupEntry rows
+  // this league never accounted for — deleting Team while a LineupEntry
+  // still referenced it hit a live FK violation. Rather than add one more
+  // table to a list that's already fallen out of sync once, switch to the
+  // real deleteLeague (src/lib/leagues/mutations.ts) — the same single
+  // source of truth for FK teardown order that scripts/trades-check.ts and
+  // scripts/trade-integrity-check.ts already use, kept up to date every time
+  // a new feature adds a referencing table.
+  await deleteLeague(leagueId, "trade-review-test-A");
   await prisma.player.deleteMany({ where: { id: { in: [giveMe.id, receiveMe.id] } } });
   console.log("cleaned up");
 }

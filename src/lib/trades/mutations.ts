@@ -26,6 +26,7 @@ import { activeRosterCap } from "@/lib/rosters/mutations";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
 import { clearLineupFrom, ensureLineupMaterialized } from "@/lib/lineups/mutations";
 import { todayUTC } from "@/lib/dates";
+import { assertPlayersNotTradeLocked, getTradeLockedPlayerIds } from "@/lib/trades/locks";
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -43,6 +44,11 @@ export interface TradeableAssets {
     currentNhlOrg: string | null;
     headshotUrl: string | null;
     slotType: string;
+    // Trade integrity (plans/trades-batch.md Task 1) — lets the builder (Task
+    // 2/3) disable a row and show why, rather than letting the user select an
+    // asset that proposeTrade would just reject anyway.
+    lockedInTradeId: string | null;
+    onWaiversUntil: Date | null;
   }[];
   picks: { id: string; season: number; round: number }[];
   availableFaab: number;
@@ -58,6 +64,9 @@ export async function getTradeableAssets(teamId: string): Promise<TradeableAsset
     getAvailableBudget(teamId, team.league.currentSeason, settings.faabBudget),
   ]);
 
+  const lockedByPlayer = await getTradeLockedPlayerIds(team.leagueId, slots.map((s) => s.playerId));
+  const now = Date.now();
+
   return {
     players: slots.map((s) => ({
       id: s.playerId,
@@ -66,6 +75,8 @@ export async function getTradeableAssets(teamId: string): Promise<TradeableAsset
       currentNhlOrg: s.player.currentNhlOrg,
       headshotUrl: s.player.headshotUrl,
       slotType: s.slotType,
+      lockedInTradeId: lockedByPlayer.get(s.playerId) ?? null,
+      onWaiversUntil: s.waiverExpiresAt && s.waiverExpiresAt.getTime() > now ? s.waiverExpiresAt : null,
     })),
     picks: picks.map((p) => ({ id: p.id, season: p.season, round: p.round })),
     availableFaab,
@@ -81,6 +92,62 @@ function getCounterpartyTeamId(trade: TradeWithItemsForCounterparty): string {
   const item = trade.items[0];
   if (!item) throw new Error("Trade has no items.");
   return item.fromTeamId === trade.proposedByTeamId ? item.toTeamId : item.fromTeamId;
+}
+
+export interface ProposalItemDraft {
+  fromTeamId: string;
+  toTeamId: string;
+  itemType: "PLAYER" | "PICK" | "FAAB";
+  playerId?: string;
+  draftPickId?: string;
+  faabAmount?: number;
+}
+
+/** Pure item-list construction, extracted from proposeTrade so both it and
+ * the builder's pre-flight fit-check action (Task 3's checkTradeFitAction)
+ * can build the same shape without duplicating the give/receive -> per-item
+ * fromTeamId/toTeamId mapping. */
+export function buildProposalItems(input: {
+  proposingTeamId: string;
+  counterpartyTeamId: string;
+  give: TradeAssetSelection;
+  receive: TradeAssetSelection;
+}): ProposalItemDraft[] {
+  return [
+    ...input.give.playerIds.map((playerId) => ({
+      fromTeamId: input.proposingTeamId, toTeamId: input.counterpartyTeamId, itemType: "PLAYER" as const, playerId,
+    })),
+    ...input.receive.playerIds.map((playerId) => ({
+      fromTeamId: input.counterpartyTeamId, toTeamId: input.proposingTeamId, itemType: "PLAYER" as const, playerId,
+    })),
+    ...input.give.pickIds.map((draftPickId) => ({
+      fromTeamId: input.proposingTeamId, toTeamId: input.counterpartyTeamId, itemType: "PICK" as const, draftPickId,
+    })),
+    ...input.receive.pickIds.map((draftPickId) => ({
+      fromTeamId: input.counterpartyTeamId, toTeamId: input.proposingTeamId, itemType: "PICK" as const, draftPickId,
+    })),
+    ...(input.give.faabAmount > 0
+      ? [{ fromTeamId: input.proposingTeamId, toTeamId: input.counterpartyTeamId, itemType: "FAAB" as const, faabAmount: input.give.faabAmount }]
+      : []),
+    ...(input.receive.faabAmount > 0
+      ? [{ fromTeamId: input.counterpartyTeamId, toTeamId: input.proposingTeamId, itemType: "FAAB" as const, faabAmount: input.receive.faabAmount }]
+      : []),
+  ];
+}
+
+/** Throws naming the first player found sitting in a waiver claim window
+ * (RosterSlot.waiverExpiresAt still in the future) — another team may claim
+ * him mid-trade, so he's blocked from being traded at all rather than trying
+ * to reconcile a claim against a pending trade. */
+export async function assertPlayersNotOnWaivers(playerIds: string[]): Promise<void> {
+  if (playerIds.length === 0) return;
+  const slot = await prisma.rosterSlot.findFirst({
+    where: { playerId: { in: playerIds }, effectiveTo: null, waiverExpiresAt: { gt: new Date() } },
+    include: { player: { select: { fullName: true } } },
+  });
+  if (slot) {
+    throw new Error(`${slot.player.fullName} is on waivers until ${slot.waiverExpiresAt!.toISOString()} and can't be traded.`);
+  }
 }
 
 export interface ProposeTradeInput {
@@ -127,6 +194,13 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
   await assertOwnsAssets(input.proposingTeamId, input.give);
   await assertOwnsAssets(input.counterpartyTeamId, input.receive);
 
+  // Trade integrity (plans/trades-batch.md Task 1, issues #4/#5): a locked
+  // (already-UNDER_REVIEW-elsewhere) or on-waivers player can't be offered
+  // or requested on either side of a *new* proposal.
+  const allPlayerIds = [...input.give.playerIds, ...input.receive.playerIds];
+  await assertPlayersNotTradeLocked(input.leagueId, allPlayerIds, "traded");
+  await assertPlayersNotOnWaivers(allPlayerIds);
+
   if (input.give.faabAmount > 0) {
     const available = await getAvailableBudget(input.proposingTeamId, proposingTeam.league.currentSeason, settings.faabBudget);
     if (input.give.faabAmount > available) throw new Error(`You only have $${available} FAAB available to offer.`);
@@ -136,39 +210,32 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
     if (input.receive.faabAmount > available) throw new Error(`${counterpartyTeam.name} only has $${available} FAAB available.`);
   }
 
+  const draftItems = buildProposalItems({
+    proposingTeamId: input.proposingTeamId,
+    counterpartyTeamId: input.counterpartyTeamId,
+    give: input.give,
+    receive: input.receive,
+  });
+
+  // Fit is the *proposer's* responsibility at propose time — the
+  // counterparty's own room (if any) is only checked when they accept
+  // (respondToTrade). This is deliberately allowed to reach UNDER_REVIEW
+  // with the proposer no longer fitting if they add players after
+  // proposing — that's what the stuck-trade notification is for.
+  const proposeFit = await computeTradeFit(input.leagueId, draftItems);
+  const proposerOverflow = worstOverflowForTeam(proposeFit, input.proposingTeamId);
+  if (proposerOverflow) {
+    throw new Error(
+      `This trade would leave you ${proposerOverflow.excess} over your ${TIER_LABEL[proposerOverflow.slotType]} roster cap — drop ${proposerOverflow.excess} player(s) first or add more of yours to the offer.`,
+    );
+  }
+
   const tradeId = await prisma.$transaction(async (tx) => {
     const trade = await tx.trade.create({
       data: { leagueId: input.leagueId, proposedByTeamId: input.proposingTeamId, state: "PROPOSED" },
     });
 
-    const items: {
-      tradeId: string;
-      fromTeamId: string;
-      toTeamId: string;
-      itemType: "PLAYER" | "PICK" | "FAAB";
-      playerId?: string;
-      draftPickId?: string;
-      faabAmount?: number;
-    }[] = [
-      ...input.give.playerIds.map((playerId) => ({
-        tradeId: trade.id, fromTeamId: input.proposingTeamId, toTeamId: input.counterpartyTeamId, itemType: "PLAYER" as const, playerId,
-      })),
-      ...input.receive.playerIds.map((playerId) => ({
-        tradeId: trade.id, fromTeamId: input.counterpartyTeamId, toTeamId: input.proposingTeamId, itemType: "PLAYER" as const, playerId,
-      })),
-      ...input.give.pickIds.map((draftPickId) => ({
-        tradeId: trade.id, fromTeamId: input.proposingTeamId, toTeamId: input.counterpartyTeamId, itemType: "PICK" as const, draftPickId,
-      })),
-      ...input.receive.pickIds.map((draftPickId) => ({
-        tradeId: trade.id, fromTeamId: input.counterpartyTeamId, toTeamId: input.proposingTeamId, itemType: "PICK" as const, draftPickId,
-      })),
-      ...(input.give.faabAmount > 0
-        ? [{ tradeId: trade.id, fromTeamId: input.proposingTeamId, toTeamId: input.counterpartyTeamId, itemType: "FAAB" as const, faabAmount: input.give.faabAmount }]
-        : []),
-      ...(input.receive.faabAmount > 0
-        ? [{ tradeId: trade.id, fromTeamId: input.counterpartyTeamId, toTeamId: input.proposingTeamId, itemType: "FAAB" as const, faabAmount: input.receive.faabAmount }]
-        : []),
-    ];
+    const items = draftItems.map((item) => ({ tradeId: trade.id, ...item }));
     await tx.tradeItem.createMany({ data: items });
     await tx.transactionLog.create({
       data: { leagueId: input.leagueId, type: "TRADE", actorTeamId: input.proposingTeamId, payload: { tradeId: trade.id, event: "PROPOSED" } },
@@ -210,7 +277,46 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
   }
 
   if (input.accept) {
+    // Full re-validation, as if proposing fresh (Rules, plans/trades-batch.md
+    // Task 1): ownership, locks, waivers, and FAAB availability can all have
+    // drifted since this trade was proposed.
+    await assertItemsStillOwned(trade.items);
+
+    const playerIds = trade.items
+      .filter((i): i is typeof i & { playerId: string } => i.itemType === "PLAYER" && !!i.playerId)
+      .map((i) => i.playerId);
+    await assertPlayersNotTradeLocked(trade.leagueId, playerIds, "traded");
+    await assertPlayersNotOnWaivers(playerIds);
+
+    const league = await prisma.league.findUniqueOrThrow({ where: { id: trade.leagueId } });
+    const settings = league.settingsJson as unknown as LeagueSettings;
+    await assertFaabStillAvailable(trade.items, league.currentSeason, settings.faabBudget);
+
+    // Fit is the *acceptor's* responsibility here — the proposer's room was
+    // already their own problem to solve at propose time.
+    const fit = await computeTradeFit(trade.leagueId, trade.items);
+    const acceptorOverflow = worstOverflowForTeam(fit, counterpartyTeamId);
+    if (acceptorOverflow) {
+      throw new Error(`You must drop ${acceptorOverflow.excess} player(s) to accept this trade.`);
+    }
+
     const now = new Date();
+    // Accepting supersedes every other still-PROPOSED trade in the league
+    // touching any of the same players (either side) — otherwise one of
+    // those could be accepted later and fail at processing because the
+    // player's already gone.
+    const superseded = playerIds.length > 0
+      ? await prisma.trade.findMany({
+          where: {
+            leagueId: trade.leagueId,
+            state: "PROPOSED",
+            id: { not: trade.id },
+            items: { some: { itemType: "PLAYER", playerId: { in: playerIds } } },
+          },
+          select: { id: true },
+        })
+      : [];
+
     await prisma.$transaction([
       prisma.trade.update({
         where: { id: input.tradeId },
@@ -219,6 +325,17 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
       prisma.transactionLog.create({
         data: { leagueId: trade.leagueId, type: "TRADE", actorTeamId: counterpartyTeamId, payload: { tradeId: trade.id, event: "ACCEPTED" } },
       }),
+      ...superseded.flatMap((s) => [
+        prisma.trade.update({ where: { id: s.id }, data: { state: "CANCELLED" } }),
+        prisma.transactionLog.create({
+          data: {
+            leagueId: trade.leagueId,
+            type: "TRADE",
+            actorTeamId: counterpartyTeamId,
+            payload: { tradeId: s.id, event: "SUPERSEDED", byTradeId: trade.id },
+          },
+        }),
+      ]),
     ]);
   } else {
     await prisma.$transaction([
@@ -348,21 +465,29 @@ interface TradeItemForFit {
   fromTeamId: string;
   toTeamId: string;
   itemType: string;
-  playerId: string | null;
+  playerId?: string | null;
+}
+
+export interface TradeFit {
+  fits: boolean;
+  overflow: { teamId: string; slotType: "ACTIVE" | "FARM" | "IR"; excess: number }[];
 }
 
 /** Net effect per team per slot type (current count − what's leaving of
  * that type + what's arriving of that type, using each player's CURRENT
  * slot type at check time — not a snapshot from proposal time). No existing
  * mutation in this app checks capacity for more than one team or item at
- * once; this is the first. */
-async function wouldFitAfterTrade(trade: { leagueId: string; items: TradeItemForFit[] }): Promise<boolean> {
-  const playerItems = trade.items.filter(
+ * once; this is the first. Reports *how many* over per team per tier
+ * (`overflow`), not just a bare boolean — the propose/accept flows (Task 1)
+ * and the builder's pre-flight check (Task 3) both need the actual N to show
+ * "drop N player(s)" rather than a generic failure. */
+export async function computeTradeFit(leagueId: string, items: TradeItemForFit[]): Promise<TradeFit> {
+  const playerItems = items.filter(
     (i): i is TradeItemForFit & { playerId: string } => i.itemType === "PLAYER" && !!i.playerId,
   );
-  if (playerItems.length === 0) return true;
+  if (playerItems.length === 0) return { fits: true, overflow: [] };
 
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: trade.leagueId } });
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = league.settingsJson as unknown as LeagueSettings;
   const caps: Record<"ACTIVE" | "FARM" | "IR", number> = {
     ACTIVE: activeRosterCap(settings),
@@ -375,6 +500,7 @@ async function wouldFitAfterTrade(trade: { leagueId: string; items: TradeItemFor
   });
   const slotTypeByPlayer = new Map(slots.map((s) => [s.playerId, s.slotType]));
 
+  const overflow: TradeFit["overflow"] = [];
   const teamIds = Array.from(new Set(playerItems.flatMap((i) => [i.fromTeamId, i.toTeamId])));
   for (const teamId of teamIds) {
     const counts = await Promise.all(
@@ -392,10 +518,72 @@ async function wouldFitAfterTrade(trade: { leagueId: string; items: TradeItemFor
     }
 
     for (const slotType of ["ACTIVE", "FARM", "IR"] as const) {
-      if (current[slotType] > caps[slotType]) return false;
+      if (current[slotType] > caps[slotType]) {
+        overflow.push({ teamId, slotType, excess: current[slotType] - caps[slotType] });
+      }
     }
   }
-  return true;
+  return { fits: overflow.length === 0, overflow };
+}
+
+const TIER_LABEL: Record<"ACTIVE" | "FARM" | "IR", string> = { ACTIVE: "Active", FARM: "Farm", IR: "IR" };
+
+/** The single worst (highest-excess) overflow row for one team, or null if
+ * that team has none — "worst tier first" per the Rules when a team is over
+ * in more than one tier at once. */
+function worstOverflowForTeam(fit: TradeFit, teamId: string): TradeFit["overflow"][number] | null {
+  const rows = fit.overflow.filter((o) => o.teamId === teamId);
+  if (rows.length === 0) return null;
+  return rows.reduce((worst, r) => (r.excess > worst.excess ? r : worst));
+}
+
+/** Re-validates every item's ownership at accept time, as if proposing
+ * fresh — a player or pick may have moved on (dropped, traded elsewhere via
+ * commissioner override, etc.) in the time between propose and accept. */
+async function assertItemsStillOwned(
+  items: { fromTeamId: string; itemType: string; playerId: string | null; draftPickId: string | null }[],
+): Promise<void> {
+  const playerIdsByTeam = new Map<string, string[]>();
+  const pickIdsByTeam = new Map<string, string[]>();
+  for (const item of items) {
+    if (item.itemType === "PLAYER" && item.playerId) {
+      playerIdsByTeam.set(item.fromTeamId, [...(playerIdsByTeam.get(item.fromTeamId) ?? []), item.playerId]);
+    } else if (item.itemType === "PICK" && item.draftPickId) {
+      pickIdsByTeam.set(item.fromTeamId, [...(pickIdsByTeam.get(item.fromTeamId) ?? []), item.draftPickId]);
+    }
+  }
+  for (const [teamId, playerIds] of playerIdsByTeam) {
+    const owned = await prisma.rosterSlot.count({ where: { teamId, playerId: { in: playerIds }, effectiveTo: null } });
+    if (owned !== playerIds.length) {
+      throw new Error("This trade is no longer valid — not every player is still owned by the team that offered them.");
+    }
+  }
+  for (const [teamId, pickIds] of pickIdsByTeam) {
+    const owned = await prisma.draftPick.count({ where: { id: { in: pickIds }, currentOwnerId: teamId } });
+    if (owned !== pickIds.length) {
+      throw new Error("This trade is no longer valid — not every pick is still owned by the team that offered them.");
+    }
+  }
+}
+
+/** Re-checks FAAB availability at accept time. getAvailableBudget already
+ * subtracts *this* trade's own pending FAAB commitment (it's still PROPOSED
+ * at the point this runs, so it's counted in the same pending-trades sum as
+ * every other open trade) — add it back before comparing, otherwise a
+ * trade's own promised amount would be double-counted against itself. */
+async function assertFaabStillAvailable(
+  items: { fromTeamId: string; itemType: string; faabAmount: number | null }[],
+  season: number,
+  faabBudget: number,
+): Promise<void> {
+  for (const item of items) {
+    if (item.itemType !== "FAAB" || !item.faabAmount) continue;
+    const available = await getAvailableBudget(item.fromTeamId, season, faabBudget);
+    const availableExcludingThisTrade = available + item.faabAmount;
+    if (item.faabAmount > availableExcludingThisTrade) {
+      throw new Error(`This trade is no longer valid — insufficient FAAB (only $${availableExcludingThisTrade} available).`);
+    }
+  }
 }
 
 export type TradeExecutionOutcome = "PROCESSED" | "STILL_PENDING";
@@ -408,8 +596,9 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
   const trade = await prisma.trade.findUnique({ where: { id: tradeId }, include: { items: true } });
   if (!trade) throw new Error("Trade not found.");
 
-  if (!opts.bypassRoomCheck && !(await wouldFitAfterTrade(trade))) {
-    return "STILL_PENDING";
+  if (!opts.bypassRoomCheck) {
+    const fit = await computeTradeFit(trade.leagueId, trade.items);
+    if (!fit.fits) return "STILL_PENDING";
   }
 
   const league = await prisma.league.findUniqueOrThrow({ where: { id: trade.leagueId } });

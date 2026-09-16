@@ -1583,6 +1583,142 @@ player during the entire off-season.
   Adding a 14th player via `commissionerAddPlayer` and reloading the team page showed him
   auto-filled into the one open UTIL slot immediately — no manual lineup action needed.
 
+## Trade integrity: locks, fit checks, supersede-on-accept (trades batch, Task 1)
+
+First of a three-task batch (`plans/trades-batch.md`, six user-reported trade issues planned
+in one pass). This task: issues #4 and #5's backend half. Before this, `respondToTrade`
+(accept) checked nothing about rosters — not fit, not even whether the offered items were
+still owned — and nothing stopped a player in an accepted (`UNDER_REVIEW`) trade from being
+dropped, farmed, called up, IR'd, put in a second trade, or claimed off waivers while the
+first trade was still pending. Fit was only ever evaluated at processing time, so a
+non-fitting trade could sit `UNDER_REVIEW` forever with no one told why.
+
+- **Rules (confirmed with the user, not re-litigated here — see the plan for the full list)**:
+  a player who's a `PLAYER` item in any `UNDER_REVIEW` trade is *locked* — can't be dropped,
+  farmed, called up, IR'd/activated, put in a new trade proposal, or claimed on waivers, but
+  his **lineup slot can still be changed** (he keeps playing for his current owner until the
+  trade actually processes, matching ESPN). Commissioner override functions
+  (`commissionerDropPlayer`/`commissionerMovePlayer`/`commissionerAddPlayer`,
+  `forceProcessTrade`) are **not** gated by any of this. A `FARM` player currently sitting in
+  a waiver-claim window can't be traded at all (blocked at propose *and* accept time, rather
+  than trying to reconcile a claim against a pending trade). **Fit is each side's own
+  responsibility at its own decision point** — the proposer's roster is checked when *they*
+  propose, the acceptor's when *they* accept — so a trade can still reach `UNDER_REVIEW` with
+  the *proposer's* room having since evaporated (they added players after proposing, or
+  something else changed their roster); that's what the stuck-trade notification (below)
+  exists for. Processing behavior itself is unchanged — a trade that doesn't fit when its
+  review window ends still just stays `UNDER_REVIEW` and retries daily.
+- **New `src/lib/trades/locks.ts`** — a deliberate leaf module, importing only `@/lib/db`.
+  The lock check has to run *inside* `rosters/mutations.ts` (drop/farm/callup/IR) and
+  `waivers/mutations.ts` (`submitWaiverClaim`), but those two already get imported *from*
+  `trades/mutations.ts` (`activeRosterCap`, `voidPendingClaimsForPlayer`) — putting the check
+  in `trades/mutations.ts` itself would have created the same circular-import shape already
+  hit and avoided once before, for the free-agency gate (team-page batch Task 3's
+  `rosters/ownership.ts` split). `getTradeLockedPlayerIds(leagueId, playerIds?)` returns a
+  `playerId -> tradeId` map for every player locked by an `UNDER_REVIEW` trade in the league;
+  `assertPlayersNotTradeLocked(leagueId, playerIds, what)` throws a message naming the player
+  and what he can't be (`"<Name> is locked in a pending trade and can't be <what> until it
+  processes."`). **Every call site**: `proposeTrade` and `respondToTrade`'s accept path
+  (`src/lib/trades/mutations.ts`); `dropPlayerFromRoster`, `sendToFarm`, `callUpToActive`,
+  `placeOnIR`, `activateFromIR`, and `addPlayerToRoster`'s drop-to-make-room branch
+  (`src/lib/rosters/mutations.ts`); `submitWaiverClaim` (`src/lib/waivers/mutations.ts`,
+  belt-and-braces — a locked player can't newly reach waivers since `sendToFarm` is itself
+  gated, but a claim could already be pending from before he got locked). Nine call sites
+  across three files, all importing from the one leaf module, none importing back.
+- **`computeTradeFit(leagueId, items)` replaces the old private `wouldFitAfterTrade`** — same
+  net-effect-per-team-per-slot-type arithmetic (current count minus what's leaving of that
+  type plus what's arriving, using each player's *current* slot type, not a proposal-time
+  snapshot), but now returns `{ fits: boolean; overflow: { teamId, slotType, excess }[] }`
+  instead of a bare boolean, so callers can say "drop N players" instead of a generic
+  failure. `executeTradeTransfers` (the cron/force-process path) just checks `.fits`, same
+  behavior as before. New `buildProposalItems` pulls the give/receive -> per-item
+  fromTeamId/toTeamId construction out of `proposeTrade` into its own pure export, so the
+  Task 3 builder's pre-flight fit-check action can reuse it without duplicating the mapping.
+- **`proposeTrade`** now asserts (after ownership, before the existing FAAB-availability
+  checks) that no player on either side is locked or on waivers, then runs `computeTradeFit`
+  on the would-be items and throws if the **proposer** would overflow: `"This trade would
+  leave you N over your <Active/Farm/IR> roster cap — drop N player(s) first or add more of
+  yours to the offer."` (worst tier first if several).
+- **`respondToTrade`'s accept path re-validates everything as if proposing fresh**: every
+  `PLAYER`/`PICK` item still actually owned by the side that offered it (`"This trade is no
+  longer valid — not every player/pick is still owned by the team that offered them."` if
+  not), no player locked by *another* `UNDER_REVIEW` trade, no player on waivers, and every
+  `FAAB` item's amount still available (`getAvailableBudget` already nets out this same
+  trade's own pending commitment since it's still `PROPOSED` at this point — add it back
+  before comparing, or the trade's own promised amount double-counts against itself). Then
+  `computeTradeFit` again, this time for the **acceptor**: overflow throws `"You must drop N
+  player(s) to accept this trade."` Only once all of that passes does the transaction flip
+  the trade to `UNDER_REVIEW`.
+- **Accepting supersedes other proposals** — in the same transaction as the accept, every
+  other still-`PROPOSED` trade in the league touching any of the same players (either side)
+  is set to `CANCELLED`, with a `TransactionLog` payload `{ event: "SUPERSEDED", byTradeId }`.
+  Otherwise one of those could be accepted later and fail at processing because the player's
+  already gone.
+- **`getTradeableAssets`** — each player now carries `lockedInTradeId: string | null` and
+  `onWaiversUntil: Date | null`, so the Task 2/3 builder can disable a row and show why
+  instead of letting a manager select an asset `proposeTrade` would just reject.
+- **Stuck-trade notification** (`src/lib/notifications/feed.ts`) — for an `UNDER_REVIEW`
+  trade whose `reviewEndsAt` has already passed (the case `processDueTrades` leaves pending
+  and retries daily), `getTeamNotifications` now calls `computeTradeFit` and tells each side
+  the truth: the overflowing side gets `"Trade with X is waiting on you — drop N player(s) to
+  complete it"` (`TRADE_ACTION`, linking to the team page with `?dropMode=1&pendingTrade=` —
+  Task 3 makes that URL do something; harmless before then), the other side gets `"Trade with
+  X is waiting on them to clear roster room"` (`TRADE_PENDING`). A trade still inside its
+  review window keeps the existing plain "under review until …" message.
+- **Two pre-existing scripts needed adaptation, not just a re-run**, both already anticipated
+  by the plan:
+  - `scripts/trades-check.ts` and `scripts/trade-review-check.ts` rostered players via
+    `addPlayerToRoster`, which the team-page batch's free-agency gate (Task 3) now blocks on
+    a league with no completed startup draft — neither script runs one. Switched every
+    rostering call to `commissionerAddPlayer` (the ungated override tool), same fix the plan
+    called out in advance.
+  - `trades-check.ts`'s room-conflict/cancel-blocked/force-process section (`d1`/`h1`/`e1`)
+    used to fill Team B to its active cap *then* propose-and-accept three trades into it,
+    relying on the old lenient accept to reach `UNDER_REVIEW` while already full. With the
+    new accept-time fit gate, Team B can no longer accept into an already-full roster —
+    reordered to propose-and-accept all three while Team B still had room (accepting doesn't
+    move any roster rows; several `PLAYER` trades can sit `UNDER_REVIEW` at once without
+    changing anyone's actual roster count), *then* fill Team B to cap, *then* run the
+    backdate/process/cancel/force steps against each already-`UNDER_REVIEW` trade — same end
+    states as before, just reordered around the new gate. Its final FAAB section
+    (`getAvailableBudget` accounting for a pending trade's FAAB commitment) also called
+    `submitFaBid` twice afterward to prove over/under-budget bids throw/succeed —
+    `submitFaBid` is *also* free-agency-gated (same team-page batch Task 3), so both calls
+    would now fail on the gate instead of the budget check. Dropped rather than worked around
+    with a throwaway draft just to open the gate: the two calls duplicated ground
+    `scripts/faab-check.ts` already covers directly, and the assertion unique to this script
+    (`getAvailableBudget` correctly netting out a pending *trade's* FAAB commitment, not a
+    bid's) had already passed by that point.
+  - `trade-review-check.ts`'s cleanup was a hand-rolled FK teardown list
+    (`TradeVeto -> TradeItem -> Trade -> TransactionLog -> RosterSlot -> Team -> League`)
+    written before the team-page batch's Task 4 (persistent lineups) shipped —
+    `commissionerAddPlayer` now calls `ensureLineupMaterialized`, creating real `LineupEntry`
+    rows this list never accounted for, so deleting `Team` hit a live FK violation. Switched
+    to the real `deleteLeague` (`src/lib/leagues/mutations.ts`) instead of extending the
+    hand-rolled list one more time — the same single source of truth for FK teardown order
+    `trades-check.ts`/`trade-integrity-check.ts` already use, kept current every time a new
+    feature adds a referencing table (this is the *seventh*-plus instance of this exact gap
+    shape found across the project — see the trades/waivers/draft/etc. sections above — the
+    first one caught in a *script's own* cleanup rather than `deleteLeague` itself).
+- Verified in a new `scripts/trade-integrity-check.ts` against the real DB (disposable
+  3-team league, small caps — Active 3/Farm 1/IR 2 — so overflow is trivial to hit, rostered
+  via `commissionerAddPlayer`, cleaned up by exact name): a proposer overflow throws naming
+  the right N; a valid 1-for-1 proposes cleanly, then dropping the (not-yet-locked, still
+  `PROPOSED`) offered player as commissioner makes the accept throw "no longer valid"; a
+  2-for-1 into a full acceptor throws "You must drop 1 player" and succeeds once the
+  commissioner frees a slot; every lock-gated function (`proposeTrade`, `dropPlayerFromRoster`,
+  `sendToFarm`, `placeOnIR`, `callUpToActive`) throws on a locked player while `setLineupSlot`
+  and the commissioner overrides still succeed; accepting one trade correctly cancels a second
+  `PROPOSED` trade on the same player with a `SUPERSEDED` log row; a `FARM` player on waivers
+  blocks a new proposal; `computeTradeFit` on a hypothetical 3-for-0 into a roster at cap-1
+  reports `excess: 2`/`fits: false`; and `getTeamNotifications` correctly splits a stuck
+  (expired, still-overflowing) trade into "waiting on you — drop N" for the blocking side and
+  "waiting on them" for the other. Also re-ran `trades-check.ts` and `trade-review-check.ts`
+  clean after their adaptations above, `npx tsc --noEmit`, and `npm run build`. **No browser
+  check for this task** — issues #4/#5's UI half (locked-player badges, the roster-fit
+  modals, drop-mode banners) is Task 3; this pass is backend-only, and confirmed as such
+  rather than implying a browser check happened.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

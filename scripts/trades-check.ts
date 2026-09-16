@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/db";
 import { createLeague, createTeam, updateLeagueSettings, deleteLeague, setCoCommissioner } from "@/lib/leagues/mutations";
-import { addPlayerToRoster, dropPlayerFromRoster, sendToFarm, getTeamRosterView } from "@/lib/rosters/mutations";
-import { getOrInitFaabBudget, getAvailableBudget, submitFaBid } from "@/lib/faab/mutations";
+// commissionerAddPlayer, not addPlayerToRoster: free agency is gated until a
+// league's startup draft completes (team-page batch Task 3), and this
+// disposable league never runs one. commissionerAddPlayer is the ungated
+// override tool, same fix plans/trades-batch.md's Task 1 section flagged as
+// needed here.
+import { commissionerAddPlayer, dropPlayerFromRoster, sendToFarm, getTeamRosterView } from "@/lib/rosters/mutations";
+import { getOrInitFaabBudget, getAvailableBudget } from "@/lib/faab/mutations";
 import {
   proposeTrade,
   respondToTrade,
@@ -47,14 +52,13 @@ async function main() {
   const playerD1 = await fixture("D1");
   const playerH1 = await fixture("H1");
   const playerE1 = await fixture("E1");
-  const biddable = await fixture("Biddable");
 
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: vetPlayer.id, managerUserId: "trade-test-A" });
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: declinePlayer.id, managerUserId: "trade-test-A" });
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: votePlayer.id, managerUserId: "trade-test-A" });
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: playerD1.id, managerUserId: "trade-test-A" });
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: playerH1.id, managerUserId: "trade-test-A" });
-  await addPlayerToRoster({ leagueId, teamId: teamA, playerId: playerE1.id, managerUserId: "trade-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: vetPlayer.id, callerUserId: "trade-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: declinePlayer.id, callerUserId: "trade-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: votePlayer.id, callerUserId: "trade-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: playerD1.id, callerUserId: "trade-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: playerH1.id, callerUserId: "trade-test-A" });
+  await commissionerAddPlayer({ leagueId, teamId: teamA, playerId: playerE1.id, callerUserId: "trade-test-A" });
 
   const pick1 = await prisma.draftPick.create({
     data: { leagueId, season: 2028, round: 1, originalTeamId: teamA, currentOwnerId: teamA },
@@ -130,21 +134,55 @@ async function main() {
   const vetFarmSlot = await prisma.rosterSlot.findFirst({ where: { teamId: teamB, playerId: vetPlayer.id, slotType: "FARM", effectiveTo: null } });
   assert(vetFarmSlot?.waiverExpiresAt === null, "no claim window opened for the exempt re-demotion");
 
-  console.log("\n-- fill Team B's active roster to cap (8) --");
-  for (let i = 0; i < 8; i++) {
-    const filler = await prisma.player.create({ data: { fullName: `Trade Filler ${i} (delete me)`, primaryPosition: "C" } });
-    await addPlayerToRoster({ leagueId, teamId: teamB, playerId: filler.id, managerUserId: "trade-test-B" });
-  }
-  const bFull = await getTeamRosterView(teamB);
-  assert(bFull.filter((s) => s.slotType === "ACTIVE").length === 8, "Team B's active roster is at cap");
-
-  console.log("\n-- room conflict: stays UNDER_REVIEW instead of failing --");
+  // Task 1 adaptation (plans/trades-batch.md): respondToTrade's accept path
+  // now re-checks the ACCEPTOR's own fit (see src/lib/trades/mutations.ts's
+  // computeTradeFit) — Team B can no longer accept a trade that would push it
+  // over its active-roster cap. The three trades below (d1/h1/e1) each need
+  // to reach UNDER_REVIEW with Team B *already* effectively full so their
+  // downstream assertions (still-pending processing, blocked cancel,
+  // force-process bypass) still exercise what they originally tested. So:
+  // propose + accept all three FIRST, while Team B's active roster is still
+  // small (fits trivially — a trade only moves rosters once PROCESSED, so
+  // having several PLAYER trades UNDER_REVIEW at once doesn't change Team
+  // B's actual roster count), THEN fill Team B to cap, THEN run the
+  // backdate/process/cancel/force steps against each already-UNDER_REVIEW
+  // trade — same end states as before, just reordered around the new
+  // accept-time gate.
+  console.log("\n-- propose + accept d1/h1/e1 while Team B still has room --");
   const { tradeId: d1Id } = await proposeTrade({
     leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
     give: { playerIds: [playerD1.id], pickIds: [], faabAmount: 0 },
     receive: { playerIds: [], pickIds: [], faabAmount: 0 },
   });
   await respondToTrade({ tradeId: d1Id, managerUserId: "trade-test-B", accept: true });
+  const { tradeId: h1Id } = await proposeTrade({
+    leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
+    give: { playerIds: [playerH1.id], pickIds: [], faabAmount: 0 },
+    receive: { playerIds: [], pickIds: [], faabAmount: 0 },
+  });
+  await respondToTrade({ tradeId: h1Id, managerUserId: "trade-test-B", accept: true });
+  const { tradeId: e1Id } = await proposeTrade({
+    leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
+    give: { playerIds: [playerE1.id], pickIds: [], faabAmount: 0 },
+    receive: { playerIds: [], pickIds: [], faabAmount: 0 },
+  });
+  await respondToTrade({ tradeId: e1Id, managerUserId: "trade-test-B", accept: true });
+  assert(
+    (await prisma.trade.findUniqueOrThrow({ where: { id: d1Id } })).state === "UNDER_REVIEW" &&
+      (await prisma.trade.findUniqueOrThrow({ where: { id: h1Id } })).state === "UNDER_REVIEW" &&
+      (await prisma.trade.findUniqueOrThrow({ where: { id: e1Id } })).state === "UNDER_REVIEW",
+    "all three trades accepted into UNDER_REVIEW while Team B had room",
+  );
+
+  console.log("\n-- fill Team B's active roster to cap (8) --");
+  for (let i = 0; i < 8; i++) {
+    const filler = await prisma.player.create({ data: { fullName: `Trade Filler ${i} (delete me)`, primaryPosition: "C" } });
+    await commissionerAddPlayer({ leagueId, teamId: teamB, playerId: filler.id, callerUserId: "trade-test-A" });
+  }
+  const bFull = await getTeamRosterView(teamB);
+  assert(bFull.filter((s) => s.slotType === "ACTIVE").length === 8, "Team B's active roster is at cap");
+
+  console.log("\n-- room conflict: stays UNDER_REVIEW instead of failing --");
   await backdateReview(d1Id);
   const d1Results = await processDueTrades();
   const d1Outcome = d1Results.find((r) => r.tradeId === d1Id);
@@ -153,12 +191,6 @@ async function main() {
   assert(d1TradeState.state === "UNDER_REVIEW", "still UNDER_REVIEW, not a failure state");
 
   console.log("\n-- cancelTrade can no longer resolve an already-accepted, stuck trade --");
-  const { tradeId: h1Id } = await proposeTrade({
-    leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
-    give: { playerIds: [playerH1.id], pickIds: [], faabAmount: 0 },
-    receive: { playerIds: [], pickIds: [], faabAmount: 0 },
-  });
-  await respondToTrade({ tradeId: h1Id, managerUserId: "trade-test-B", accept: true });
   await backdateReview(h1Id);
   let h1CancelThrew = false;
   try {
@@ -183,12 +215,6 @@ async function main() {
   // Team C's manager co-commissioner status so a genuine non-party
   // commissioner can do the forcing, same as the real feature intends.
   await setCoCommissioner({ leagueId, teamId: teamC, callerUserId: "trade-test-A", isCoCommissioner: true });
-  const { tradeId: e1Id } = await proposeTrade({
-    leagueId, proposingTeamId: teamA, counterpartyTeamId: teamB, managerUserId: "trade-test-A",
-    give: { playerIds: [playerE1.id], pickIds: [], faabAmount: 0 },
-    receive: { playerIds: [], pickIds: [], faabAmount: 0 },
-  });
-  await respondToTrade({ tradeId: e1Id, managerUserId: "trade-test-B", accept: true });
   await backdateReview(e1Id);
   await forceProcessTrade({ tradeId: e1Id, callerUserId: "trade-test-C" });
   const e1TradeState = await prisma.trade.findUniqueOrThrow({ where: { id: e1Id } });
@@ -225,15 +251,20 @@ async function main() {
   const availableAfterTradeCommit = await getAvailableBudget(teamA, LEAGUE_SEASON, 100);
   assert(availableAfterTradeCommit === 15, "available budget reflects FAAB already promised away in a pending trade (110 - 95 = 15)");
 
-  let overCommitThrew = false;
-  try {
-    await submitFaBid({ leagueId, playerId: biddable.id, amount: 20, targetSlot: "ACTIVE", managerUserId: "trade-test-A" });
-  } catch {
-    overCommitThrew = true;
-  }
-  assert(overCommitThrew, "a bid exceeding available budget (after the pending trade commitment) throws");
-  await submitFaBid({ leagueId, playerId: biddable.id, amount: 10, targetSlot: "ACTIVE", managerUserId: "trade-test-A" });
-  console.log("  ok: a bid within the remaining available budget succeeds");
+  // Task 1 adaptation (plans/trades-batch.md): submitFaBid is ALSO
+  // free-agency-gated now (assertFreeAgencyOpen, team-page batch Task 3),
+  // same as addPlayerToRoster above — and this league never runs a draft.
+  // The two submitFaBid calls that used to follow here ("exceeding
+  // available budget throws" / "within budget succeeds") would now fail on
+  // the gate instead of the budget check, and they duplicate ground
+  // scripts/faab-check.ts already covers directly (its own "available
+  // budget blocks overcommitted simultaneous bids" section). Dropped rather
+  // than worked around with a throwaway draft just to open the gate — the
+  // assertion above (getAvailableBudget correctly netting out a pending
+  // TRADE's FAAB commitment) is the part unique to this script and it
+  // already passed.
+
+  console.log("  (submitFaBid itself not re-exercised here — see the note above; scripts/faab-check.ts covers it)");
 
   console.log("\n-- cleanup --");
   const allFixtureNames = ["Trade Test", "Trade Filler"];

@@ -6,7 +6,7 @@
 // roster state that needs a manual fix (an IR player who's actually cleared).
 
 import { prisma } from "@/lib/db";
-import { getTradesForLeague } from "@/lib/trades/mutations";
+import { getTradesForLeague, computeTradeFit } from "@/lib/trades/mutations";
 
 export interface TeamNotification {
   id: string;
@@ -58,12 +58,40 @@ export async function getTeamNotifications(leagueId: string, teamId: string): Pr
       });
     } else if (t.state === "UNDER_REVIEW" && (t.proposedByTeamId === teamId || t.counterpartyTeamId === teamId)) {
       const other = t.proposedByTeamId === teamId ? t.counterpartyTeamName : t.proposedByTeamName;
-      items.push({
-        id: `trade-review-${t.id}`,
-        kind: "TRADE_PENDING",
-        text: `Trade with ${other} is under review${t.reviewEndsAt ? ` until ${t.reviewEndsAt.toISOString().slice(0, 10)}` : ""}`,
-        href: tradesHref,
-      });
+      // Trade integrity (plans/trades-batch.md Task 1) — a trade whose
+      // review window has already elapsed but is still UNDER_REVIEW is stuck
+      // on a roster-fit conflict (processDueTrades retries it daily rather
+      // than failing outright). Name whose fault it is instead of leaving
+      // both sides staring at a generic "under review" line forever.
+      const otherTeamId = t.proposedByTeamId === teamId ? t.counterpartyTeamId : t.proposedByTeamId;
+      const stuck = !!t.reviewEndsAt && t.reviewEndsAt <= new Date();
+      const fit = stuck ? await computeTradeFit(leagueId, t.items) : null;
+      const myOverflow = fit?.overflow.some((o) => o.teamId === teamId) ?? false;
+      const theirOverflow = fit?.overflow.some((o) => o.teamId === otherTeamId) ?? false;
+
+      if (myOverflow) {
+        const n = fit!.overflow.filter((o) => o.teamId === teamId).reduce((max, o) => Math.max(max, o.excess), 0);
+        items.push({
+          id: `trade-review-${t.id}`,
+          kind: "TRADE_ACTION",
+          text: `Trade with ${other} is waiting on you — drop ${n} player(s) to complete it`,
+          href: `/leagues/${leagueId}/teams/${teamId}?dropMode=1&pendingTrade=${t.id}`,
+        });
+      } else if (theirOverflow) {
+        items.push({
+          id: `trade-review-${t.id}`,
+          kind: "TRADE_PENDING",
+          text: `Trade with ${other} is waiting on them to clear roster room`,
+          href: tradesHref,
+        });
+      } else {
+        items.push({
+          id: `trade-review-${t.id}`,
+          kind: "TRADE_PENDING",
+          text: `Trade with ${other} is under review${t.reviewEndsAt ? ` until ${t.reviewEndsAt.toISOString().slice(0, 10)}` : ""}`,
+          href: tradesHref,
+        });
+      }
     }
   }
 
