@@ -18,6 +18,7 @@ also touches). Check `git log` before starting.
 | # | Task | Issue(s) | Size |
 |---|------|----------|------|
 | 1 | Trade integrity: locks, fit checks, accept/propose validation, stuck-trade notice | #4, #5 (backend) | M–L |
+| 1b | Trade hardening: pick locks, stuck-trade auto-cancel, FAAB freeze, draft freeze, accept re-checks (loophole audit) | audit | M |
 | 2 | Trades page split + ESPN-style builder + confirm modal + redirect to My Team | #1, #2, #3 | L |
 | 3 | Roster-fit UX: "drop N players" flow on send and on accept; locked-player UI | #4, #5 (UI) | M |
 
@@ -185,6 +186,140 @@ Assert:
 Then `npx tsx scripts/trades-check.ts` and `scripts/trade-review-check.ts` pass, `npx tsc
 --noEmit`, `npm run build`. No browser check required for this task (no UI change) —
 say so explicitly in the report rather than implying one happened.
+
+---
+
+## Task 1b — Trade hardening (loophole audit, backend)
+
+Added after Task 1 shipped: a read-through of the whole trade module and everything it
+touches, looking for ways a manager could gain an edge or grief another. Every item below
+is a confirmed gap in the code as of commit `3fc0b77`, not a hypothetical. **Three
+rules decisions were put to the user and are settled** (see "Decisions already made").
+Backend only, like Task 1 — no browser check, say so in the report.
+
+### The gaps, ranked
+1. **Picks can be double-spent.** Task 1's lock covers PLAYER items only. The same
+   `DraftPick` can sit in two accepted trades; both process, the second
+   `draftPick.update({ currentOwnerId })` silently overwrites the first. Processing never
+   re-checks pick ownership. Also, **used picks** (`usedOnPlayerId` set) are listed as
+   tradeable — `getTradeableAssets` doesn't filter them and `assertOwnsAssets` doesn't
+   reject them.
+2. **Hostage trades.** After B accepts, A can fill their own roster so the trade never
+   fits. It stays UNDER_REVIEW forever, managers can't cancel an accepted trade, and B's
+   players are locked indefinitely. The only exit is the commissioner's force, which
+   bypasses fit and overflows a roster.
+3. **FAAB freeze by proposal.** `getAvailableBudget` subtracts FAAB the team is the
+   *sending* side of in any PROPOSED or UNDER_REVIEW trade — including proposals the team
+   hasn't agreed to. Anyone can propose "I want $100 of your FAAB" and freeze a rival's
+   bidding until they notice and decline.
+4. **Silent half-trades.** `executeTradeTransfers` does `if (!oldSlot) continue;` and
+   marks the trade PROCESSED with whatever did move. Only reachable via a commissioner
+   action now that locks exist, but it must fail loudly, not succeed quietly.
+5. **Trade deadline only checked at propose.** Proposals made before the deadline can be
+   accepted after it.
+6. **Trades during a live draft** are allowed — nothing in `proposeTrade` or
+   `respondToTrade` looks at draft state.
+7. **Accept-time gaps:** no ORPHAN_FROZEN re-check for either team, no
+   `draftPickTradingEnabled` re-check, and a same-instant double accept (two co-managers,
+   or two trades sharing a player accepted concurrently) passes the lock check because
+   neither is UNDER_REVIEW yet.
+8. **FAAB items are tradeable in leagues with FAAB off.**
+9. **Orphaning a team** (`leagues/mutations.ts` ~L191) leaves its in-flight trades
+   alive; they'd process onto/off a frozen roster.
+
+Not loopholes, verified: one-user-one-team is enforced on every join/claim/reassign path
+(no self-dealing via co-manager); FAAB double-commit across bids and trades is handled;
+the fit arithmetic is correct; veto threshold logic holds.
+
+### Decisions already made (don't re-open)
+- **Stuck trades: auto-cancel only.** A trade still UNDER_REVIEW and still not fitting
+  **3 days after `reviewEndsAt`** is cancelled by the cron, both teams notified. No
+  manual withdraw for the non-blocking side (user declined that option).
+- **Keep the 24h post-trade demotion exemption** (`TRADE_EXEMPTION_WINDOW_MS` in
+  `sendToFarm`). It enables a two-team waiver-laundering pattern (trade a veteran over,
+  partner demotes him waiver-free, trades him back as a farm player); the user accepts
+  that risk and relies on the veto. Document it in PROGRESS.md's Known gaps.
+- **Full trade freeze during a live draft** — no proposals and no acceptances of any
+  kind (players *or* picks) while any draft in the league is IN_PROGRESS.
+- Governance note, not a code change: in COMMISSIONER veto mode a trade the commissioner
+  is party to can't be vetoed by anyone unless a co-commissioner exists. Add to Known
+  gaps so the user remembers when setting up the real league.
+
+### Changes
+1. **`src/lib/trades/locks.ts`** — add `getTradeLockedPickIds(leagueId, pickIds?)` and
+   `assertPicksNotTradeLocked(leagueId, pickIds)` (PICK items in UNDER_REVIEW trades;
+   message names the pick as "<season> Round <round>"). Still imports only `@/lib/db`.
+2. **`src/lib/trades/mutations.ts`**
+   - `getTradeableAssets`: picks filtered to `usedOnPlayerId: null`; each pick gains
+     `lockedInTradeId: string | null`. `availableFaab` is `0` when `!settings.faabEnabled`.
+   - `assertOwnsAssets`: pick count also requires `usedOnPlayerId: null`.
+   - `proposeTrade`: `assertPicksNotTradeLocked` (both sides); throw if any FAAB item and
+     `!settings.faabEnabled`; call `assertNoDraftInProgress(leagueId)` (below) first.
+   - `respondToTrade` accept: `assertNoDraftInProgress`; re-check `tradeDeadline`
+     ("This league's trade deadline has passed — this proposal can no longer be
+     accepted."); re-check both teams not ORPHAN_FROZEN; re-check
+     `draftPickTradingEnabled` when pick items exist; `assertPicksNotTradeLocked`.
+     Convert the accept write to an **interactive** `$transaction(async (tx) => …)` that
+     does `tx.trade.updateMany({ where: { id, state: "PROPOSED" }, data })` and throws
+     `"This trade was already answered."` if `count !== 1` — closes the double-accept
+     race without any new schema.
+   - `executeTradeTransfers`: before any write, re-validate every item — PLAYER still
+     owned by `fromTeamId`; PICK still `currentOwnerId === fromTeamId` and unused; FAAB
+     `faabAmount <= fromBudget.remaining`. On any failure: set the trade `CANCELLED`, log
+     `{ event: "INVALIDATED", reason: "<human sentence naming the item>" }`, return a new
+     outcome `"INVALIDATED"` (extend `TradeExecutionOutcome`). Remove the `continue`.
+   - `processDueTrades`: after the normal pass, find UNDER_REVIEW trades with
+     `reviewEndsAt <= now - STUCK_TRADE_GRACE_MS` (`3 * 24h`, a named constant) whose
+     `computeTradeFit` still fails → `CANCELLED`, log
+     `{ event: "AUTO_CANCELLED", reason: "ROSTER_ROOM", blockingTeamIds: [...] }`. Include
+     these in the cron's JSON result.
+3. **`src/lib/draft/mutations.ts`** — export `assertNoDraftInProgress(leagueId)`: for each
+   IN_PROGRESS draft call `resolveDraftState` first (same resolve-on-read as
+   `getFreeAgencyStatus`), then throw `"Trades are paused while the draft is in progress."`
+   if any is still IN_PROGRESS. Import direction `trades/mutations → draft/mutations` is
+   safe (draft imports `leagues/mutations`, `rosters/ownership`, `players/rankings`; none
+   import trades). Verify with grep before relying on it.
+4. **`src/lib/faab/mutations.ts`** — `getAvailableBudget`: FAAB in a PROPOSED trade counts
+   against a team only when **that team proposed it**; UNDER_REVIEW counts for either side.
+   Prisma: `where: { fromTeamId: teamId, itemType: "FAAB", OR: [{ trade: { state: "UNDER_REVIEW" } }, { trade: { state: "PROPOSED", proposedByTeamId: teamId } }] }`.
+5. **Orphaning cancels in-flight trades.** The orphan path lives in `leagues/mutations.ts`,
+   which `trades/mutations.ts` imports — so don't import back. Do the cancellation one
+   layer up: in the Server Action that orphans a team (find it under
+   `src/app/leagues/[id]/settings/`), call `cancelTrade({ allowUnderReview: true })` for
+   each PROPOSED/UNDER_REVIEW trade the team is party to, then orphan — same approach
+   `leagues/season.ts` uses for `startNewSeason`.
+6. **`src/lib/notifications/feed.ts`** — surface INVALIDATED / AUTO_CANCELLED / SUPERSEDED
+   outcomes to both teams for 7 days: query `transactionLog` rows with `type: "TRADE"`
+   and `payload.event` in those three (Postgres JSON path filter:
+   `payload: { path: ["event"], equals: "AUTO_CANCELLED" }`, one query per event or an
+   `OR`), joined back to the trade for team names. Text like
+   `"Trade with X was cancelled — <reason>"`, kind `TRADE_RESULT` (new kind; add a dot
+   colour in `NotificationsButton.tsx`).
+7. **`PROGRESS.md` Known gaps**: the kept trade exemption + laundering pattern; the
+   commissioner-veto governance note.
+
+### Verification — `scripts/trade-hardening-check.ts`
+Disposable league, 3 teams, small caps, `commissionerAddPlayer` for rosters, synthetic
+`DraftPick` rows (see `scripts/trades-check.ts` for the fixture pattern). Assert:
+1. Pick P in accepted trade T1 → proposing T2 with P throws locked; a used pick is
+   absent from `getTradeableAssets` and rejected by `proposeTrade`.
+2. Backdate T1 past its window, commissioner-move P to another team (`draftPick.update`
+   directly — simulating the gap), run `processDueTrades` → T1 is `CANCELLED` with an
+   INVALIDATED log naming the pick; nothing moved.
+3. Rival proposes a trade asking for $50 of my FAAB → my `getAvailableBudget` is
+   unchanged; once I accept (UNDER_REVIEW) it drops by $50.
+4. Set `tradeDeadline` to yesterday after proposing → accept throws deadline.
+5. Set up + start a draft → `proposeTrade` and `respondToTrade` both throw the pause
+   message; complete the draft → both work.
+6. Accept, backdate `reviewEndsAt` by 4 days with the acceptor's roster over cap →
+   `processDueTrades` → `CANCELLED`, AUTO_CANCELLED log with `blockingTeamIds`, and
+   `getTeamNotifications` for both teams contains the cancellation item.
+7. Two concurrent `respondToTrade(accept)` calls (`Promise.allSettled`) → exactly one
+   fulfils, the other rejects "already answered", trade UNDER_REVIEW once, one ACCEPTED log.
+8. League with `faabEnabled: false` → `availableFaab === 0` and a FAAB item is rejected.
+9. Orphan a team with a PROPOSED and an UNDER_REVIEW trade → both CANCELLED.
+Then `scripts/trade-integrity-check.ts`, `trades-check.ts`, `trade-review-check.ts` still
+pass; `npx tsc --noEmit`; `npm run build`.
 
 ---
 
@@ -376,5 +511,6 @@ current shape in PROGRESS.md if you touch that section.
 ## Checklist
 
 - [x] Task 1 — trade integrity backend (#4/#5)
+- [ ] Task 1b — trade hardening (loophole audit)
 - [ ] Task 2 — page split + ESPN builder + confirm modal + redirect (#1/#2/#3)
 - [ ] Task 3 — fit UX + locked-player UI (#4/#5)
