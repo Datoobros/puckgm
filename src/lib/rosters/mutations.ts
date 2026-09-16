@@ -16,6 +16,7 @@ import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 import { parseGameDate, setLineupSlot, swapLineupSlots } from "@/lib/lineups/mutations";
+import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
 
 export function activeRosterCap(settings: LeagueSettings): number {
   // Object.values would also pick up positionMode ("SEPARATE"/"COMBINED"), a
@@ -81,6 +82,7 @@ export async function addPlayerToRoster(input: AddPlayerInput): Promise<void> {
     throw new Error("You don't manage this team.");
   }
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't add players.");
+  await assertFreeAgencyOpen(input.leagueId);
 
   const settingsForFaab = team.league.settingsJson as unknown as LeagueSettings;
   if (settingsForFaab.faabEnabled) {
@@ -562,24 +564,6 @@ export async function getTeamRosterView(teamId: string) {
     include: { player: true },
     orderBy: { effectiveFrom: "asc" },
   });
-}
-
-/** playerId -> owning team name, scoped to one league. Used by the players
- * page to show ownership status instead of letting an Add click fail. */
-export async function getLeagueOwnershipMap(
-  leagueId: string,
-  playerIds: string[],
-): Promise<Map<string, string>> {
-  if (playerIds.length === 0) return new Map();
-  const slots = await prisma.rosterSlot.findMany({
-    where: {
-      playerId: { in: playerIds },
-      effectiveTo: null,
-      team: { leagueId },
-    },
-    include: { team: true },
-  });
-  return new Map(slots.map((s) => [s.playerId, s.team.name]));
 }
 
 /** teamId -> active roster count, for the league/home dashboard cards. */

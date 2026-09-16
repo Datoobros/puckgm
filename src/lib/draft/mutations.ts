@@ -20,8 +20,8 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
-import { getLeagueOwnershipMap } from "@/lib/rosters/mutations";
+import { isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeagueOwnershipMap } from "@/lib/rosters/ownership";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
 export interface SetUpDraftInput {
@@ -492,4 +492,76 @@ export async function getTeamDraftPicks(teamId: string): Promise<TeamDraftPickRo
     used: p.usedOnPlayerId !== null,
     usedOnPlayerName: p.usedOnPlayer?.fullName ?? null,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Free agency gate (issue #5, plans/team-page-batch.md Task 3). Lives here,
+// not in src/lib/rosters/mutations.ts, because it's draft-state-derived and
+// rosters/mutations.ts (plus faab/mutations.ts, waivers/mutations.ts) needs
+// to import it — putting it in rosters/mutations.ts would create the exact
+// cycle getLeagueOwnershipMap's move to rosters/ownership.ts was meant to
+// avoid (this file already depended on rosters/mutations.ts for that read).
+// ---------------------------------------------------------------------------
+
+export type FreeAgencyReason = "DRAFT_IN_PROGRESS" | "NO_STARTUP_DRAFT";
+export type FreeAgencyStatus = { open: true } | { open: false; reason: FreeAgencyReason };
+
+/** Closed whenever a draft is actually live, or before a league's startup
+ * draft has ever completed. Checked in this order:
+ *  1. Any Draft IN_PROGRESS -> DRAFT_IN_PROGRESS. The draft clock resolves
+ *     on read (resolveDraftState) rather than via cron, so a draft whose
+ *     timer fully ran out can sit IN_PROGRESS in the DB indefinitely until
+ *     someone loads the draft room — resolve every IN_PROGRESS draft here
+ *     first and re-check its real status, or a finished draft could keep
+ *     free agency locked forever.
+ *  2. DYNASTY: no STARTUP draft with status COMPLETE for the league, any
+ *     season -> NO_STARTUP_DRAFT. Dynasty rosters persist forever once
+ *     built, so only the very first startup draft ever matters here.
+ *  3. REDRAFT: no STARTUP draft with status COMPLETE for the league's
+ *     *current* season -> NO_STARTUP_DRAFT. startNewSeason wipes rosters
+ *     and bumps currentSeason, so a redraft league correctly re-locks free
+ *     agency each season until that season's own startup draft completes.
+ * Otherwise open. */
+export async function getFreeAgencyStatus(leagueId: string): Promise<FreeAgencyStatus> {
+  const inProgressDrafts = await prisma.draft.findMany({
+    where: { leagueId, status: "IN_PROGRESS" },
+    select: { id: true },
+  });
+  for (const draft of inProgressDrafts) {
+    const resolved = await resolveDraftState(draft.id);
+    if (resolved.status === "IN_PROGRESS") {
+      return { open: false, reason: "DRAFT_IN_PROGRESS" };
+    }
+  }
+
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = league.settingsJson as unknown as LeagueSettings;
+
+  const completedStartup = await prisma.draft.findFirst({
+    where: {
+      leagueId,
+      type: "STARTUP",
+      status: "COMPLETE",
+      ...(settings.leagueType === "REDRAFT" ? { season: league.currentSeason } : {}),
+    },
+  });
+  if (!completedStartup) return { open: false, reason: "NO_STARTUP_DRAFT" };
+
+  return { open: true };
+}
+
+const FREE_AGENCY_CLOSED_MESSAGE: Record<FreeAgencyReason, string> = {
+  DRAFT_IN_PROGRESS: "Free agency is closed while the draft is in progress.",
+  NO_STARTUP_DRAFT: "Free agency is closed until the draft is complete.",
+};
+
+/** Throws with a reason-specific message when free agency is closed —
+ * called from every unowned-player acquisition path (addPlayerToRoster,
+ * submitFaBid, submitWaiverClaim). Deliberately NOT called from
+ * commissionerAddPlayer (an explicit override tool), recordPick (this IS
+ * the draft), trade proposals (draft picks are tradeable pre-draft by
+ * design), or any internal roster move (callup/IR/send-down). */
+export async function assertFreeAgencyOpen(leagueId: string): Promise<void> {
+  const status = await getFreeAgencyStatus(leagueId);
+  if (!status.open) throw new Error(FREE_AGENCY_CLOSED_MESSAGE[status.reason]);
 }

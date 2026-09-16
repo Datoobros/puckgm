@@ -507,12 +507,19 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   // the FK violation, not by inspection. A real league with any lineup
   // history would have hit this on delete too. Draft (added with the draft
   // feature) is fixed proactively here instead of waiting to hit it —
-  // DraftPick references Draft, so it has to go first.
+  // DraftPick references Draft, so it has to go first. WatchlistEntry
+  // (added with the free-agent search typeahead's watchlist stars, long
+  // before this teardown list existed) is the seventh instance of this
+  // exact bug shape — caught by Task 3's one-off reset script
+  // (scripts/reset-experimenting-for-draft.ts) hitting the FK violation
+  // while deleting the stale "Roster Action Test League (delete me)"
+  // artifact, not by inspection.
   await prisma.$transaction([
     prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
     prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
     prisma.leagueSettingsLog.deleteMany({ where: { leagueId } }),
     prisma.transactionLog.deleteMany({ where: { leagueId } }),
+    prisma.watchlistEntry.deleteMany({ where: { leagueId } }),
     prisma.faBid.deleteMany({ where: { team: { leagueId } } }),
     prisma.faabBudget.deleteMany({ where: { team: { leagueId } } }),
     prisma.waiverClaim.deleteMany({ where: { team: { leagueId } } }),

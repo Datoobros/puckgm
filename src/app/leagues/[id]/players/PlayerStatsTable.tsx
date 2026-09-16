@@ -46,6 +46,7 @@ export function PlayerStatsTable({
   rosterContext,
   ownership,
   leagueId,
+  freeAgencyOpen = true,
   watchlistedIds = [],
   faab = null,
 }: {
@@ -53,6 +54,10 @@ export function PlayerStatsTable({
   rosterContext: RosterContext | null;
   ownership: Record<string, string>;
   leagueId: string;
+  /** Issue #5 — free agency locked until the draft (src/lib/draft/
+   * mutations.ts's getFreeAgencyStatus). Defaults true so any other caller
+   * of this table (none currently) isn't silently gated. */
+  freeAgencyOpen?: boolean;
   watchlistedIds?: string[];
   faab?: FaabContext | null;
 }) {
@@ -243,6 +248,10 @@ export function PlayerStatsTable({
                       <span className="text-xs text-muted">{ownership[r.id]}</span>
                     ) : !rosterContext.isMyTeam ? (
                       <span className="text-xs text-muted">—</span>
+                    ) : !freeAgencyOpen ? (
+                      <span className="text-xs text-muted" title="Free agency is closed until the draft is complete">
+                        —
+                      </span>
                     ) : faab ? (
                       faab.pendingPlayerIds.includes(r.id) ? (
                         <span className="text-xs text-muted">Bid pending</span>

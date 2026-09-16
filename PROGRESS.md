@@ -1374,6 +1374,105 @@ the whole page down) became a "Notifications (N)" pill that opens a modal.
   (`npx tsx scripts/header-modal-test-league.ts --cleanup`) — never touched the user's real
   "Experimenting" league.
 
+## Free agency locked until the draft (team-page batch, Task 3)
+
+Third of the four-task batch (`plans/team-page-batch.md`), issue #5: before this, a
+brand-new league's free-agent pool was wide open from the moment teams existed — nothing
+stopped instant-adding a full roster and never running the (now-built) startup draft at
+all. Now unowned players stay locked until a league's startup draft actually completes,
+and re-lock while any later draft is genuinely in progress.
+
+- **`getFreeAgencyStatus(leagueId)` / `assertFreeAgencyOpen(leagueId)`**
+  (`src/lib/draft/mutations.ts`) — closed, checked in order: (1) any `Draft` for the league
+  is `IN_PROGRESS` → `DRAFT_IN_PROGRESS` (every such draft is passed through
+  `resolveDraftState` first and re-checked, since the draft clock resolves on read — a
+  timer that fully expired with nobody watching the room must not keep free agency locked
+  forever just because the DB row still says `IN_PROGRESS`); (2) a `DYNASTY` league with no
+  `STARTUP` draft `COMPLETE` for the league, any season → `NO_STARTUP_DRAFT`; (3) a
+  `REDRAFT` league with no `STARTUP` draft `COMPLETE` for `league.currentSeason`
+  specifically → `NO_STARTUP_DRAFT` (so `startNewSeason`'s roster wipe correctly re-locks
+  free agency each season, not just once ever). Otherwise open.
+- **Gated**: `addPlayerToRoster` (`src/lib/rosters/mutations.ts`), `submitFaBid`
+  (`src/lib/faab/mutations.ts`), `submitWaiverClaim` (`src/lib/waivers/mutations.ts`) — all
+  three call `assertFreeAgencyOpen` before anything else about the request (before the
+  FAAB-routing check, before "is this player already rostered," before "is this player
+  actually on waivers"), so the closed-league error always wins over a more specific one.
+  **Not gated**: `commissionerAddPlayer` (explicit override tool), `recordPick` (drafting
+  *is* the draft), trade proposals (draft picks are tradeable pre-draft by design), and
+  every internal roster move (callup/IR/send-down — not an acquisition of an unowned
+  player).
+- **Circular-import fix, done first per the plan**: `getFreeAgencyStatus` needs
+  `resolveDraftState` (`draft/mutations.ts`), and `rosters/mutations.ts` needs to call the
+  gate — but `draft/mutations.ts` already imported `getLeagueOwnershipMap` from
+  `rosters/mutations.ts`, which would've been a cycle. Moved `getLeagueOwnershipMap`
+  (unchanged) into a new `src/lib/rosters/ownership.ts` — a pure read with no dependents of
+  its own, same shape as the existing `src/lib/leagues/season.ts` cycle-avoidance fix — and
+  repointed its two importers (`draft/mutations.ts`, `players/page.tsx`). Confirmed
+  afterward that `draft/mutations.ts` imports nothing from `rosters/mutations.ts`,
+  `faab/mutations.ts`, or `waivers/mutations.ts` (only `leagues/mutations`,
+  `rosters/ownership`, `players/rankings`), so those three can safely import the gate back.
+- **Players page banner** (`players/page.tsx`, server-computed): closed shows a `Card`
+  above the table with reason-specific copy and a link — "paused while the draft is
+  running" → the draft room; "opens once the draft is complete" → the draft room (a draft
+  exists in `SETUP`); commissioner sees "set up the draft in League Settings" → Settings,
+  everyone else sees "your commissioner hasn't set up the draft yet" (no draft at all).
+  `PlayerStatsTable` gained a `freeAgencyOpen` prop (default `true`, so no other caller is
+  silently gated) — when false, the ownership/Add column renders `—` instead of the Add pill
+  or the FAAB bid form for any unowned player. Watchlist stars are untouched — pre-draft is
+  exactly when a manager builds a watchlist for the draft to come. The team page's `+ Add`
+  pill (Task 2) already just links to Players, so no change needed there.
+- **Real regression found and fixed while verifying**: `deleteLeague`
+  (`src/lib/leagues/mutations.ts`) didn't account for `WatchlistEntry` rows (they reference
+  `League` with no cascade, `RESTRICT`) — the seventh instance of this exact FK-teardown bug
+  shape in this project (after `Matchup`, `LeagueSettingsLog`, `FaBid`/`FaabBudget`,
+  `WaiverClaim`, `LineupEntry`, `Draft`). Caught for real: deleting the stale "Roster Action
+  Test League (delete me)" artifact as part of the one-off reset below hit the FK violation
+  live. Fixed by adding `watchlistEntry.deleteMany` to the same teardown transaction, in the
+  same position (early, alongside the other league-scoped-not-team-scoped deletes).
+- Verified in `scripts/free-agency-gate-check.ts` (disposable league, cleaned up by exact
+  name) against the real DB: closed/`NO_STARTUP_DRAFT` before any draft, with
+  `addPlayerToRoster`/`submitFaBid`/`submitWaiverClaim` all throwing the closed-league
+  error specifically (not some other error they'd otherwise hit first); still closed with a
+  `STARTUP` draft only in `SETUP`; closed/`DRAFT_IN_PROGRESS` once started; open again the
+  moment the draft's last pick lands; a second (`ROOKIE`) draft in `SETUP` doesn't re-close
+  it; starting that second draft re-closes it (`DRAFT_IN_PROGRESS`) and re-blocks
+  `addPlayerToRoster`; and the resolve-on-read case specifically — backdating a draft's pick
+  deadline far into the past *without* calling `resolveDraftState` directly, then calling
+  only `getFreeAgencyStatus`, correctly triggers the autopick-catch-up itself and reports
+  open, with the draft actually landing `COMPLETE` and both remaining picks actually used
+  (not just the status field going stale). Checked in a real browser too (`// TEMP:` bypass
+  in `layout.tsx` and `players/page.tsx` — both needed, each has its own independent
+  `auth.protect()`; reverted, `grep -rn "TEMP:" src/` clean): a disposable pre-draft league's
+  Players page showed the commissioner-facing "set up the draft" banner with every player
+  row showing `—` instead of an Add pill; after completing a real 2-team startup draft
+  against it, reloading showed the banner gone, `+` pills back for everyone except the two
+  actually-drafted players (who correctly showed their owning team's name instead).
+
+### One-off reset: "Experimenting" cleared for its first real draft
+
+Run once, on 2026-09-15, per the plan's confirmed-with-the-user instructions —
+`scripts/reset-experimenting-for-draft.ts` (kept in the repo; matches by **exact name AND
+id**, aborts otherwise, and is genuinely idempotent — a second run detects nothing left to
+reset and skips writing anything, including the `TransactionLog` rows, rather than logging a
+duplicate "reset happened" event every time it's invoked).
+
+- `--dry-run` matched the plan's documented live state exactly before doing anything: 50
+  open roster slots (Finn 17, Dev 14, Rebuild Squad 19), 3 trades `UNDER_REVIEW`, 0 pending
+  waiver claims, 0 pending FA bids, 39 `LineupEntry` rows (Finn 7, Dev 8, Rebuild Squad 24).
+- The real run cancelled all 3 trades (`cancelTrade` with `allowUnderReview: true`, same
+  approach `startNewSeason` uses), cleared 0 pending waiver claims and 0 pending FA bids
+  (none existed), deleted all 39 lineup rows, closed all 50 open roster slots
+  (`effectiveTo = now`, history preserved), and wrote one `COMMISSIONER_RESET`
+  `TransactionLog` row per team (3 total). `MatchupPeriod`s and teams themselves were left
+  alone, per the plan.
+- Deleting the stale "Roster Action Test League (delete me)" artifact (0 players) is where
+  the `WatchlistEntry`/`deleteLeague` bug above was actually caught — fixed, then the delete
+  succeeded cleanly.
+- Read-only snapshot afterward confirmed: 0 open roster slots for Experimenting, 0 trades
+  `PROPOSED`/`UNDER_REVIEW`, 0 `PENDING` waiver claims, 0 `LineupEntry` rows;
+  "Roster Action Test League (delete me)" no longer exists; "Experimenting", "QTest League",
+  "QTest 2" all still do; total leagues went from 4 to 3, exactly as expected.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - Draft, playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in

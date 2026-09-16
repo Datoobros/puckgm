@@ -21,6 +21,7 @@
 
 import { prisma } from "@/lib/db";
 import { isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
+import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
 
 const CLAIM_WINDOW_MS = 48 * 60 * 60 * 1000;
 
@@ -116,6 +117,7 @@ export async function submitWaiverClaim(input: SubmitWaiverClaimInput): Promise<
   });
   if (!claimingTeam) throw new Error("You don't manage a team in this league.");
   if (claimingTeam.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't submit a waiver claim.");
+  await assertFreeAgencyOpen(input.leagueId);
 
   const slot = await prisma.rosterSlot.findFirst({
     where: {

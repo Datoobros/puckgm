@@ -20,6 +20,7 @@ import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
 import { getOrInitWaiverPriority } from "@/lib/waivers/mutations";
+import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
 
 export async function getOrInitFaabBudget(teamId: string, season: number, startingAmount: number) {
   const existing = await prisma.faabBudget.findUnique({ where: { teamId_season: { teamId, season } } });
@@ -67,6 +68,7 @@ export async function submitFaBid(input: SubmitFaBidInput): Promise<void> {
   });
   if (!team) throw new Error("You don't manage a team in this league.");
   if (team.state === "ORPHAN_FROZEN") throw new Error("An orphaned team's roster is frozen — it can't submit a FAAB bid.");
+  await assertFreeAgencyOpen(input.leagueId);
 
   const settings = team.league.settingsJson as unknown as LeagueSettings;
   if (!settings.faabEnabled) throw new Error("This league doesn't use FAAB.");
