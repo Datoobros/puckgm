@@ -1,28 +1,10 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
-import {
-  getTradesForLeague,
-  getTradeableAssets,
-  getTradeDetailById,
-  type TradeDetail,
-  type TradeItemDetail,
-  type TradeAssetSelection,
-} from "@/lib/trades/mutations";
-import { getPlayerStatsAggregate, type PlayerStatsRow } from "@/lib/players/rankings";
+import { getTradesForLeague, type TradeDetail } from "@/lib/trades/mutations";
 import { Card, SectionLabel } from "@/components/Card";
-import { Button, LinkButton, Badge } from "@/components/Button";
-import { TradeBuilder } from "./TradeBuilder";
+import { Button, LinkButton } from "@/components/Button";
 import { cancelTradeAction, castVetoAction, forceProcessTradeAction } from "./actions";
-
-function selectionFromItems(items: TradeItemDetail[]): TradeAssetSelection {
-  return {
-    playerIds: items.filter((i) => i.itemType === "PLAYER" && i.playerId).map((i) => i.playerId!),
-    pickIds: items.filter((i) => i.itemType === "PICK" && i.pickId).map((i) => i.pickId!),
-    faabAmount: items.find((i) => i.itemType === "FAAB")?.faabAmount ?? 0,
-  };
-}
 
 function itemLabel(item: TradeDetail["items"][number]): string {
   if (item.itemType === "PLAYER") return item.playerName ?? "a player";
@@ -54,8 +36,6 @@ function timeLeft(reviewEndsAt: Date | null): string {
 export default async function TradesPage(props: PageProps<"/leagues/[id]/trades">) {
   const { userId } = await auth.protect();
   const { id: leagueId } = await props.params;
-  const sp = await props.searchParams;
-  const counterFrom = Array.isArray(sp.counterFrom) ? sp.counterFrom[0] : sp.counterFrom;
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -65,29 +45,10 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
 
   const trades = await getTradesForLeague(leagueId, myTeam?.id ?? null);
 
-  // Counter-offer prefill — only trust a counterFrom trade the current team
-  // actually was the counterparty on (never trust the query param alone).
-  // What the original proposer gave becomes what's now offered to receive,
-  // and vice versa; fully editable from here, no data-model link retained.
-  let counterSeed: { counterpartyId: string; give: TradeAssetSelection; receive: TradeAssetSelection } | null = null;
-  if (counterFrom && myTeam) {
-    const original = await getTradeDetailById(counterFrom, myTeam.id);
-    if (original && original.counterpartyTeamId === myTeam.id) {
-      const proposerGave = original.items.filter((i) => i.fromTeamId === original.proposedByTeamId);
-      const counterpartyGave = original.items.filter((i) => i.fromTeamId === original.counterpartyTeamId);
-      counterSeed = {
-        counterpartyId: original.proposedByTeamId,
-        give: selectionFromItems(counterpartyGave),
-        receive: selectionFromItems(proposerGave),
-      };
-    }
-  }
-
   const isParticipant = (t: TradeDetail) => !!myTeam && (t.proposedByTeamId === myTeam.id || t.counterpartyTeamId === myTeam.id);
   const needsResponse = myTeam ? trades.filter((t) => t.state === "PROPOSED" && t.counterpartyTeamId === myTeam.id) : [];
   const myOpenProposals = myTeam ? trades.filter((t) => t.state === "PROPOSED" && t.proposedByTeamId === myTeam.id) : [];
   const pending = trades.filter((t) => t.state === "UNDER_REVIEW");
-  const history = trades.filter((t) => ["PROCESSED", "VETOED", "DECLINED", "CANCELLED"].includes(t.state)).slice(0, 20);
 
   function canVeto(t: TradeDetail): boolean {
     if (t.state !== "UNDER_REVIEW") return false;
@@ -100,49 +61,23 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
     return isCommissioner && !isParticipant(t);
   }
 
-  let builderSection = null;
-  if (myTeam) {
-    const otherTeams = league.teams.filter((t) => t.id !== myTeam.id);
-    const [myAssets, ...otherAssets] = await Promise.all([
-      getTradeableAssets(myTeam.id),
-      ...otherTeams.map((t) => getTradeableAssets(t.id)),
-    ]);
-
-    const allPlayerIds = [myAssets, ...otherAssets].flatMap((a) => a.players.map((p) => p.id));
-    const statsRows = allPlayerIds.length > 0
-      ? await getPlayerStatsAggregate({ playerIds: allPlayerIds, scoringConfig: settings.scoringConfig })
-      : [];
-    const statsById: Record<string, PlayerStatsRow> = Object.fromEntries(statsRows.map((r) => [r.id, r]));
-
-    builderSection = (
-      <TradeBuilder
-        leagueId={leagueId}
-        myTeamId={myTeam.id}
-        myAssets={myAssets}
-        otherTeams={otherTeams.map((t, i) => ({ teamId: t.id, teamName: t.name, assets: otherAssets[i] }))}
-        statsById={statsById}
-        initialCounterpartyId={counterSeed?.counterpartyId}
-        initialGive={counterSeed?.give}
-        initialReceive={counterSeed?.receive}
-      />
-    );
-  }
-
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
-      <p className="mt-1 text-sm text-muted">
-        Propose a trade — the other manager has to accept before anything moves. An accepted trade
-        sits in a 24-hour review window ({settings.tradeVetoMode === "COMMISSIONER" ? "commissioner veto" : "league vote veto"}).
-        {settings.tradeDeadline && ` New trades can't be proposed after ${settings.tradeDeadline}.`}
-      </p>
-
-      {myTeam && (
-        <div className="mt-6">
-          <SectionLabel>Propose a trade</SectionLabel>
-          <Card>{builderSection}</Card>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
+          <p className="mt-1 text-sm text-muted">
+            Propose a trade — the other manager has to accept before anything moves. An accepted trade
+            sits in a 24-hour review window ({settings.tradeVetoMode === "COMMISSIONER" ? "commissioner veto" : "league vote veto"}).
+            {settings.tradeDeadline && ` New trades can't be proposed after ${settings.tradeDeadline}.`}
+          </p>
         </div>
-      )}
+        {myTeam && (
+          <LinkButton href={`/leagues/${leagueId}/trades/new`} variant="primary" className="shrink-0">
+            Propose Trade
+          </LinkButton>
+        )}
+      </div>
 
       {needsResponse.length > 0 && (
         <div className="mt-6">
@@ -207,26 +142,6 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
                       </form>
                     )}
                   </div>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
-      </div>
-
-      <div className="mt-6">
-        <SectionLabel>History</SectionLabel>
-        {history.length === 0 ? (
-          <Card>
-            <p className="text-sm text-muted">No resolved trades yet.</p>
-          </Card>
-        ) : (
-          <Card className="!p-0 overflow-hidden">
-            <ul className="divide-y divide-border">
-              {history.map((t) => (
-                <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <TradeSummary trade={t} />
-                  <Badge tone="muted" className="shrink-0">{t.state}</Badge>
                 </li>
               ))}
             </ul>

@@ -9,7 +9,7 @@ import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from 
 import { resolveStatRange } from "@/lib/players/seasons";
 import { ensureLineupMaterialized, getLineupForDate, capFor, eligibleSlotsForPosition, lineupSlotsFor } from "@/lib/lineups/mutations";
 import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/schedule";
-import { isLeagueCommissioner, isTeamManager, type LeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
+import { isLeagueCommissioner, isTeamManager, managerOrCoManagerWhere, type LeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
 import { getTeamSchedule } from "@/lib/matchups/standings";
 import { getTeamDraftPicks } from "@/lib/draft/mutations";
 import { getUserDisplayName } from "@/lib/users/display";
@@ -233,6 +233,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const rawDate = Array.isArray(sp.date) ? sp.date[0] : sp.date;
   const rawView = Array.isArray(sp.view) ? sp.view[0] : sp.view;
   const rawTab = Array.isArray(sp.tab) ? sp.tab[0] : sp.tab;
+  const rawSent = Array.isArray(sp.sent) ? sp.sent[0] : sp.sent;
   const date = rawDate && DATE_RE.test(rawDate) ? rawDate : todayUTC();
   const view = rawView ?? "daily";
   const tab: Tab = rawTab === "schedule" || rawTab === "draftpicks" ? rawTab : "stats";
@@ -251,9 +252,17 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const isCommissionerViewing = !isManager && isCommissioner;
   const canEditBranding = isPrimaryManager || isCommissioner;
 
-  const [primaryManagerName, coManagerName] = await Promise.all([
+  const [primaryManagerName, coManagerName, sentFromTeam, viewerOtherTeam] = await Promise.all([
     getUserDisplayName(team.managerUserId),
     team.secondManagerUserId ? getUserDisplayName(team.secondManagerUserId) : Promise.resolve(null),
+    // Trades batch Task 2: a one-time "sent to X" banner after proposing —
+    // ?sent=<teamId> only means anything for the manager who just sent it,
+    // and an unknown/stale id is ignored rather than erroring.
+    isManager && rawSent ? prisma.team.findUnique({ where: { id: rawSent }, select: { name: true } }) : Promise.resolve(null),
+    // A non-owner who manages a *different* team in this league gets a
+    // Propose Trade shortcut in the header (where an owner sees
+    // Notifications instead) — pre-fills this team as the counterparty.
+    !isManager ? prisma.team.findFirst({ where: { leagueId, ...managerOrCoManagerWhere(userId) } }) : Promise.resolve(null),
   ]);
 
   const h = await headers();
@@ -558,6 +567,12 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
         ← {team.league.name}
       </Link>
 
+      {sentFromTeam && (
+        <Card className="mt-2 !border-success/20 !bg-success-tint">
+          <p className="text-sm font-medium text-success">Trade proposal sent to {sentFromTeam.name}.</p>
+        </Card>
+      )}
+
       <Card className="mt-2">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
@@ -578,6 +593,11 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           </div>
           <div className="flex items-center gap-2">
             {isManager && <NotificationsButton notifications={notifications} />}
+            {!isManager && viewerOtherTeam && (
+              <LinkButton href={`/leagues/${leagueId}/trades/new?with=${teamId}`} variant="primary" size="sm">
+                Propose Trade
+              </LinkButton>
+            )}
           </div>
         </div>
 

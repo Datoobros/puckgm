@@ -288,7 +288,7 @@ export function RosterMoveBoard({
   return (
     <>
       <div key="action-bar" className="mt-6 flex flex-wrap items-center gap-2">
-        <LinkButton href={`/leagues/${leagueId}/trades`} variant="primary" size="sm">
+        <LinkButton href={`/leagues/${leagueId}/trades/new`} variant="primary" size="sm">
           Propose Trade
         </LinkButton>
         <LinkButton href={`/leagues/${leagueId}/players`} variant="secondary" size="sm">

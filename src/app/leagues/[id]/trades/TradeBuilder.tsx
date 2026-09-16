@@ -1,10 +1,22 @@
 "use client";
 
-import { useState } from "react";
+// ESPN-style trade builder (plans/trades-batch.md Task 2). Layout, top to
+// bottom: counterparty picker, their full roster (checklist), a scroll-down
+// button, your full roster (checklist), a sticky bottom bar summarizing the
+// current selection with Continue/Cancel, and a Confirm Trade modal that
+// actually sends the proposal. Replaces the old two-step
+// step: "select" | "review" flow and AssetChecklist (both deleted) — the
+// review step now lives in this same component as the confirm modal instead
+// of a full-page navigation.
+
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
+import { Modal } from "@/components/Modal";
+import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { TradeRosterTable } from "./TradeRosterTable";
 import { proposeTradeAction } from "./actions";
-import { PlayerStatLine, TradeAssetSummary, type TradeAssetSummarySide } from "./TradeAssetSummary";
 import type { TradeableAssets, TradeAssetSelection } from "@/lib/trades/mutations";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
 
@@ -14,168 +26,214 @@ function totalItems(sel: TradeAssetSelection): number {
   return sel.playerIds.length + sel.pickIds.length + (sel.faabAmount > 0 ? 1 : 0);
 }
 
-function AssetChecklist({
-  assets,
-  statsById,
-  selected,
-  onTogglePlayer,
-  onTogglePick,
-  onFaabChange,
-}: {
-  assets: TradeableAssets;
-  statsById: Record<string, PlayerStatsRow>;
-  selected: TradeAssetSelection;
-  onTogglePlayer: (id: string) => void;
-  onTogglePick: (id: string) => void;
-  onFaabChange: (amount: number) => void;
-}) {
-  return (
-    <div className="divide-y divide-border">
-      {assets.players.length === 0 && assets.picks.length === 0 && (
-        <p className="text-xs text-muted">No players or picks to offer.</p>
-      )}
-      {assets.players.map((p) => (
-        <PlayerStatLine
-          key={p.id}
-          player={p}
-          stats={statsById[p.id]}
-          control={
-            <input
-              type="checkbox"
-              checked={selected.playerIds.includes(p.id)}
-              onChange={() => onTogglePlayer(p.id)}
-            />
-          }
-        />
-      ))}
-      {assets.picks.map((pk) => (
-        <label key={pk.id} className="flex items-center gap-2 py-1.5 text-sm">
-          <input type="checkbox" checked={selected.pickIds.includes(pk.id)} onChange={() => onTogglePick(pk.id)} />
-          {pk.season} Round {pk.round}
-        </label>
-      ))}
-      <label className="flex items-center gap-2 py-1.5 text-sm">
-        FAAB
-        <input
-          type="number"
-          min={0}
-          max={assets.availableFaab}
-          value={selected.faabAmount}
-          onChange={(e) => onFaabChange(Math.max(0, Math.min(assets.availableFaab, Number(e.target.value) || 0)))}
-          className="w-20 rounded border border-border bg-surface px-1.5 py-1 text-xs text-foreground"
-        />
-        <span className="text-xs text-muted">(${assets.availableFaab} available)</span>
-      </label>
-    </div>
-  );
+function pickChipLabel(round: number, season: number): string {
+  return `R${round} ${season}`;
+}
+
+function lastName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  return parts[parts.length - 1] || fullName;
+}
+
+interface AssetPlayerInfo {
+  fullName: string;
+  headshotUrl: string | null;
+  currentNhlOrg: string | null;
+  primaryPosition: string | null;
 }
 
 export function TradeBuilder({
   leagueId,
   myTeamId,
+  myTeamName,
   myAssets,
   otherTeams,
+  counterpartyId,
+  counterpartyName,
+  counterpartyAssets,
   statsById,
-  initialCounterpartyId,
   initialGive,
   initialReceive,
 }: {
   leagueId: string;
   myTeamId: string;
+  myTeamName: string;
   myAssets: TradeableAssets;
-  otherTeams: { teamId: string; teamName: string; assets: TradeableAssets }[];
+  otherTeams: { teamId: string; teamName: string }[];
+  counterpartyId: string;
+  counterpartyName: string;
+  counterpartyAssets: TradeableAssets;
   statsById: Record<string, PlayerStatsRow>;
-  initialCounterpartyId?: string;
-  initialGive?: TradeAssetSelection;
-  initialReceive?: TradeAssetSelection;
+  initialGive: TradeAssetSelection;
+  initialReceive: TradeAssetSelection;
 }) {
-  const [step, setStep] = useState<"select" | "review">("select");
-  const [counterpartyId, setCounterpartyId] = useState(initialCounterpartyId ?? otherTeams[0]?.teamId ?? "");
-  const [give, setGive] = useState<TradeAssetSelection>(initialGive ?? EMPTY_SELECTION);
-  const [receive, setReceive] = useState<TradeAssetSelection>(initialReceive ?? EMPTY_SELECTION);
+  const router = useRouter();
+  const yourRosterRef = useRef<HTMLDivElement>(null);
 
-  const counterparty = otherTeams.find((t) => t.teamId === counterpartyId);
+  const [give, setGive] = useState<TradeAssetSelection>(initialGive);
+  const [receive, setReceive] = useState<TradeAssetSelection>(initialReceive);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
-  if (otherTeams.length === 0) {
-    return <p className="text-sm text-muted">No other teams in this league to trade with.</p>;
-  }
+  const playerLookup = useMemo(() => {
+    const map = new Map<string, AssetPlayerInfo>();
+    for (const p of myAssets.players) map.set(p.id, p);
+    for (const p of counterpartyAssets.players) map.set(p.id, p);
+    return map;
+  }, [myAssets, counterpartyAssets]);
+
+  const pickLookup = useMemo(() => {
+    const map = new Map<string, { season: number; round: number }>();
+    for (const pk of myAssets.picks) map.set(pk.id, pk);
+    for (const pk of counterpartyAssets.picks) map.set(pk.id, pk);
+    return map;
+  }, [myAssets, counterpartyAssets]);
 
   function toggle(sel: TradeAssetSelection, setSel: (s: TradeAssetSelection) => void, key: "playerIds" | "pickIds", id: string) {
     const list = sel[key];
     setSel({ ...sel, [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] });
   }
 
-  function selectionSide(teamName: string, assets: TradeableAssets, sel: TradeAssetSelection): TradeAssetSummarySide {
-    return {
-      teamName,
-      players: assets.players.filter((p) => sel.playerIds.includes(p.id)),
-      picks: assets.picks.filter((pk) => sel.pickIds.includes(pk.id)).map((pk) => `${pk.season} Round ${pk.round}`),
-      faabAmount: sel.faabAmount,
-    };
+  function handleCancelTrade() {
+    setGive(EMPTY_SELECTION);
+    setReceive(EMPTY_SELECTION);
   }
 
-  if (step === "review" && counterparty) {
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Card>
-            <TradeAssetSummary side={selectionSide("You", myAssets, give)} statsById={statsById} />
-          </Card>
-          <Card>
-            <TradeAssetSummary side={selectionSide(counterparty.teamName, counterparty.assets, receive)} statsById={statsById} />
-          </Card>
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" onClick={() => setStep("select")}>Back</Button>
-          <form action={proposeTradeAction.bind(null, leagueId, myTeamId)}>
-            <input type="hidden" name="counterpartyTeamId" value={counterpartyId} />
-            {give.playerIds.map((id) => (
-              <input key={id} type="hidden" name="givePlayerIds" value={id} />
-            ))}
-            {give.pickIds.map((id) => (
-              <input key={id} type="hidden" name="givePickIds" value={id} />
-            ))}
-            <input type="hidden" name="giveFaab" value={give.faabAmount} />
-            {receive.playerIds.map((id) => (
-              <input key={id} type="hidden" name="receivePlayerIds" value={id} />
-            ))}
-            {receive.pickIds.map((id) => (
-              <input key={id} type="hidden" name="receivePickIds" value={id} />
-            ))}
-            <input type="hidden" name="receiveFaab" value={receive.faabAmount} />
-            <Button type="submit" variant="primary">Confirm & Send</Button>
-          </form>
-        </div>
-      </div>
-    );
+  const canContinue = totalItems(give) + totalItems(receive) > 0;
+
+  async function handleSend() {
+    setSending(true);
+    setSendError(null);
+    const result = await proposeTradeAction(leagueId, myTeamId, counterpartyId, give, receive);
+    if (result.ok) {
+      router.push(result.redirectTo);
+      return; // navigating away — leave the button disabled through the transition
+    }
+    setSendError(result.error);
+    setSending(false);
   }
 
-  const canReview = totalItems(give) + totalItems(receive) > 0 && !!counterparty;
+  function renderChips(sel: TradeAssetSelection): ReactNode[] {
+    const nodes: ReactNode[] = [];
+    for (const id of sel.playerIds) {
+      const p = playerLookup.get(id);
+      if (!p) continue;
+      nodes.push(
+        <span key={`p:${id}`} className="inline-flex items-center gap-1.5 rounded-full bg-surface-tint px-2 py-0.5 text-xs">
+          <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={24} />
+          {lastName(p.fullName)}
+        </span>,
+      );
+    }
+    for (const id of sel.pickIds) {
+      const pk = pickLookup.get(id);
+      if (!pk) continue;
+      nodes.push(
+        <span key={`pk:${id}`} className="inline-flex items-center rounded-full bg-surface-tint px-2 py-0.5 text-xs">
+          {pickChipLabel(pk.round, pk.season)}
+        </span>,
+      );
+    }
+    if (sel.faabAmount > 0) {
+      nodes.push(
+        <span key="faab" className="inline-flex items-center rounded-full bg-surface-tint px-2 py-0.5 text-xs">
+          ${sel.faabAmount} FAAB
+        </span>,
+      );
+    }
+    return nodes;
+  }
+
+  function renderConfirmSide(sel: TradeAssetSelection, arrow: "in" | "out") {
+    const items: ReactNode[] = [];
+    for (const id of sel.playerIds) {
+      const p = playerLookup.get(id);
+      if (!p) continue;
+      items.push(
+        <div key={`p:${id}`} className="flex items-center gap-2 py-1 text-sm">
+          {arrow === "out" && <span className="text-blue">←</span>}
+          <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={24} />
+          <span>{p.fullName}</span>
+          <span className="text-xs text-muted">
+            {p.currentNhlOrg ?? "—"} · {p.primaryPosition ?? "—"}
+          </span>
+          {arrow === "in" && <span className="ml-auto text-blue">→</span>}
+        </div>,
+      );
+    }
+    for (const id of sel.pickIds) {
+      const pk = pickLookup.get(id);
+      if (!pk) continue;
+      items.push(
+        <div key={`pk:${id}`} className="flex items-center gap-2 py-1 text-sm">
+          {arrow === "out" && <span className="text-blue">←</span>}
+          <span>
+            {pk.season} Round {pk.round}
+          </span>
+          {arrow === "in" && <span className="ml-auto text-blue">→</span>}
+        </div>,
+      );
+    }
+    if (sel.faabAmount > 0) {
+      items.push(
+        <div key="faab" className="flex items-center gap-2 py-1 text-sm">
+          {arrow === "out" && <span className="text-blue">←</span>}
+          <span>${sel.faabAmount} FAAB</span>
+          {arrow === "in" && <span className="ml-auto text-blue">→</span>}
+        </div>,
+      );
+    }
+    return items.length > 0 ? items : <p className="text-xs text-muted">Nothing.</p>;
+  }
 
   return (
-    <div className="space-y-4">
-      <label className="block text-sm">
-        <span className="text-xs text-muted">Trade with</span>
-        <select
-          value={counterpartyId}
-          onChange={(e) => {
-            setCounterpartyId(e.target.value);
-            setReceive(EMPTY_SELECTION);
-          }}
-          className="mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
-        >
-          {otherTeams.map((t) => (
-            <option key={t.teamId} value={t.teamId}>
-              {t.teamName}
-            </option>
-          ))}
-        </select>
-      </label>
+    <div>
+      <Card className="mt-4">
+        <label className="block text-sm">
+          <span className="text-xs text-muted">Trade with</span>
+          <select
+            value={counterpartyId}
+            onChange={(e) => router.push(`/leagues/${leagueId}/trades/new?with=${e.target.value}`)}
+            className="mt-1 block w-full max-w-sm rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
+          >
+            {otherTeams.map((t) => (
+              <option key={t.teamId} value={t.teamId}>
+                {t.teamName}
+              </option>
+            ))}
+          </select>
+        </label>
+      </Card>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="mt-6">
+        <p className="mb-2 text-sm font-semibold">{counterpartyName}&apos;s roster</p>
         <Card>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">You give</p>
-          <AssetChecklist
+          <TradeRosterTable
+            assets={counterpartyAssets}
+            statsById={statsById}
+            selected={receive}
+            onTogglePlayer={(id) => toggle(receive, setReceive, "playerIds", id)}
+            onTogglePick={(id) => toggle(receive, setReceive, "pickIds", id)}
+            onFaabChange={(amount) => setReceive({ ...receive, faabAmount: amount })}
+          />
+        </Card>
+        <div className="mt-3">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => yourRosterRef.current?.scrollIntoView({ behavior: "smooth" })}
+          >
+            ↓ Select who to offer below
+          </Button>
+        </div>
+      </div>
+
+      <div ref={yourRosterRef} className="mt-8">
+        <p className="mb-2 text-sm font-semibold">Your roster ({myTeamName})</p>
+        <Card>
+          <TradeRosterTable
             assets={myAssets}
             statsById={statsById}
             selected={give}
@@ -184,24 +242,66 @@ export function TradeBuilder({
             onFaabChange={(amount) => setGive({ ...give, faabAmount: amount })}
           />
         </Card>
-        <Card>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">You get</p>
-          {counterparty && (
-            <AssetChecklist
-              assets={counterparty.assets}
-              statsById={statsById}
-              selected={receive}
-              onTogglePlayer={(id) => toggle(receive, setReceive, "playerIds", id)}
-              onTogglePick={(id) => toggle(receive, setReceive, "pickIds", id)}
-              onFaabChange={(amount) => setReceive({ ...receive, faabAmount: amount })}
-            />
-          )}
-        </Card>
       </div>
 
-      <Button type="button" variant="primary" disabled={!canReview} onClick={() => setStep("review")}>
-        Review Trade
-      </Button>
+      <div className="sticky bottom-0 z-10 -mx-6 mt-6 border-t border-border bg-surface px-6 py-3 shadow-lg">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="min-w-[220px] flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Receiving — {counterpartyName}</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {totalItems(receive) === 0 ? (
+                <span className="text-xs text-muted">Nothing selected.</span>
+              ) : (
+                renderChips(receive)
+              )}
+            </div>
+          </div>
+          <div className="min-w-[220px] flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Offering — {myTeamName}</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {totalItems(give) === 0 ? <span className="text-xs text-muted">Nothing selected.</span> : renderChips(give)}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="secondary" onClick={handleCancelTrade}>
+              Cancel Trade
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              disabled={!canContinue}
+              onClick={() => {
+                setSendError(null);
+                setModalOpen(true);
+              }}
+            >
+              Continue
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <Modal open={modalOpen} onClose={() => !sending && setModalOpen(false)} title="Confirm Trade">
+        <div className="space-y-4 p-4">
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Receiving from {counterpartyName}</p>
+            <div className="divide-y divide-border">{renderConfirmSide(receive, "in")}</div>
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Offering to {counterpartyName}</p>
+            <div className="divide-y divide-border">{renderConfirmSide(give, "out")}</div>
+          </div>
+          {sendError && <p className="text-sm text-danger">{sendError}</p>}
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <Button type="button" onClick={() => setModalOpen(false)} disabled={sending}>
+              Back
+            </Button>
+            <Button type="button" variant="primary" onClick={handleSend} disabled={sending}>
+              {sending ? "Sending…" : "Send Trade Proposal"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -12,26 +12,40 @@ import {
   type TradeAssetSelection,
 } from "@/lib/trades/mutations";
 
-function readSelection(formData: FormData, prefix: "give" | "receive"): TradeAssetSelection {
-  return {
-    playerIds: formData.getAll(`${prefix}PlayerIds`).map(String),
-    pickIds: formData.getAll(`${prefix}PickIds`).map(String),
-    faabAmount: Math.max(0, Number(formData.get(`${prefix}Faab`) ?? 0) | 0),
-  };
-}
-
-export async function proposeTradeAction(leagueId: string, proposingTeamId: string, formData: FormData) {
+// Called imperatively from TradeBuilder.tsx (not a <form action>), and
+// deliberately catches rather than throws: a Server Action invoked directly
+// from an event handler has its thrown error redacted in production (only a
+// generic digest reaches the client), which would swallow proposeTrade's
+// specific validation messages (locked player, roster overflow, deadline,
+// draft in progress, …) that the confirm modal needs to show verbatim.
+// Returning a plain value instead sidesteps that entirely. On success, the
+// caller does router.push(redirectTo) itself — redirect() can't be called
+// from a client event handler (see next/navigation's redirect docs), only
+// during render or a <form action> submission.
+export async function proposeTradeAction(
+  leagueId: string,
+  proposingTeamId: string,
+  counterpartyTeamId: string,
+  give: TradeAssetSelection,
+  receive: TradeAssetSelection,
+): Promise<{ ok: true; redirectTo: string } | { ok: false; error: string }> {
   const { userId } = await auth.protect();
-  const counterpartyTeamId = String(formData.get("counterpartyTeamId") ?? "");
-  await proposeTrade({
-    leagueId,
-    proposingTeamId,
-    counterpartyTeamId,
-    managerUserId: userId,
-    give: readSelection(formData, "give"),
-    receive: readSelection(formData, "receive"),
-  });
+  try {
+    await proposeTrade({
+      leagueId,
+      proposingTeamId,
+      counterpartyTeamId,
+      managerUserId: userId,
+      give,
+      receive,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't send trade proposal." };
+  }
   revalidatePath(`/leagues/${leagueId}/trades`);
+  revalidatePath(`/leagues/${leagueId}/teams/${proposingTeamId}`);
+  revalidatePath(`/leagues/${leagueId}/teams/${counterpartyTeamId}`);
+  return { ok: true, redirectTo: `/leagues/${leagueId}/teams/${proposingTeamId}?sent=${counterpartyTeamId}` };
 }
 
 export async function respondToTradeAction(leagueId: string, tradeId: string, accept: boolean) {
@@ -49,7 +63,7 @@ export async function counterTradeAction(leagueId: string, tradeId: string) {
   const { userId } = await auth.protect();
   await respondToTrade({ tradeId, managerUserId: userId, accept: false });
   revalidatePath(`/leagues/${leagueId}/trades`);
-  redirect(`/leagues/${leagueId}/trades?counterFrom=${tradeId}`);
+  redirect(`/leagues/${leagueId}/trades/new?counterFrom=${tradeId}`);
 }
 
 export async function cancelTradeAction(leagueId: string, tradeId: string) {

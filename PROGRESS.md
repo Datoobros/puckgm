@@ -1828,6 +1828,114 @@ plainly rather than implying one happened.
   section, rather than adding a new one. `npx tsc --noEmit` and `npm run build` both clean.
   **No browser check for this task** — Task 1b is backend-only, per the plan.
 
+## Trades page split, ESPN-style builder, confirm modal (trades batch, Task 2)
+
+Third of the trades batch (`plans/trades-batch.md`, issues #1/#2/#3). Before this, `/trades`
+did everything at once — a builder card at the top (two-column checklist, no stats, a
+full-page "review" step), then Needs-your-response/Waiting/Pending/**History** lists. This
+task splits it into a short list page and a dedicated ESPN-style builder, and fixes the
+"stays on the page after sending" spam-send bug by actually redirecting somewhere useful.
+
+- **Two routes now.** `/leagues/[id]/trades` (`page.tsx`, rewritten) is just the three live
+  lists — Needs your response / Waiting on a response / Pending (under review) — plus a
+  `Propose Trade` button. **History is gone entirely** (issue #2), not hidden behind a
+  toggle. `/leagues/[id]/trades/new` (new, `new/page.tsx`) is the builder — its own
+  `auth.protect()`, redirects to the list page if the viewer has no team in the league or if
+  the league has no other teams to trade with.
+- **Builder layout matches the ESPN reference exactly**: counterparty picker → the *other*
+  team's full roster (new `TradeRosterTable.tsx` — two stat tables, Skaters and Goalies, same
+  `SKATER_COLUMNS`/`GOALIE_COLUMNS` + `POINTS_COLUMNS` the team/Players pages already use, one
+  checkbox per row) → a `↓ Select who to offer below` button that
+  `scrollIntoView({behavior:"smooth"})`s to a ref on the "Your roster" section → your own
+  roster in the same table → a `sticky bottom-0` bar (`-mx-6` to cancel the page's own
+  horizontal padding so it spans full width) showing `Receiving — <their team>` /
+  `Offering — <your team>` as headshot+last-name chips, `Cancel Trade` (clears both
+  selections), and `Continue` (disabled until at least one asset is selected on either side).
+  `TradeRosterTable` also renders each team's draft picks and FAAB input below its stat
+  tables — unchanged mechanism, just relocated. A row whose player is
+  `lockedInTradeId`/`onWaiversUntil` (Task 1's fields on `getTradeableAssets`) has its
+  checkbox disabled and a `Pending trade`/`On waivers` badge with the specific reason in the
+  `title` — verified live against a real `UNDER_REVIEW` trade (see Verified below), not just
+  by reading the code.
+- **Confirm Trade modal reuses `Modal`** (`src/components/Modal.tsx`, from the team-page
+  batch) rather than a full-page review step — `Continue` opens it with two lists (Receiving
+  from X with → arrows, Offering to X with ← arrows: headshot, name, `NHL · pos`; picks and
+  FAAB as plain text lines), a `Back` button, and `Send Trade Proposal`. Task 3's roster-fit
+  pre-flight check is explicitly **not** in this modal yet — `Continue` always opens it
+  directly, per the plan's scope for this task.
+- **`proposeTradeAction`'s signature and return shape both changed.** It used to take
+  `(leagueId, proposingTeamId, formData)` and be bound into a `<form action>`, relying on
+  `revalidatePath` to refresh the still-mounted page (the "stays on the page" bug — nothing
+  ever navigated anywhere, so a manager could resubmit). It's now called **imperatively** from
+  `TradeBuilder.tsx` (`await proposeTradeAction(leagueId, myTeamId, counterpartyId, give,
+  receive)`, plain objects, no `FormData`) and returns
+  `{ ok: true; redirectTo: string } | { ok: false; error: string }` instead of throwing. This
+  isn't just style — a Server Action invoked directly from a client event handler (rather than
+  a `<form action>` submission) has a thrown error's message **redacted to a generic digest in
+  production**, which would have swallowed `proposeTrade`'s specific validation text (locked
+  player, roster overflow, deadline passed, draft in progress, …) that the confirm modal needs
+  to show verbatim. Catching inside the action and returning a plain value sidesteps that
+  entirely. `redirect()` itself is *not* called from the action either — `next/navigation`'s
+  own docs are explicit that `redirect()` can't be used from a client event handler, only
+  during render or a `<form action>` submission — so the client does `router.push(redirectTo)`
+  once it sees `ok: true`.
+- **The redirect** lands on `/leagues/[id]/teams/[proposingTeamId]?sent=<counterpartyTeamId>`.
+  The team page (`teams/[teamId]/page.tsx`) reads `?sent=`, and — only when the viewer
+  actually manages *this* team — looks up the named team (ignoring an unknown/stale id
+  silently) and renders a one-time `Card` banner: "Trade proposal sent to \<team\>." It
+  disappears on the next navigation since nothing persists it; no new state.
+- **A non-owner who manages a different team in the league** now gets a `Propose Trade`
+  shortcut in the team page's header (the same slot an owner sees `NotificationsButton` in),
+  linking straight to `/trades/new?with=<thisTeamId>` — one extra lookup
+  (`prisma.team.findFirst` with the existing `managerOrCoManagerWhere(userId)`), gated so it
+  never shows for the team's own owner or for a plain non-manager visitor.
+- **The give/receive/givePicks/receivePicks/giveFaab/receiveFaab URL-param restore is
+  implemented now**, even though nothing generates those params yet — `new/page.tsx` parses
+  them, validates every id against that pair's actual `getTradeableAssets` result (drop
+  unknown ids silently, clamp FAAB to `availableFaab`), and passes the result as
+  `initialGive`/`initialReceive`. This is what Task 3's "Return to trade builder" link (after
+  a detour to drop-mode) will populate; building the one restore path now means Task 3 only
+  has to generate the query string, not add a second parsing branch. The `counterFrom`
+  prefill logic (only trusted when the viewer's team was genuinely that trade's counterparty)
+  moved here **verbatim** from the old `/trades` page and takes priority over the
+  give/receive params when both are somehow present.
+- **Deleted**: `TradeBuilder.tsx`'s old `step: "select" | "review"` state machine and the
+  `AssetChecklist` component (replaced by `TradeRosterTable.tsx` + the sticky bar + the
+  modal); the builder `Card` and the entire History section from `/trades/page.tsx`.
+  `TradeAssetSummary.tsx` (`PlayerStatLine`/`TradeAssetSummary`) is untouched — the accept
+  review page (`[tradeId]/review/page.tsx`) still uses it, out of scope for this task.
+  `RosterMoveBoard.tsx`'s `Propose Trade` button and `counterTradeAction`'s redirect both
+  retargeted from `/trades` to `/trades/new` (with `counterFrom` carried on the latter).
+- Verified in a real browser against a disposable 3-team league
+  (`scripts/builder-test-league.ts`, kept in the repo with a `--cleanup` flag; rostered
+  entirely from **real** `Player` rows already in the DB — Crosby, Malkin, Ovechkin, Kane,
+  Doughty, Hellebuyck, Tavares, Marchand, Giroux, Letang, Bobrovsky — no synthetic fixtures
+  needed for this task) using the `// TEMP:` hardcoded-userId technique in five places (the
+  league layout, both trade pages, the review page, and every action in `actions.ts`, via one
+  shared `TEMP_USER_ID` constant so switching identity was a one-line edit), all reverted
+  before commit (`grep -rn "TEMP:" src/` clean): `/trades` showed the three lists with no
+  History for both managers; `Propose Trade` landed on `/trades/new`; the counterparty's full
+  roster rendered first with real stat columns; the scroll button moved the page to "Your
+  roster"; a real `UNDER_REVIEW` trade (proposed and accepted between the other two teams as
+  part of the seed) showed Kris Letang's row disabled with the `Pending trade` badge and the
+  correct `title`; selecting a player on each side populated the sticky bar's chips; `Cancel
+  Trade` cleared both back to "Nothing selected"; `Continue` opened the Confirm Trade modal
+  with the right Receiving/Offering content and arrows; `Send Trade Proposal` landed on the
+  proposer's team page with the "Trade proposal sent to Charlie." banner and the correct
+  `?sent=` id in the URL; `/trades` then listed it under Waiting on a response for the
+  proposer and Needs your response for the counterparty; clicking `Counter` from the review
+  page declined the original (confirmed `DECLINED` in the DB) and landed on
+  `/trades/new?counterFrom=<id>` with the counterparty and both selections correctly swapped.
+  `npx tsc --noEmit` and `npm run build` both clean before and after reverting the `// TEMP:`
+  bypasses. Cleaned up by exact league name afterward — never touched the real
+  "Experimenting" league.
+- **Not covered by this task, flagged for Task 3**: the roster-fit pre-flight check on
+  `Continue` (a full-roster proposer currently just gets the ordinary server-side error from
+  `proposeTrade` inside the modal, not the dedicated "Roster too full" variant with `Go drop
+  players →`), drop-mode URL params (`dropMode`/`returnTo`/`pendingTrade`) on the team page,
+  and the accept-side "you must drop N" flow on the review page. All are exactly what Task 3
+  is scoped to build; this task's give/receive param-restore path is what it builds on top of.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —
