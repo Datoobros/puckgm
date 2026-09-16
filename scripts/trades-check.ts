@@ -95,9 +95,13 @@ async function main() {
   assert(voteTrade.state === "VETOED", "1 of 1 eligible voters vetoes immediately, no cron needed");
 
   console.log("\n-- back to COMMISSIONER veto mode for the rest --");
+  // Task 1b adaptation (plans/trades-batch.md, trade hardening): proposeTrade
+  // now rejects a FAAB item outright when the league hasn't turned FAAB on
+  // (gap #8) — the "full trade" test right below trades FAAB, so faabEnabled
+  // has to flip to true here instead of staying false through it.
   await updateLeagueSettings({
     leagueId, callerUserId: "trade-test-A", farmSlots: 4, irSlots: 2, waiverGpThreshold: 80, callupsPerWeek: 2,
-    scoringConfig: {}, faabEnabled: false, faabBudget: 100, faabMinBid: 1, faabMaxBid: null,
+    scoringConfig: {}, faabEnabled: true, faabBudget: 100, faabMinBid: 1, faabMaxBid: null,
     tradeVetoMode: "COMMISSIONER", tradeDeadline: null,
     rosterComposition: { positionMode: "SEPARATE", C: 1, LW: 1, RW: 1, F: 0, D: 1, G: 1, UTIL: 1, BENCH: 2 },
     draftPickTradingEnabled: true,

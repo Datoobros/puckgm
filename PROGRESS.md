@@ -1735,6 +1735,99 @@ when something changed. Verified on the real league via script (before `[Rebuild
 → after `[Finn, Rebuild Squad, Dev]`, stable on re-read) and in the browser on the Teams
 page (`#1 / #2 / #3` rendered). No schema change; no test data created.
 
+## Trade hardening: loophole audit (trades batch, Task 1b)
+
+Second of the three-task trades batch (`plans/trades-batch.md`) — a read-through of the whole
+trade module and everything it touches, written after Task 1 shipped, looking for ways a
+manager could gain an edge or grief another. All nine gaps found were confirmed real against
+commit `3fc0b77`, not hypothetical; three rules decisions were settled with the user up front
+(kept below, not re-litigated). Backend only, same as Task 1 — **no browser check**, said
+plainly rather than implying one happened.
+
+- **Picks can no longer be double-spent, or traded once used** (gap #1). New
+  `getTradeLockedPickIds`/`assertPicksNotTradeLocked` (`src/lib/trades/locks.ts`) mirror the
+  player-lock pair exactly, scoped to `TradeItem`'s PICK items in an `UNDER_REVIEW` trade —
+  wired into `proposeTrade` (both sides) and `respondToTrade`'s accept re-validation, same as
+  the player lock. `getTradeableAssets` and `assertOwnsAssets` both now also require
+  `usedOnPlayerId: null`, so a pick already spent in a draft is neither shown nor accepted.
+  `assertItemsStillOwned` (accept-time re-validation) checks the same unused-ness, closing the
+  gap where a pick could get drafted *between* propose and accept (proposing never locked it).
+- **Hostage trades get a real exit** (gap #2). `processDueTrades` gained a second pass after
+  its normal one: any `UNDER_REVIEW` trade whose `reviewEndsAt` is more than
+  `STUCK_TRADE_GRACE_MS` (3 days, named constant) in the past and still doesn't fit is
+  `CANCELLED` outright, with a `{ event: "AUTO_CANCELLED", reason: "ROSTER_ROOM",
+  blockingTeamIds }` log. **Decision, not re-opened**: auto-cancel only — no manual withdraw
+  for the non-blocking side; the user declined that option. The commissioner's force-process
+  remains the only way to push a still-in-window trade through early.
+- **FAAB freeze by proposal fixed** (gap #3). `getAvailableBudget`
+  (`src/lib/faab/mutations.ts`) used to subtract *any* team's FAAB commitment in a still-
+  `PROPOSED` trade, including one they never agreed to — anyone could propose "I want $100 of
+  your FAAB" and freeze a rival's bidding on sight. Now a `PROPOSED` trade only counts against
+  the team that *proposed* it; `UNDER_REVIEW` still counts against either side, since both have
+  actually agreed by then. `assertFaabStillAvailable`'s accept-time re-check
+  (`src/lib/trades/mutations.ts`) needed a matching fix — it used to unconditionally "add back"
+  this trade's own commitment before comparing, which only holds when the sender *is* the
+  proposer; adding it back for the counterparty side (asked to give up FAAB to accept) would
+  have double-counted in the wrong direction and silently under-enforced the real check. Caught
+  by reasoning through the two FAAB-item directions before writing the verification script, not
+  by a failing assertion.
+- **Silent half-trades now fail loudly** (gap #4). `executeTradeTransfers` re-validates every
+  item (player still owned, pick still owned *and* unused, FAAB still available) before any
+  write; on a failure it `CANCELLED`s the whole trade with a
+  `{ event: "INVALIDATED", reason: "<sentence naming the item>" }` log instead of silently
+  skipping the stale item and marking the trade `PROCESSED` anyway. The old
+  `if (!oldSlot) continue;` is now `if (!oldSlot) throw` — unreachable in practice once both
+  locks exist, kept as defense in depth, not a silent no-op. New `TradeExecutionOutcome`
+  member: `"INVALIDATED"`.
+- **Trade deadline re-checked at accept, not just propose** (gap #5). A proposal made before
+  the deadline could previously be accepted after it; `respondToTrade`'s accept path now
+  re-checks `tradeDeadline` the same way `proposeTrade` does.
+- **Trades frozen during a live draft** (gap #6). New `assertNoDraftInProgress(leagueId)`
+  (`src/lib/draft/mutations.ts`, resolve-on-read first, same principle as
+  `getFreeAgencyStatus`) blocks both `proposeTrade` and `respondToTrade`'s accept path while
+  any draft in the league is genuinely `IN_PROGRESS`. **Decision, not re-opened**: full freeze
+  — no proposals *and* no acceptances of any kind, players or picks, confirmed with the user
+  (not just a lock on drafted picks).
+- **Three more accept-time gaps closed** (gap #7): `respondToTrade`'s accept path now
+  re-checks both teams for `ORPHAN_FROZEN`, re-checks `draftPickTradingEnabled` when the trade
+  has pick items, and — the same-instant double-accept race (two co-managers, or the same
+  request twice) — the final write is now an **interactive transaction**:
+  `tx.trade.updateMany({ where: { id, state: "PROPOSED" }, data })`, throwing "This trade was
+  already answered." if `count !== 1`. Closes the race with no new schema — Postgres's own
+  row-level locking on the conditional `UPDATE` guarantees only one concurrent caller can ever
+  flip the row. Verified with two genuinely concurrent `respondToTrade` calls
+  (`Promise.allSettled`) against a real Neon connection: exactly one fulfilled, the other
+  rejected, exactly one `ACCEPTED` log row.
+- **FAAB items blocked in FAAB-off leagues** (gap #8). `proposeTrade` throws if either side
+  offers a nonzero FAAB amount and `!settings.faabEnabled`; `getTradeableAssets` reports
+  `availableFaab: 0` for such a league instead of a real-looking number with nothing backing
+  it.
+- **Orphaning a team now cancels its in-flight trades first** (gap #9). The fix lives in the
+  Server Action layer (`orphanTeamAction`, `src/app/leagues/actions.ts`), not
+  `leagues/mutations.ts` — `trades/mutations.ts` already imports from `leagues/mutations.ts`,
+  so importing `cancelTrade` back in there would reopen the exact circular-import shape already
+  avoided elsewhere in this app. Same approach `leagues/season.ts`'s `startNewSeason` already
+  uses for its full-roster wipe: find every `PROPOSED`/`UNDER_REVIEW` trade the team is party
+  to (via `TradeItem.fromTeamId`/`toTeamId`), `cancelTrade({ allowUnderReview: true })` each,
+  then orphan. Also added a direct commissioner check ahead of that cancellation loop — without
+  it, a non-commissioner caller would have surfaced `cancelTrade`'s unrelated "you aren't part
+  of this trade" instead of the usual "only the commissioner" error whenever the team happened
+  to have a trade in flight.
+- Not loopholes, verified during the audit and left alone: one-user-one-team is enforced on
+  every join/claim/reassign path; FAAB double-commit across bids and trades was already handled
+  (Task 1); the fit arithmetic is correct; veto threshold logic holds.
+- Verified in a new `scripts/trade-hardening-check.ts` against the real DB (disposable 3-team
+  league, small caps — Active 3/Farm 1/IR 1 — rostered via `commissionerAddPlayer`, cleaned up
+  by exact name): all 9 numbered gaps above, plus a real 3-team/1-round `STARTUP` draft run to
+  completion inline to prove the freeze lifts once the draft finishes. Re-ran
+  `trade-integrity-check.ts` and `trade-review-check.ts` clean with no changes needed.
+  `trades-check.ts` needed one adaptation (documented in a code comment there): its "full
+  trade: player + pick + FAAB" section trades FAAB while `faabEnabled` was still `false` at
+  that point in the script (gap #8 didn't exist when it was written) — flipped `faabEnabled:
+  true` one step earlier, in the same settings update that already runs right before that
+  section, rather than adding a new one. `npx tsc --noEmit` and `npm run build` both clean.
+  **No browser check for this task** — Task 1b is backend-only, per the plan.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —
@@ -1751,6 +1844,20 @@ page (`#1 / #2 / #3` rendered). No schema change; no test data created.
   feature built for any of these. (Injury/IR status is now real, via ESPN — see above; this
   line used to include it.)
 - Contracts — explicitly deferred in the original DESIGN.md, revisit later or never
+- **Kept: the 24h post-trade demotion exemption** (`TRADE_EXEMPTION_WINDOW_MS` in `sendToFarm`,
+  `src/lib/rosters/mutations.ts`) enables a two-team waiver-laundering pattern — trade a
+  veteran over, the partner demotes him waiver-free within 24h (exempt from re-exposure since
+  he was just acquired), then trades him back as a farm player, with neither leg ever exposing
+  him to a real waiver claim. Confirmed with the user during the Task 1b audit (see the Trade
+  hardening section above): kept as-is — the risk is accepted and relies on the league's veto
+  (commissioner or vote) to catch an obviously collusive trade, rather than closing the
+  mechanism in code.
+- **Commissioner-veto governance gap, not enforced in code**: in `tradeVetoMode: COMMISSIONER`,
+  a trade the commissioner is themselves party to can't be vetoed by anyone unless a
+  co-commissioner exists — the conflict-of-interest guard (added with co-commissioners) only
+  excludes the commissioner from deciding their own trade, it doesn't hand veto power to
+  anyone else. Flagged here (Task 1b audit) so the user remembers to set up a co-commissioner
+  before this actually matters in the real league.
 
 ## Working conventions established this session
 

@@ -12,6 +12,11 @@ import type { TeamNotification } from "@/lib/notifications/feed";
 const NOTIFICATION_DOT: Record<string, string> = {
   TRADE_ACTION: "bg-gold",
   TRADE_PENDING: "bg-blue",
+  // Trade hardening (plans/trades-batch.md Task 1b) — a trade that was
+  // cancelled out from under a manager (invalidated, stuck 3+ days, or
+  // superseded by another accept) reads as a negative outcome worth calling
+  // out distinctly, same tone as ROSTER below.
+  TRADE_RESULT: "bg-danger",
   WAIVER_PENDING: "bg-blue",
   WAIVER_RESULT: "bg-gold",
   FAAB_PENDING: "bg-blue",

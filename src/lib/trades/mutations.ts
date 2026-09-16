@@ -26,9 +26,22 @@ import { activeRosterCap } from "@/lib/rosters/mutations";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
 import { clearLineupFrom, ensureLineupMaterialized } from "@/lib/lineups/mutations";
 import { todayUTC } from "@/lib/dates";
-import { assertPlayersNotTradeLocked, getTradeLockedPlayerIds } from "@/lib/trades/locks";
+import {
+  assertPlayersNotTradeLocked,
+  getTradeLockedPlayerIds,
+  assertPicksNotTradeLocked,
+  getTradeLockedPickIds,
+} from "@/lib/trades/locks";
+import { assertNoDraftInProgress } from "@/lib/draft/mutations";
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Trade hardening (plans/trades-batch.md Task 1b, "decisions already made"):
+// a trade still UNDER_REVIEW and still not fitting 3 days after
+// reviewEndsAt is cancelled outright by the cron instead of retrying daily
+// forever — no manual withdraw for the non-blocking side (the user declined
+// that option). Both teams are notified via the TRADE_RESULT notification
+// (src/lib/notifications/feed.ts).
+const STUCK_TRADE_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
 
 export interface TradeAssetSelection {
   playerIds: string[];
@@ -50,7 +63,9 @@ export interface TradeableAssets {
     lockedInTradeId: string | null;
     onWaiversUntil: Date | null;
   }[];
-  picks: { id: string; season: number; round: number }[];
+  // Trade hardening (plans/trades-batch.md Task 1b, gap #1): picks gain the
+  // same lockedInTradeId the builder already shows for players.
+  picks: { id: string; season: number; round: number; lockedInTradeId: string | null }[];
   availableFaab: number;
 }
 
@@ -58,13 +73,19 @@ export async function getTradeableAssets(teamId: string): Promise<TradeableAsset
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId }, include: { league: true } });
   const settings = team.league.settingsJson as unknown as LeagueSettings;
 
-  const [slots, picks, availableFaab] = await Promise.all([
+  const [slots, picks, availableFaabRaw] = await Promise.all([
     prisma.rosterSlot.findMany({ where: { teamId, effectiveTo: null }, include: { player: true } }),
-    prisma.draftPick.findMany({ where: { currentOwnerId: teamId } }),
+    // Trade hardening (Task 1b, gap #1): a used pick (already spent on a
+    // player in the draft) has nothing left to trade — filtered out here
+    // rather than shown and rejected at proposeTrade time.
+    prisma.draftPick.findMany({ where: { currentOwnerId: teamId, usedOnPlayerId: null } }),
     getAvailableBudget(teamId, team.league.currentSeason, settings.faabBudget),
   ]);
 
-  const lockedByPlayer = await getTradeLockedPlayerIds(team.leagueId, slots.map((s) => s.playerId));
+  const [lockedByPlayer, lockedByPick] = await Promise.all([
+    getTradeLockedPlayerIds(team.leagueId, slots.map((s) => s.playerId)),
+    getTradeLockedPickIds(team.leagueId, picks.map((p) => p.id)),
+  ]);
   const now = Date.now();
 
   return {
@@ -78,8 +99,16 @@ export async function getTradeableAssets(teamId: string): Promise<TradeableAsset
       lockedInTradeId: lockedByPlayer.get(s.playerId) ?? null,
       onWaiversUntil: s.waiverExpiresAt && s.waiverExpiresAt.getTime() > now ? s.waiverExpiresAt : null,
     })),
-    picks: picks.map((p) => ({ id: p.id, season: p.season, round: p.round })),
-    availableFaab,
+    picks: picks.map((p) => ({
+      id: p.id,
+      season: p.season,
+      round: p.round,
+      lockedInTradeId: lockedByPick.get(p.id) ?? null,
+    })),
+    // Trade hardening (Task 1b, gap #8): a league that hasn't turned FAAB on
+    // has no real budget to trade away — shown as 0 rather than whatever
+    // getAvailableBudget would otherwise compute against an unused budget row.
+    availableFaab: settings.faabEnabled ? availableFaabRaw : 0,
   };
 }
 
@@ -175,6 +204,10 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
     throw new Error("An orphaned team's roster is frozen — it can't trade.");
   }
 
+  // Trade hardening (Task 1b, gap #6): full freeze during a live draft — no
+  // proposals of any kind while any draft in the league is IN_PROGRESS.
+  await assertNoDraftInProgress(input.leagueId);
+
   const settings = proposingTeam.league.settingsJson as unknown as LeagueSettings;
   if (settings.tradeDeadline && Date.now() > Date.parse(settings.tradeDeadline)) {
     throw new Error("This league's trade deadline has passed.");
@@ -191,6 +224,12 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
     throw new Error("Draft pick trading is turned off in this league.");
   }
 
+  // Trade hardening (Task 1b, gap #8): a league that hasn't turned FAAB on
+  // has no real spendable budget to trade away.
+  if (!settings.faabEnabled && (input.give.faabAmount > 0 || input.receive.faabAmount > 0)) {
+    throw new Error("This league doesn't use FAAB — there's nothing to trade.");
+  }
+
   await assertOwnsAssets(input.proposingTeamId, input.give);
   await assertOwnsAssets(input.counterpartyTeamId, input.receive);
 
@@ -200,6 +239,11 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
   const allPlayerIds = [...input.give.playerIds, ...input.receive.playerIds];
   await assertPlayersNotTradeLocked(input.leagueId, allPlayerIds, "traded");
   await assertPlayersNotOnWaivers(allPlayerIds);
+  // Trade hardening (Task 1b, gap #1): the pick-side equivalent of the
+  // player lock above — a pick already promised in another accepted trade
+  // can't be offered or requested on a new proposal either.
+  const allPickIds = [...input.give.pickIds, ...input.receive.pickIds];
+  await assertPicksNotTradeLocked(input.leagueId, allPickIds);
 
   if (input.give.faabAmount > 0) {
     const available = await getAvailableBudget(input.proposingTeamId, proposingTeam.league.currentSeason, settings.faabBudget);
@@ -254,8 +298,13 @@ async function assertOwnsAssets(teamId: string, assets: TradeAssetSelection): Pr
     if (owned !== assets.playerIds.length) throw new Error("Not every selected player is currently owned by the claimed team.");
   }
   if (assets.pickIds.length > 0) {
-    const owned = await prisma.draftPick.count({ where: { id: { in: assets.pickIds }, currentOwnerId: teamId } });
-    if (owned !== assets.pickIds.length) throw new Error("Not every selected pick is currently owned by the claimed team.");
+    // Trade hardening (Task 1b, gap #1): a used pick doesn't count as owned
+    // for trading purposes even though the team technically still holds the
+    // row — it has nothing left to give away.
+    const owned = await prisma.draftPick.count({
+      where: { id: { in: assets.pickIds }, currentOwnerId: teamId, usedOnPlayerId: null },
+    });
+    if (owned !== assets.pickIds.length) throw new Error("Not every selected pick is currently owned (and unused) by the claimed team.");
   }
 }
 
@@ -279,7 +328,28 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
   if (input.accept) {
     // Full re-validation, as if proposing fresh (Rules, plans/trades-batch.md
     // Task 1): ownership, locks, waivers, and FAAB availability can all have
-    // drifted since this trade was proposed.
+    // drifted since this trade was proposed. Task 1b (accept-time gaps, #7)
+    // adds three more things that can have drifted the same way: either
+    // team getting orphaned, the trade deadline passing, and a draft
+    // starting up — none of these were re-checked at accept time before.
+    const [proposerTeam, counterpartyTeamFull, league] = await Promise.all([
+      prisma.team.findUniqueOrThrow({ where: { id: trade.proposedByTeamId } }),
+      prisma.team.findUniqueOrThrow({ where: { id: counterpartyTeamId } }),
+      prisma.league.findUniqueOrThrow({ where: { id: trade.leagueId } }),
+    ]);
+    if (proposerTeam.state === "ORPHAN_FROZEN" || counterpartyTeamFull.state === "ORPHAN_FROZEN") {
+      throw new Error("An orphaned team's roster is frozen — this trade can no longer be accepted.");
+    }
+
+    const settings = league.settingsJson as unknown as LeagueSettings;
+    if (settings.tradeDeadline && Date.now() > Date.parse(settings.tradeDeadline)) {
+      throw new Error("This league's trade deadline has passed — this proposal can no longer be accepted.");
+    }
+
+    // Full freeze during a live draft (Task 1b, gap #6) applies to accepting
+    // too, not just proposing.
+    await assertNoDraftInProgress(trade.leagueId);
+
     await assertItemsStillOwned(trade.items);
 
     const playerIds = trade.items
@@ -288,9 +358,19 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
     await assertPlayersNotTradeLocked(trade.leagueId, playerIds, "traded");
     await assertPlayersNotOnWaivers(playerIds);
 
-    const league = await prisma.league.findUniqueOrThrow({ where: { id: trade.leagueId } });
-    const settings = league.settingsJson as unknown as LeagueSettings;
-    await assertFaabStillAvailable(trade.items, league.currentSeason, settings.faabBudget);
+    const pickIds = trade.items
+      .filter((i): i is typeof i & { draftPickId: string } => i.itemType === "PICK" && !!i.draftPickId)
+      .map((i) => i.draftPickId);
+    // Trade hardening (Task 1b, gap #1/#7): the pick-side lock check and the
+    // draftPickTradingEnabled setting can both have drifted since propose
+    // time (another trade accepted first; the commissioner turned pick
+    // trading off) — re-checked here exactly like the player-side checks.
+    await assertPicksNotTradeLocked(trade.leagueId, pickIds);
+    if (pickIds.length > 0 && settings.draftPickTradingEnabled === false) {
+      throw new Error("Draft pick trading is turned off in this league.");
+    }
+
+    await assertFaabStillAvailable(trade.items, league.currentSeason, settings.faabBudget, trade.proposedByTeamId);
 
     // Fit is the *acceptor's* responsibility here — the proposer's room was
     // already their own problem to solve at propose time.
@@ -317,26 +397,38 @@ export async function respondToTrade(input: RespondToTradeInput): Promise<void> 
         })
       : [];
 
-    await prisma.$transaction([
-      prisma.trade.update({
-        where: { id: input.tradeId },
+    // Trade hardening (Task 1b, gap #7): a same-instant double accept (two
+    // co-managers of the same team, or this same tradeId hit twice
+    // concurrently) used to pass every check above because neither call saw
+    // the trade as UNDER_REVIEW yet. The interactive transaction below closes
+    // that race with no new schema: updateMany's WHERE re-checks state ==
+    // PROPOSED at the moment of the actual write, inside the transaction, so
+    // only one concurrent caller can ever flip it — the other sees count !==
+    // 1 and throws instead of silently double-committing the same players.
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.trade.updateMany({
+        where: { id: input.tradeId, state: "PROPOSED" },
         data: { state: "UNDER_REVIEW", respondedAt: now, reviewEndsAt: new Date(now.getTime() + REVIEW_WINDOW_MS) },
-      }),
-      prisma.transactionLog.create({
+      });
+      if (updated.count !== 1) {
+        throw new Error("This trade was already answered.");
+      }
+
+      await tx.transactionLog.create({
         data: { leagueId: trade.leagueId, type: "TRADE", actorTeamId: counterpartyTeamId, payload: { tradeId: trade.id, event: "ACCEPTED" } },
-      }),
-      ...superseded.flatMap((s) => [
-        prisma.trade.update({ where: { id: s.id }, data: { state: "CANCELLED" } }),
-        prisma.transactionLog.create({
+      });
+      for (const s of superseded) {
+        await tx.trade.update({ where: { id: s.id }, data: { state: "CANCELLED" } });
+        await tx.transactionLog.create({
           data: {
             leagueId: trade.leagueId,
             type: "TRADE",
             actorTeamId: counterpartyTeamId,
             payload: { tradeId: s.id, event: "SUPERSEDED", byTradeId: trade.id },
           },
-        }),
-      ]),
-    ]);
+        });
+      }
+    });
   } else {
     await prisma.$transaction([
       prisma.trade.update({ where: { id: input.tradeId }, data: { state: "DECLINED" } }),
@@ -559,34 +651,81 @@ async function assertItemsStillOwned(
     }
   }
   for (const [teamId, pickIds] of pickIdsByTeam) {
-    const owned = await prisma.draftPick.count({ where: { id: { in: pickIds }, currentOwnerId: teamId } });
+    // Trade hardening (Task 1b, gap #1): also requires the pick still be
+    // unused — a pick can get spent in a draft between propose and accept
+    // (proposing doesn't lock it), and a used pick has nothing left to give.
+    const owned = await prisma.draftPick.count({ where: { id: { in: pickIds }, currentOwnerId: teamId, usedOnPlayerId: null } });
     if (owned !== pickIds.length) {
-      throw new Error("This trade is no longer valid — not every pick is still owned by the team that offered them.");
+      throw new Error("This trade is no longer valid — not every pick is still owned (and unused) by the team that offered them.");
     }
   }
 }
 
-/** Re-checks FAAB availability at accept time. getAvailableBudget already
- * subtracts *this* trade's own pending FAAB commitment (it's still PROPOSED
- * at the point this runs, so it's counted in the same pending-trades sum as
- * every other open trade) — add it back before comparing, otherwise a
- * trade's own promised amount would be double-counted against itself. */
+/** Re-checks FAAB availability at accept time. getAvailableBudget only
+ * counts a still-PROPOSED trade's FAAB commitment against the team that
+ * *proposed* it (Task 1b, gap #3 — otherwise anyone could freeze a rival's
+ * budget just by proposing) — so this trade's own promised amount is only
+ * already baked into `available` when the sending side is the proposer;
+ * add it back only in that case, or a proposer's own offered FAAB would be
+ * double-counted against themselves. When the sending side is the
+ * counterparty (being asked to give up their FAAB to accept), `available`
+ * is already "excluding this trade" by construction — nothing to add back. */
 async function assertFaabStillAvailable(
   items: { fromTeamId: string; itemType: string; faabAmount: number | null }[],
   season: number,
   faabBudget: number,
+  proposedByTeamId: string,
 ): Promise<void> {
   for (const item of items) {
     if (item.itemType !== "FAAB" || !item.faabAmount) continue;
     const available = await getAvailableBudget(item.fromTeamId, season, faabBudget);
-    const availableExcludingThisTrade = available + item.faabAmount;
+    const availableExcludingThisTrade = item.fromTeamId === proposedByTeamId ? available + item.faabAmount : available;
     if (item.faabAmount > availableExcludingThisTrade) {
       throw new Error(`This trade is no longer valid — insufficient FAAB (only $${availableExcludingThisTrade} available).`);
     }
   }
 }
 
-export type TradeExecutionOutcome = "PROCESSED" | "STILL_PENDING";
+export type TradeExecutionOutcome = "PROCESSED" | "STILL_PENDING" | "INVALIDATED";
+
+/** Re-validates every item right before a real write — a player/pick could
+ * have moved on (dropped, traded elsewhere via commissioner override, used
+ * in a draft) or a FAAB budget could have shrunk since this trade was
+ * accepted. This path is normally unreachable now that both player and pick
+ * locks exist (Task 1 + Task 1b gap #1), but only via the *interactive*
+ * paths (propose/accept) — a commissioner override still bypasses locks
+ * entirely, so this is the last line of defense before a half-executed
+ * trade. Returns a human sentence naming the offending item, or null if
+ * everything still checks out. */
+async function findInvalidTradeItemReason(
+  items: { itemType: string; fromTeamId: string; playerId: string | null; draftPickId: string | null; faabAmount: number | null }[],
+  season: number,
+  faabDefaultBudget: number,
+): Promise<string | null> {
+  for (const item of items) {
+    if (item.itemType === "PLAYER" && item.playerId) {
+      const owned = await prisma.rosterSlot.findFirst({
+        where: { teamId: item.fromTeamId, playerId: item.playerId, effectiveTo: null },
+        include: { player: { select: { fullName: true } } },
+      });
+      if (!owned) {
+        const player = await prisma.player.findUnique({ where: { id: item.playerId }, select: { fullName: true } });
+        return `${player?.fullName ?? "a player"} is no longer owned by the team that was sending him`;
+      }
+    } else if (item.itemType === "PICK" && item.draftPickId) {
+      const pick = await prisma.draftPick.findUnique({ where: { id: item.draftPickId } });
+      if (!pick || pick.currentOwnerId !== item.fromTeamId || pick.usedOnPlayerId !== null) {
+        return `the ${pick?.season ?? "?"} Round ${pick?.round ?? "?"} pick is no longer available from the team that was sending it`;
+      }
+    } else if (item.itemType === "FAAB" && item.faabAmount) {
+      const budget = await getOrInitFaabBudget(item.fromTeamId, season, faabDefaultBudget);
+      if (item.faabAmount > budget.remaining) {
+        return `the team sending $${item.faabAmount} FAAB no longer has that much available`;
+      }
+    }
+  }
+  return null;
+}
 
 /** Shared by the cron path (processDueTrades) and the commissioner's
  * force-through path. bypassRoomCheck mirrors the overflow-allowed
@@ -605,6 +744,28 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
   const settings = league.settingsJson as unknown as LeagueSettings;
   const now = new Date();
 
+  // Trade hardening (Task 1b, gap #4) — "silent half-trades": this used to
+  // be reachable via `if (!oldSlot) continue;` below, which would mark the
+  // whole trade PROCESSED with whatever items actually moved and quietly
+  // drop the rest. Re-validate everything up front instead and fail the
+  // whole trade loudly if anything's gone stale, rather than executing a
+  // partial trade.
+  const invalidReason = await findInvalidTradeItemReason(trade.items, league.currentSeason, settings.faabBudget);
+  if (invalidReason) {
+    await prisma.$transaction([
+      prisma.trade.update({ where: { id: tradeId }, data: { state: "CANCELLED" } }),
+      prisma.transactionLog.create({
+        data: {
+          leagueId: trade.leagueId,
+          type: "TRADE",
+          actorTeamId: trade.proposedByTeamId,
+          payload: { tradeId, event: "INVALIDATED", reason: invalidReason },
+        },
+      }),
+    ]);
+    return "INVALIDATED";
+  }
+
   const ops: Prisma.PrismaPromise<unknown>[] = [];
   const playerMovesForLineupClear: { teamId: string; playerId: string }[] = [];
   for (const item of trade.items) {
@@ -612,7 +773,10 @@ export async function executeTradeTransfers(tradeId: string, opts: { bypassRoomC
       const oldSlot = await prisma.rosterSlot.findFirst({
         where: { teamId: item.fromTeamId, playerId: item.playerId, effectiveTo: null },
       });
-      if (!oldSlot) continue; // defensive — validated at proposal time, shouldn't happen
+      // findInvalidTradeItemReason above already confirmed this slot exists
+      // — this is defense in depth against a genuine race, not a normal
+      // path, and it must fail loudly (gap #4) rather than silently skip.
+      if (!oldSlot) throw new Error(`A previously-validated trade item for player ${item.playerId} vanished mid-transaction.`);
       ops.push(prisma.rosterSlot.update({ where: { id: oldSlot.id }, data: { effectiveTo: now } }));
       ops.push(
         prisma.rosterSlot.create({
@@ -691,7 +855,7 @@ export async function forceProcessTrade(input: ForceProcessTradeInput): Promise<
 
 export interface TradeDueResult {
   tradeId: string;
-  outcome: TradeExecutionOutcome;
+  outcome: TradeExecutionOutcome | "AUTO_CANCELLED";
 }
 
 /** Cron entry point, piggybacked on the same daily route as
@@ -706,6 +870,37 @@ export async function processDueTrades(): Promise<TradeDueResult[]> {
     const outcome = await executeTradeTransfers(trade.id);
     results.push({ tradeId: trade.id, outcome });
   }
+
+  // Stuck-trade auto-cancel (Task 1b, "decisions already made" — no manual
+  // withdraw for the non-blocking side, this is the only exit besides a
+  // commissioner's force-process). Runs *after* the normal pass above, so a
+  // trade that's severely overdue gets one more real chance to process this
+  // run before being given up on. Deliberately re-queries rather than
+  // reusing `due` — a trade could already be this stale the very first time
+  // it's ever seen by the cron (e.g. the cron was down for a few days).
+  const staleCutoff = new Date(Date.now() - STUCK_TRADE_GRACE_MS);
+  const stillStuck = await prisma.trade.findMany({
+    where: { state: "UNDER_REVIEW", reviewEndsAt: { lte: staleCutoff } },
+    include: { items: true },
+  });
+  for (const trade of stillStuck) {
+    const fit = await computeTradeFit(trade.leagueId, trade.items);
+    if (fit.fits) continue; // shouldn't happen (the pass above would've processed it) — never cancel a trade that actually fits
+    const blockingTeamIds = fit.overflow.map((o) => o.teamId);
+    await prisma.$transaction([
+      prisma.trade.update({ where: { id: trade.id }, data: { state: "CANCELLED" } }),
+      prisma.transactionLog.create({
+        data: {
+          leagueId: trade.leagueId,
+          type: "TRADE",
+          actorTeamId: trade.proposedByTeamId,
+          payload: { tradeId: trade.id, event: "AUTO_CANCELLED", reason: "ROSTER_ROOM", blockingTeamIds },
+        },
+      }),
+    ]);
+    results.push({ tradeId: trade.id, outcome: "AUTO_CANCELLED" });
+  }
+
   return results;
 }
 

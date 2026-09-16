@@ -36,7 +36,14 @@ export async function getOrInitFaabBudget(teamId: string, season: number, starti
  * a trade doesn't escrow FAAB either, so this is what stops a team
  * double-committing the same budget to a bid and a trade at once). Budget is
  * only ever debited from `remaining` at award/trade-processing time, never
- * escrowed at submission. */
+ * escrowed at submission.
+ *
+ * Trade hardening (plans/trades-batch.md Task 1b, gap #3): a still-PROPOSED
+ * trade only counts against the team that *proposed* it — otherwise any
+ * manager could propose "give me $100 of your FAAB" and freeze a rival's
+ * bidding the instant they hit send, before the rival even sees it, let
+ * alone agrees to anything. An UNDER_REVIEW trade counts against either
+ * side, same as before, since both sides have actually agreed to it by then. */
 export async function getAvailableBudget(teamId: string, season: number, startingAmount: number): Promise<number> {
   const budget = await getOrInitFaabBudget(teamId, season, startingAmount);
   const [pendingBids, pendingTradeFaab] = await Promise.all([
@@ -45,7 +52,7 @@ export async function getAvailableBudget(teamId: string, season: number, startin
       where: {
         fromTeamId: teamId,
         itemType: "FAAB",
-        trade: { state: { in: ["PROPOSED", "UNDER_REVIEW"] } },
+        OR: [{ trade: { state: "UNDER_REVIEW" } }, { trade: { state: "PROPOSED", proposedByTeamId: teamId } }],
       },
       _sum: { faabAmount: true },
     }),

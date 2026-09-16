@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
+import { prisma } from "@/lib/db";
 import {
   createLeague,
   deleteLeague,
@@ -10,6 +11,7 @@ import {
   regenerateInviteCode,
   getLeague,
   setCoCommissioner,
+  isLeagueCommissioner,
   renameTeam,
   addTeamAsCommissioner,
   setTeamManager,
@@ -22,6 +24,7 @@ import {
 import { startNewSeason } from "@/lib/leagues/season";
 import { generateSchedule, resetSchedule } from "@/lib/matchups/mutations";
 import { EDITABLE_SCORING_FIELDS, type ScoringConfig } from "@/lib/scoring/engine";
+import { cancelTrade } from "@/lib/trades/mutations";
 
 function parseRosterComposition(formData: FormData): RosterComposition {
   const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
@@ -187,6 +190,34 @@ export async function reassignTeamManagerAction(leagueId: string, teamId: string
 
 export async function orphanTeamAction(leagueId: string, teamId: string) {
   const { userId } = await auth.protect();
+  // Checked here too (setTeamManager below re-checks it independently) so a
+  // non-commissioner caller fails on the same "only the commissioner" error
+  // it always has, rather than surfacing cancelTrade's unrelated "you aren't
+  // part of this trade" if this team happens to have one in flight.
+  if (!(await isLeagueCommissioner(leagueId, userId))) {
+    throw new Error("Only the league commissioner can reassign a team's manager.");
+  }
+  // Trade hardening (plans/trades-batch.md Task 1b, gap #9): orphaning used
+  // to leave a team's in-flight trades alive — they'd still process onto or
+  // off a now-frozen roster. Cancel every PROPOSED/UNDER_REVIEW trade this
+  // team is party to first, then orphan — same "cancel in-flight trades
+  // before the state change" shape src/lib/leagues/season.ts's
+  // startNewSeason already uses for a full-league roster wipe. Done here at
+  // the action layer, not inside setTeamManager/leagues/mutations.ts itself:
+  // trades/mutations.ts already imports from leagues/mutations.ts, so
+  // importing cancelTrade back in there would create the same
+  // circular-import shape already avoided elsewhere in this app.
+  const inFlightTrades = await prisma.trade.findMany({
+    where: {
+      leagueId,
+      state: { in: ["PROPOSED", "UNDER_REVIEW"] },
+      items: { some: { OR: [{ fromTeamId: teamId }, { toTeamId: teamId }] } },
+    },
+    select: { id: true },
+  });
+  for (const trade of inFlightTrades) {
+    await cancelTrade({ tradeId: trade.id, callerUserId: userId, allowUnderReview: true });
+  }
   await setTeamManager({ leagueId, teamId, callerUserId: userId, orphan: true });
   revalidatePath(`/leagues/${leagueId}/settings`);
 }

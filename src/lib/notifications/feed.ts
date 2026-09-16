@@ -6,20 +6,80 @@
 // roster state that needs a manual fix (an IR player who's actually cleared).
 
 import { prisma } from "@/lib/db";
-import { getTradesForLeague, computeTradeFit } from "@/lib/trades/mutations";
+import { getTradesForLeague, getTradeDetailById, computeTradeFit } from "@/lib/trades/mutations";
 
 export interface TeamNotification {
   id: string;
-  kind: "TRADE_ACTION" | "TRADE_PENDING" | "WAIVER_PENDING" | "WAIVER_RESULT" | "FAAB_PENDING" | "FAAB_RESULT" | "ROSTER";
+  kind:
+    | "TRADE_ACTION"
+    | "TRADE_PENDING"
+    | "TRADE_RESULT"
+    | "WAIVER_PENDING"
+    | "WAIVER_RESULT"
+    | "FAAB_PENDING"
+    | "FAAB_RESULT"
+    | "ROSTER";
   text: string;
   href: string;
 }
 
 const RECENT_RESULT_LIMIT = 10;
 
+// Trade hardening (plans/trades-batch.md Task 1b, gap #4/#6-#9's fallout):
+// three terminal-but-unhappy trade outcomes shipped with this pass — a
+// half-invalidated trade (INVALIDATED), a trade cancelled after 3 days
+// stuck on roster room (AUTO_CANCELLED), and a proposal quietly cancelled
+// because another trade on the same player was accepted first (SUPERSEDED).
+// None of these were surfaced anywhere before — a manager would just see
+// their pending trade vanish with no explanation. Shown to both parties for
+// a week (event happened, not "still needs your attention," so it doesn't
+// need to live forever like the other notification kinds above).
+const TRADE_RESULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const TRADE_RESULT_EVENTS = ["INVALIDATED", "AUTO_CANCELLED", "SUPERSEDED"] as const;
+type TradeResultEvent = (typeof TRADE_RESULT_EVENTS)[number];
+
+const TRADE_RESULT_REASON: Record<TradeResultEvent, (payload: { reason?: string }) => string> = {
+  INVALIDATED: (p) => p.reason ?? "an item was no longer available.",
+  AUTO_CANCELLED: () => "it stayed stuck on roster room for 3 days.",
+  SUPERSEDED: () => "one of the players in it was traded away in another deal.",
+};
+
+async function getTradeResultNotifications(leagueId: string, teamId: string): Promise<TeamNotification[]> {
+  const since = new Date(Date.now() - TRADE_RESULT_WINDOW_MS);
+  const logs = await prisma.transactionLog.findMany({
+    where: {
+      leagueId,
+      type: "TRADE",
+      createdAt: { gte: since },
+      OR: TRADE_RESULT_EVENTS.map((event) => ({ payload: { path: ["event"], equals: event } })),
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (logs.length === 0) return [];
+
+  const items: TeamNotification[] = [];
+  for (const log of logs) {
+    const payload = log.payload as { tradeId?: string; event?: TradeResultEvent; reason?: string };
+    if (!payload.tradeId || !payload.event) continue;
+    const detail = await getTradeDetailById(payload.tradeId, teamId);
+    if (!detail) continue;
+    if (detail.proposedByTeamId !== teamId && detail.counterpartyTeamId !== teamId) continue;
+
+    const other = detail.proposedByTeamId === teamId ? detail.counterpartyTeamName : detail.proposedByTeamName;
+    items.push({
+      id: `trade-result-${log.id}`,
+      kind: "TRADE_RESULT",
+      text: `Trade with ${other} was cancelled — ${TRADE_RESULT_REASON[payload.event](payload)}`,
+      href: `/leagues/${leagueId}/trades`,
+    });
+  }
+  return items;
+}
+
 export async function getTeamNotifications(leagueId: string, teamId: string): Promise<TeamNotification[]> {
-  const [trades, myClaims, myBids, irSlots] = await Promise.all([
+  const [trades, tradeResults, myClaims, myBids, irSlots] = await Promise.all([
     getTradesForLeague(leagueId, teamId),
+    getTradeResultNotifications(leagueId, teamId),
     prisma.waiverClaim.findMany({
       where: { teamId },
       orderBy: { createdAt: "desc" },
@@ -38,7 +98,7 @@ export async function getTeamNotifications(leagueId: string, teamId: string): Pr
     }),
   ]);
 
-  const items: TeamNotification[] = [];
+  const items: TeamNotification[] = [...tradeResults];
   const tradesHref = `/leagues/${leagueId}/trades`;
 
   for (const t of trades) {

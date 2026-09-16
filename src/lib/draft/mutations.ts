@@ -565,3 +565,33 @@ export async function assertFreeAgencyOpen(leagueId: string): Promise<void> {
   const status = await getFreeAgencyStatus(leagueId);
   if (!status.open) throw new Error(FREE_AGENCY_CLOSED_MESSAGE[status.reason]);
 }
+
+// ---------------------------------------------------------------------------
+// Trade hardening (plans/trades-batch.md Task 1b, gap #6) — full trade
+// freeze during a live draft, confirmed with the user: no proposals and no
+// acceptances of any kind (players or picks) while any draft in the league
+// is genuinely IN_PROGRESS. Lives here (not trades/mutations.ts) for the
+// same reason getFreeAgencyStatus does — trades/mutations.ts imports this
+// file; this file imports nothing from trades/mutations.ts (confirmed by
+// grep before relying on this: this file only imports leagues/mutations,
+// rosters/ownership, and players/rankings, none of which import trades
+// either), so the import direction trades -> draft stays a one-way street.
+// ---------------------------------------------------------------------------
+
+/** Throws "Trades are paused while the draft is in progress." if any draft
+ * in the league is still genuinely live. Resolves each IN_PROGRESS draft
+ * first (same resolve-on-read principle as getFreeAgencyStatus above) — a
+ * draft whose timer fully expired with nobody watching the room must not
+ * keep trades paused forever just because the DB row hasn't caught up. */
+export async function assertNoDraftInProgress(leagueId: string): Promise<void> {
+  const inProgressDrafts = await prisma.draft.findMany({
+    where: { leagueId, status: "IN_PROGRESS" },
+    select: { id: true },
+  });
+  for (const draft of inProgressDrafts) {
+    const resolved = await resolveDraftState(draft.id);
+    if (resolved.status === "IN_PROGRESS") {
+      throw new Error("Trades are paused while the draft is in progress.");
+    }
+  }
+}

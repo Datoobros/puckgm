@@ -49,3 +49,45 @@ export async function assertPlayersNotTradeLocked(leagueId: string, playerIds: s
     throw new Error(`${first.player!.fullName} is locked in a pending trade and can't be ${what} until it processes.`);
   }
 }
+
+// Trade hardening (plans/trades-batch.md Task 1b, gap #1) — Task 1's lock
+// only ever covered PLAYER items; the same DraftPick could sit in two
+// accepted trades at once, with the second processing silently overwriting
+// the first's ownership transfer. These two mirror the player-lock pair
+// above exactly, scoped to PICK items instead.
+
+/** pickId -> tradeId for every DraftPick locked by an UNDER_REVIEW trade in
+ * this league; `pickIds` narrows the query when given. */
+export async function getTradeLockedPickIds(leagueId: string, pickIds?: string[]): Promise<Map<string, string>> {
+  const items = await prisma.tradeItem.findMany({
+    where: {
+      itemType: "PICK",
+      ...(pickIds ? { draftPickId: { in: pickIds } } : {}),
+      trade: { leagueId, state: "UNDER_REVIEW" },
+    },
+    include: { draftPick: { select: { season: true, round: true } } },
+  });
+
+  const locked = new Map<string, string>();
+  for (const item of items) {
+    if (item.draftPickId) locked.set(item.draftPickId, item.tradeId);
+  }
+  return locked;
+}
+
+/** Throws naming the first locked pick found, e.g. "2027 Round 1 is locked
+ * in a pending trade and can't be traded until it processes." */
+export async function assertPicksNotTradeLocked(leagueId: string, pickIds: string[]): Promise<void> {
+  if (pickIds.length === 0) return;
+
+  const items = await prisma.tradeItem.findMany({
+    where: { itemType: "PICK", draftPickId: { in: pickIds }, trade: { leagueId, state: "UNDER_REVIEW" } },
+    include: { draftPick: { select: { season: true, round: true } } },
+  });
+  const first = items[0];
+  if (first) {
+    throw new Error(
+      `${first.draftPick!.season} Round ${first.draftPick!.round} is locked in a pending trade and can't be traded until it processes.`,
+    );
+  }
+}
