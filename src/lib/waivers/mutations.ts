@@ -26,22 +26,29 @@ import { assertPlayersNotTradeLocked } from "@/lib/trades/locks";
 
 const CLAIM_WINDOW_MS = 48 * 60 * 60 * 1000;
 
+/** The stored order is reconciled against the league's real team list on
+ * every read, not just seeded once: a team that joins after the order was
+ * first saved is prepended (newest team picks first — the same rule the
+ * initial seed uses, and the new team has the weakest roster), and a team
+ * that's since been deleted is dropped. Found the hard way: a team that
+ * joined a week after the first read had no rank at all, and the rank()
+ * callers treat "not in the list" as lowest priority, so it would have lost
+ * every contested claim. Persisted only when something actually changed. */
 export async function getOrInitWaiverPriority(leagueId: string): Promise<string[]> {
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  if (league.waiverPriorityJson) {
-    return league.waiverPriorityJson as unknown as string[];
-  }
+  const [league, teams] = await Promise.all([
+    prisma.league.findUniqueOrThrow({ where: { id: leagueId } }),
+    prisma.team.findMany({ where: { leagueId }, orderBy: { createdAt: "asc" }, select: { id: true } }),
+  ]);
+  const teamIds = teams.map((t) => t.id);
+  const stored = (league.waiverPriorityJson as unknown as string[] | null) ?? [];
 
-  const teams = await prisma.team.findMany({
-    where: { leagueId },
-    orderBy: { createdAt: "desc" }, // reverse team-creation order — last created picks first
-    select: { id: true },
-  });
-  const order = teams.map((t) => t.id);
-  await prisma.league.update({
-    where: { id: leagueId },
-    data: { waiverPriorityJson: order },
-  });
+  const kept = stored.filter((id) => teamIds.includes(id));
+  const missingNewestFirst = teamIds.filter((id) => !stored.includes(id)).reverse();
+  const order = [...missingNewestFirst, ...kept];
+
+  if (order.length !== stored.length || order.some((id, i) => id !== stored[i])) {
+    await prisma.league.update({ where: { id: leagueId }, data: { waiverPriorityJson: order } });
+  }
   return order;
 }
 

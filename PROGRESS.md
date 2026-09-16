@@ -1719,6 +1719,22 @@ non-fitting trade could sit `UNDER_REVIEW` forever with no one told why.
   modals, drop-mode banners) is Task 3; this pass is backend-only, and confirmed as such
   rather than implying a browser check happened.
 
+## Waiver priority reconciles on read (bug fix, 2026-09-16)
+
+User noticed a team that joined "Experimenting" a week after the league was created showed
+"not yet ranked" on the Teams page. Root cause: `League.waiverPriorityJson` was seeded once
+on first read from whichever teams existed then, and nothing ever added a later joiner —
+and every `rank()` caller (waiver awards, FAAB tie-breaks) treats "not in the list" as
+lowest priority, so the new team would have lost every contested claim, silently.
+
+`getOrInitWaiverPriority` (`src/lib/waivers/mutations.ts`) now reconciles against the real
+team list on every read: teams missing from the stored order are **prepended** (newest
+first — the user chose front over back, consistent with the original seed rule and the
+new team having the weakest roster), deleted teams are dropped, and the row is only written
+when something changed. Verified on the real league via script (before `[Rebuild Squad, Dev]`
+→ after `[Finn, Rebuild Squad, Dev]`, stable on re-read) and in the browser on the Teams
+page (`#1 / #2 / #3` rendered). No schema change; no test data created.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —
