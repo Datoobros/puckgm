@@ -1255,6 +1255,63 @@ uses `createdAt` (submission time, not resolution time) since neither model has 
 resolved-at timestamp — close enough for a lightweight notification list, not worth a
 migration for.
 
+## Stat range dropdown: Last 7/30 Days (team-page batch, Task 1)
+
+First of a four-task batch (`plans/team-page-batch.md`, five user-reported issues planned in
+one pass so later sessions don't re-derive root causes). This task: the team page's stats
+dropdown gains **Last 7 Days** / **Last 30 Days** alongside the existing season aggregates,
+and the Players page — which previously had no range control at all, just a hardcoded
+"2025-26 season stats" header — gets the same dropdown (minus "Daily", which is tied to the
+team page's date strip and means nothing outside it).
+
+- **`src/lib/players/seasons.ts` generalized from `SEASONS`/`seasonByValue` to
+  `STAT_RANGES`/`resolveStatRange`** — a `StatRangeOption` is either `kind: "season"` (the
+  existing two hardcoded windows, same `value`s `"2025"`/`"2026"` so old bookmarked URLs keep
+  working) or `kind: "rolling"` (`days: 7 | 30`). `resolveStatRange(value, today?)` resolves
+  either kind to a concrete `{ start, end, label }` — a rolling window is `days` calendar days
+  **including today** (`shiftDate(today, -(days-1))` through end-of-`today`), computed fresh
+  on every call rather than stored. `today` is injectable (defaults to real `todayUTC()`) so
+  `scripts/stat-range-check.ts` can anchor a rolling window on a date that actually has
+  ingested data instead of the real calendar date. Both old exports are gone — only two
+  callers existed (`ViewControls.tsx`, the team page), both migrated, confirmed by grep before
+  deleting.
+- **Team page** (`teams/[teamId]/page.tsx`) — `resolvedRange` is computed once and reused for
+  both the `getPlayerStatsAggregate` call and the non-daily label span (previously hardcoded
+  "Season aggregate — Today"/date; now shows the resolved range's own label, e.g. "Last 7
+  Days" or "2025-26"). Falls back to `resolveStatRange("2025")` for an unrecognized `view`
+  value, same fallback behavior the old `seasonByValue` chain had.
+- **Players page** — new `?range=` search param (validated against `STAT_RANGES`, default
+  `"2025"`), passed as `dateRange` to **both** `getPlayerStatsAggregate` calls (the exhaustive
+  name-search path and the default top-300 pool — previously neither passed a `dateRange` at
+  all, so both silently returned career totals that only *looked* like 2025-26 because just
+  one season is ingested). Header text is now dynamic (`{league.name}'s scoring, {label}.`)
+  instead of a hardcoded "2025-26 season stats" string.
+- **New `StatRangeSelect.tsx`** (client) — a "Stats" `<select>` rendered next to
+  `PlayerSearchBox` on the Players page, navigating via `router.push` with the current search
+  params merged so an in-flight `q` survives a range change. `PlayerSearchBox` gained a
+  `range` prop and a `<input type="hidden" name="range">` inside its GET form, so submitting a
+  name search doesn't silently reset the range back to default.
+- **It's the offseason** (last ingested game: 2026-04-16) — Last 7/Last 30 correctly show all
+  zeros on both pages until real games resume in October. Confirmed with the user ahead of
+  time as expected, not a bug; `stat-range-check.ts` explicitly asserts the future-anchored
+  case resolves and queries cleanly (zeros, no throw) rather than just eyeballing it.
+- Verified in `scripts/stat-range-check.ts` (read-only, no test data — queries real recent
+  `GameStatLine` rows) against the real DB: `resolveStatRange("last7"/"last30", "2026-04-16")`
+  (the last real ingested date) both yield at least one player with non-zero
+  `gamesIngested`, and `last7 gamesIngested <= last30 gamesIngested` holds for every player
+  checked; `resolveStatRange("last7", "2026-09-16")` (today, offseason) resolves and queries
+  cleanly with every row zeroed, no throw. Checked live in a real browser (via the `// TEMP:`
+  bypass technique — this task also needed it in `searchPlayersAction`, a Server Action called
+  from the Players page's typeahead that has its own independent `auth.protect()` call not
+  covered by the page-level bypass; reverted along with the rest,
+  `grep -rn "TEMP:" src/` clean) against the real "Experimenting" league, read-only: team page
+  `?view=last7`/`?view=last30` both render the correct label and all-zero rows with no error;
+  Players page `?range=last30` shows "Experimenting's scoring, Last 30 Days." and the correct
+  dropdown selection; changing the dropdown (`2025-26`) navigates and updates both the header
+  label and the result count/rows; submitting a name search ("McDavid") from a `range=last30`
+  page correctly kept `range=last30` on the results page instead of resetting to the default
+  season.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - Draft, playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in

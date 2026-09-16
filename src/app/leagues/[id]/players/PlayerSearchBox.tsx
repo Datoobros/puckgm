@@ -13,7 +13,7 @@ import { Button } from "@/components/Button";
 const MIN_CHARS = 2;
 const DEBOUNCE_MS = 200;
 
-export function PlayerSearchBox({ initialQuery }: { initialQuery: string }) {
+export function PlayerSearchBox({ initialQuery, range }: { initialQuery: string; range: string }) {
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<PlayerSearchResult[]>([]);
   const [total, setTotal] = useState(0);
@@ -58,6 +58,7 @@ export function PlayerSearchBox({ initialQuery }: { initialQuery: string }) {
   return (
     <div className="relative max-w-sm">
       <form ref={formRef} method="get" className="flex gap-2">
+        <input type="hidden" name="range" value={range} />
         <input
           type="text"
           name="q"

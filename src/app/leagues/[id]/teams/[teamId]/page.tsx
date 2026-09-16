@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { getTeamRosterView, getCallupsUsedThisWeek, activeRosterCap } from "@/lib/rosters/mutations";
 import { getPlayerStatsAggregate, getPlayerDailyStats, type PlayerStatsRow } from "@/lib/players/rankings";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
-import { seasonByValue } from "@/lib/players/seasons";
+import { resolveStatRange } from "@/lib/players/seasons";
 import { getLineupForDate, capFor, eligibleSlotsForPosition, lineupSlotsFor } from "@/lib/lineups/mutations";
 import { getTeamGamesForDate, isLocked, type TeamGameInfo } from "@/lib/lineups/schedule";
 import { isLeagueCommissioner, isTeamManager, type LeagueSettings, type RosterComposition } from "@/lib/leagues/mutations";
@@ -281,13 +281,18 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
   const irSlots = allSlots.filter((s) => s.slotType === "IR");
   const playerIds = allSlots.map((s) => s.playerId);
 
+  // Resolved once here so both the stats query and the non-daily label
+  // (below) agree on exactly the same range — falls back to 2025-26 for an
+  // unrecognized/stale `view` value (e.g. an old bookmarked URL).
+  const resolvedRange = view === "daily" ? null : resolveStatRange(view) ?? resolveStatRange("2025")!;
+
   const [statsById, lineupEntries, teamGames, callupsUsed] = await Promise.all([
     view === "daily"
       ? getPlayerDailyStats(playerIds, date, settings.scoringConfig)
       : getPlayerStatsAggregate({
           playerIds,
           scoringConfig: settings.scoringConfig,
-          dateRange: seasonByValue(view) ?? seasonByValue("2025"),
+          dateRange: resolvedRange!,
         }).then((rows) => new Map(rows.map((r) => [r.id, r] as [string, PlayerStatsRow]))),
     getLineupForDate(teamId, date),
     getTeamGamesForDate(date),
@@ -727,7 +732,7 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
             {view === "daily" ? (
               <DateStrip leagueId={leagueId} teamId={teamId} selectedDate={date} view={view} />
             ) : (
-              <span className="text-sm text-muted">Season aggregate — {date === todayUTC() ? "Today" : date}</span>
+              <span className="text-sm text-muted">{resolvedRange!.label}</span>
             )}
             <ViewControls leagueId={leagueId} teamId={teamId} date={date} view={view} />
           </div>

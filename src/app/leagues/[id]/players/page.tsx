@@ -6,8 +6,10 @@ import { getLeagueOwnershipMap, activeRosterCap } from "@/lib/rosters/mutations"
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 import { getAvailableBudget, getMyPendingBids } from "@/lib/faab/mutations";
 import { getWatchlistedPlayerIds } from "@/lib/players/watchlist";
+import { STAT_RANGES, resolveStatRange } from "@/lib/players/seasons";
 import { PlayerStatsTable } from "./PlayerStatsTable";
 import { PlayerSearchBox } from "./PlayerSearchBox";
+import { StatRangeSelect } from "./StatRangeSelect";
 import { cancelFaBidAction } from "./actions";
 
 // Displayed pool is capped rather than shipping every player to the client
@@ -21,6 +23,9 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
   const { id: leagueId } = await props.params;
   const params = await props.searchParams;
   const query = typeof params.q === "string" ? params.q.trim() : "";
+  const rawRange = typeof params.range === "string" ? params.range : "";
+  const range = STAT_RANGES.some((s) => s.value === rawRange) ? rawRange : "2025";
+  const statRange = resolveStatRange(range) ?? resolveStatRange("2025")!;
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -37,11 +42,13 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
     rows = await getPlayerStatsAggregate({
       playerIds: matches.map((m) => m.id),
       scoringConfig: settings.scoringConfig,
+      dateRange: statRange,
     });
   } else {
     rows = await getPlayerStatsAggregate({
       limit: DEFAULT_POOL_SIZE,
       scoringConfig: settings.scoringConfig,
+      dateRange: statRange,
     });
   }
 
@@ -75,7 +82,7 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
     <div className="mx-auto max-w-6xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
       <p className="mt-1 text-sm text-muted">
-        {league.name}&apos;s scoring, 2025-26 season stats.
+        {league.name}&apos;s scoring, {statRange.label}.
         {!query && ` Showing top ${DEFAULT_POOL_SIZE} by points — search finds anyone.`}
       </p>
       {!myTeam && (
@@ -84,8 +91,9 @@ export default async function LeaguePlayersPage(props: PageProps<"/leagues/[id]/
         </p>
       )}
 
-      <div className="mt-4">
-        <PlayerSearchBox initialQuery={query} />
+      <div className="mt-4 flex flex-wrap items-center gap-4">
+        <PlayerSearchBox initialQuery={query} range={range} />
+        <StatRangeSelect range={range} />
       </div>
 
       {settings.faabEnabled && myTeam && (

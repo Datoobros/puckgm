@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { SEASONS } from "@/lib/players/seasons";
+import { STAT_RANGES } from "@/lib/players/seasons";
 
 export function ViewControls({
   leagueId,
@@ -29,7 +29,7 @@ export function ViewControls({
         className="rounded border border-border bg-surface px-2 py-1 text-sm text-foreground"
       >
         <option value="daily">Daily</option>
-        {SEASONS.map((s) => (
+        {STAT_RANGES.map((s) => (
           <option key={s.value} value={s.value}>
             {s.label}
           </option>
