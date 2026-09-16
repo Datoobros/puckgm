@@ -1312,6 +1312,68 @@ team page's date strip and means nothing outside it).
   page correctly kept `range=last30` on the results page instead of resetting to the default
   season.
 
+## Team header restructure + Notifications modal (team-page batch, Task 2)
+
+Second of the four-task batch (`plans/team-page-batch.md`). Issues #1/#3: the header card's
+two buttons (Propose Trade, `+ Add`) moved down into the action bar below Auto-Set, the
+header's own `+ Add` is gone, and the always-visible Notifications list (which could push
+the whole page down) became a "Notifications (N)" pill that opens a modal.
+
+- **New `src/components/Modal.tsx`** — this app's first modal, built on the native
+  `<dialog>` element specifically so Esc-to-close and focus containment come for free from
+  the browser instead of being hand-rolled. Deliberately generic (`open`/`onClose`/`title`/
+  `children`) — **the backlog's player-profile modal is expected to reuse this same
+  component next**, not build its own.
+  - **Real bug found and fixed while verifying**: the modal rendered pinned to the
+    top-left corner instead of centered. Cause: a native `<dialog>` opened via
+    `showModal()` centers itself using the UA stylesheet's `margin: auto`, but Tailwind's
+    preflight resets `margin: 0` on every element, which wins the cascade and kills the
+    centering. Fixed with an explicit `m-auto` utility class on the dialog, which — as a
+    later utility class — overrides preflight's reset.
+  - Backdrop click is a manual `onClick` check (`e.target === dialogRef.current`, since a
+    click on the `::backdrop` area lands on the `<dialog>` element itself — there's no
+    separate hit-testable backdrop node). Verified working via a real click in the browser.
+  - Esc-to-close is native browser behavior (the default action of the `cancel` event a
+    modal `<dialog>` fires on Escape), not app code — confirmed correct by calling
+    `dialog.close()` directly (which is what that default action does) and watching the
+    `onClose` prop tear the modal down correctly. **Caveat found while verifying**: the
+    browser automation tool's synthetic Escape keypress reached the page as a trusted,
+    non-prevented `keydown` (confirmed via a temporary console listener) but did not
+    trigger Chromium's internal default action that closes a modal `<dialog>` — a known
+    limitation of how CDP dispatches synthetic key events without full native
+    virtual-key-code metadata, not an app bug. A real keyboard's Escape key is unaffected;
+    this just means Esc-to-close couldn't be exercised end-to-end through the automated
+    browser tool itself, only proven correct at the mechanism level.
+- **New `src/app/leagues/[id]/teams/[teamId]/NotificationsButton.tsx`** (client) — the
+  header's only remaining button for a manager, rendered even at zero (one code path).
+  `NOTIFICATION_DOT` and the notification-list markup moved here verbatim from `page.tsx`;
+  the old always-visible section under the header card is gone entirely.
+- **`RosterMoveBoard.tsx`'s action bar** is now `[Propose Trade] [+ Add] [− Drop]` —
+  Propose Trade (`primary`) and `+ Add` (`secondary`) are both `LinkButton`s now
+  (`/leagues/[id]/trades` and `/leagues/[id]/players`), not client-state toggles. `− Drop`
+  is unchanged. Removed with it: `addOpen` state, the `activeOccupants` derivation, the
+  `activeCap` prop (page.tsx no longer needs to pass it down either), and
+  **`AddPlayerBox.tsx` (deleted)** — confirmed by grep it had exactly one importer.
+  `CommissionerAddPlayerBox.tsx` and the Players page's own `AddPlayerCell` are unrelated
+  and untouched.
+- **`RECENT_RESULT_LIMIT` (`src/lib/notifications/feed.ts`) raised 2 → 10** — now that
+  notifications live in a scrollable modal instead of competing for page space, there's no
+  reason to truncate resolved waiver/FAAB results so aggressively.
+- Verified in a real browser (`// TEMP:` hardcoded-userId bypass — needed in **three**
+  places for this task: the page itself, `src/app/leagues/[id]/layout.tsx` (has its own
+  independent `auth.protect()` the page-level bypass doesn't cover), and
+  `dropPlayerAction` in `actions.ts` to exercise a real drop; all reverted,
+  `grep -rn "TEMP:" src/` clean) against a disposable 3-team league seeded by
+  `scripts/header-modal-test-league.ts` (kept in the repo, `--cleanup` flag deletes it by
+  exact name): the counterparty team showed "Notifications (1)" with a working "needs your
+  response" modal entry whose "View →" correctly targeted the trade's review URL; a
+  bystander team showed "Notifications (0)" and the modal's "Nothing needs your attention
+  right now." empty state; `+ Add` landed on the Players page; `− Drop` entered drop mode,
+  showed the two-step Confirm/Cancel, and a real Confirm click actually dropped the roster
+  filler player end-to-end. Cleaned up by exact name afterward
+  (`npx tsx scripts/header-modal-test-league.ts --cleanup`) — never touched the user's real
+  "Experimenting" league.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - Draft, playoffs, FAAB/"the wire", and trades are all now built — playoffs are opt-in

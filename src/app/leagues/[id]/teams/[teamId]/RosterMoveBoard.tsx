@@ -3,9 +3,8 @@
 import { useState, type ReactNode } from "react";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { Card, SectionLabel } from "@/components/Card";
-import { Button, Badge } from "@/components/Button";
+import { Button, Badge, LinkButton } from "@/components/Button";
 import { moveTeamPlayerAction, sendToFarmAction, dropPlayerAction } from "./actions";
-import { AddPlayerBox } from "./AddPlayerBox";
 import type {
   MoveDestinationInput,
   MoveOption,
@@ -30,7 +29,6 @@ export function RosterMoveBoard({
   moveOptionsByPlayerId,
   sourceTierByPlayerId,
   farmSection,
-  activeCap,
 }: {
   leagueId: string;
   teamId: string;
@@ -44,23 +42,13 @@ export function RosterMoveBoard({
   moveOptionsByPlayerId: Record<string, MoveOption[]>;
   sourceTierByPlayerId: Record<string, MoveSourceTier>;
   farmSection: ReactNode;
-  activeCap: number;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
   const [dropMode, setDropMode] = useState(false);
   const [confirmDropId, setConfirmDropId] = useState<string | null>(null);
   const [dropPending, setDropPending] = useState(false);
-
-  // Active roster occupants only — every occupant row across both tables,
-  // used both for the "roster full?" check and the AddPlayerBox's
-  // drop-to-make-room picker. Farm/IR players are separate tiers, not
-  // counted against the active cap.
-  const activeOccupants = [...skaterRows, ...goalieRows].filter(
-    (r): r is MoveBoardOccupantRow => r.kind === "occupant",
-  );
 
   async function handleDrop(playerId: string) {
     setDropPending(true);
@@ -300,25 +288,18 @@ export function RosterMoveBoard({
   return (
     <>
       <div key="action-bar" className="mt-6 flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          onClick={() => {
-            setAddOpen((o) => !o);
-            setDropMode(false);
-            setConfirmDropId(null);
-          }}
-        >
+        <LinkButton href={`/leagues/${leagueId}/trades`} variant="primary" size="sm">
+          Propose Trade
+        </LinkButton>
+        <LinkButton href={`/leagues/${leagueId}/players`} variant="secondary" size="sm">
           + Add
-        </Button>
+        </LinkButton>
         <Button
           type="button"
           variant={dropMode ? "danger" : "secondary"}
           size="sm"
           onClick={() => {
             setDropMode((m) => !m);
-            setAddOpen(false);
             setConfirmDropId(null);
           }}
         >
@@ -326,18 +307,6 @@ export function RosterMoveBoard({
         </Button>
         {dropMode && <span className="text-xs text-muted">Pick a player below to drop.</span>}
       </div>
-      {addOpen && (
-        <div className="mt-3">
-          <AddPlayerBox
-            leagueId={leagueId}
-            teamId={teamId}
-            activeCount={activeOccupants.length}
-            activeCap={activeCap}
-            activeRosterPlayers={activeOccupants.map((o) => ({ id: o.playerId, fullName: o.fullName }))}
-            onAdded={() => setAddOpen(false)}
-          />
-        </div>
-      )}
       <div key="skaters" className="mt-6">
         <SectionLabel>Skaters</SectionLabel>
         {renderTable(skaterRows, skaterColumnDefs, "No skaters rostered yet.")}

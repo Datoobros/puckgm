@@ -15,7 +15,7 @@ export interface TeamNotification {
   href: string;
 }
 
-const RECENT_RESULT_LIMIT = 2;
+const RECENT_RESULT_LIMIT = 10;
 
 export async function getTeamNotifications(leagueId: string, teamId: string): Promise<TeamNotification[]> {
   const [trades, myClaims, myBids, irSlots] = await Promise.all([
