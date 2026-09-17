@@ -7,9 +7,10 @@ import { AddPlayerStep } from "./AddPlayerStep";
 import { DropPlayerStep } from "./DropPlayerStep";
 import { ManageIrStep } from "./ManageIrStep";
 import { ManageFarmStep } from "./ManageFarmStep";
+import { MakeTradeStep } from "./MakeTradeStep";
 import type { PerformAs } from "./actions";
 
-const VALID_ACTIONS = new Set(["ADD", "DROP", "IR", "FARM"]);
+const VALID_ACTIONS = new Set(["ADD", "DROP", "IR", "FARM", "TRADE"]);
 
 export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/settings/roster-moves">) {
   const { id: leagueId } = await props.params;
@@ -17,6 +18,7 @@ export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/se
   const rawAction = Array.isArray(sp.action) ? sp.action[0] : sp.action;
   const rawTeam = Array.isArray(sp.team) ? sp.team[0] : sp.team;
   const rawAs = Array.isArray(sp.as) ? sp.as[0] : sp.as;
+  const rawWith = Array.isArray(sp.with) ? sp.with[0] : sp.with;
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -59,8 +61,13 @@ export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/se
         ) : (
           <>
             <p className="mb-4 text-sm">
-              Team: <strong>{selectedTeam!.name}</strong> · Performing as:{" "}
-              <strong>{performAs === "LM" ? "League Manager" : "Team Manager"}</strong>{" "}
+              Team: <strong>{selectedTeam!.name}</strong>
+              {rawAction !== "TRADE" && (
+                <>
+                  {" "}
+                  · Performing as: <strong>{performAs === "LM" ? "League Manager" : "Team Manager"}</strong>
+                </>
+              )}{" "}
               <Link
                 href={`/leagues/${leagueId}/settings/roster-moves`}
                 className="ml-2 text-xs text-blue hover:underline"
@@ -72,6 +79,9 @@ export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/se
             {rawAction === "DROP" && <DropPlayerStep leagueId={leagueId} teamId={selectedTeam!.id} performAs={performAs!} />}
             {rawAction === "IR" && <ManageIrStep leagueId={leagueId} teamId={selectedTeam!.id} performAs={performAs!} />}
             {rawAction === "FARM" && <ManageFarmStep leagueId={leagueId} teamId={selectedTeam!.id} performAs={performAs!} />}
+            {rawAction === "TRADE" && (
+              <MakeTradeStep leagueId={leagueId} teamId={selectedTeam!.id} withTeamId={rawWith && rawWith !== selectedTeam!.id ? rawWith : null} />
+            )}
           </>
         )}
       </div>

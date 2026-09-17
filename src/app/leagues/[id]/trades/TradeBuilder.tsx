@@ -22,6 +22,17 @@ import type { PlayerStatsRow } from "@/lib/players/rankings";
 
 const EMPTY_SELECTION: TradeAssetSelection = { playerIds: [], pickIds: [], faabAmount: 0 };
 
+// Shared by proposeTradeAction and commissionerExecuteTradeAction — same
+// (leagueId, teamAId, teamBId, give, receive) -> {ok,redirectTo}|{ok,error}
+// shape, which is what lets one submitAction prop swap between them.
+type SubmitTradeAction = (
+  leagueId: string,
+  teamAId: string,
+  teamBId: string,
+  give: TradeAssetSelection,
+  receive: TradeAssetSelection,
+) => Promise<{ ok: true; redirectTo: string } | { ok: false; error: string }>;
+
 const TIER_LABEL: Record<"ACTIVE" | "FARM" | "IR", string> = { ACTIVE: "Active", FARM: "Farm", IR: "IR" };
 
 /** The single worst (highest-excess) overflow row for one team, or null —
@@ -66,6 +77,8 @@ export function TradeBuilder({
   statsById,
   initialGive,
   initialReceive,
+  mode = "propose",
+  submitAction,
 }: {
   leagueId: string;
   myTeamId: string;
@@ -78,8 +91,16 @@ export function TradeBuilder({
   statsById: Record<string, PlayerStatsRow>;
   initialGive: TradeAssetSelection;
   initialReceive: TradeAssetSelection;
+  // Commissioner mode (LM Roster Moves' Make Trade, plans/lm-tools-batch.md
+  // Task 4): executes immediately via submitAction instead of proposing —
+  // no fit pre-check, no "you"-flavored copy. Default "propose" is the
+  // original, byte-identical propose-a-trade path.
+  mode?: "propose" | "commissioner";
+  submitAction?: SubmitTradeAction;
 }) {
   const router = useRouter();
+  const isCommissioner = mode === "commissioner";
+  const submit = submitAction ?? proposeTradeAction;
   const yourRosterRef = useRef<HTMLDivElement>(null);
 
   const [give, setGive] = useState<TradeAssetSelection>(initialGive);
@@ -138,6 +159,15 @@ export function TradeBuilder({
   }
 
   async function handleContinue() {
+    if (isCommissioner) {
+      // Full bypass — a commissioner trade skips the roster-fit pre-check
+      // the same way commissionerExecuteTrade skips computeTradeFit
+      // server-side (bypassRoomCheck: true).
+      setSendError(null);
+      setCounterpartyOverflow(null);
+      setModalOpen(true);
+      return;
+    }
     setFitError(null);
     setFitChecking(true);
     try {
@@ -161,7 +191,7 @@ export function TradeBuilder({
   async function handleSend() {
     setSending(true);
     setSendError(null);
-    const result = await proposeTradeAction(leagueId, myTeamId, counterpartyId, give, receive);
+    const result = await submit(leagueId, myTeamId, counterpartyId, give, receive);
     if (result.ok) {
       router.push(result.redirectTo);
       return; // navigating away — leave the button disabled through the transition
@@ -245,22 +275,24 @@ export function TradeBuilder({
 
   return (
     <div>
-      <Card className="mt-4">
-        <label className="block text-sm">
-          <span className="text-xs text-muted">Trade with</span>
-          <select
-            value={counterpartyId}
-            onChange={(e) => router.push(`/leagues/${leagueId}/trades/new?with=${e.target.value}`)}
-            className="mt-1 block w-full max-w-sm rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
-          >
-            {otherTeams.map((t) => (
-              <option key={t.teamId} value={t.teamId}>
-                {t.teamName}
-              </option>
-            ))}
-          </select>
-        </label>
-      </Card>
+      {!isCommissioner && (
+        <Card className="mt-4">
+          <label className="block text-sm">
+            <span className="text-xs text-muted">Trade with</span>
+            <select
+              value={counterpartyId}
+              onChange={(e) => router.push(`/leagues/${leagueId}/trades/new?with=${e.target.value}`)}
+              className="mt-1 block w-full max-w-sm rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
+            >
+              {otherTeams.map((t) => (
+                <option key={t.teamId} value={t.teamId}>
+                  {t.teamName}
+                </option>
+              ))}
+            </select>
+          </label>
+        </Card>
+      )}
 
       <div className="mt-6">
         <p className="mb-2 text-sm font-semibold">{counterpartyName}&apos;s roster</p>
@@ -287,7 +319,7 @@ export function TradeBuilder({
       </div>
 
       <div ref={yourRosterRef} className="mt-8">
-        <p className="mb-2 text-sm font-semibold">Your roster ({myTeamName})</p>
+        <p className="mb-2 text-sm font-semibold">{isCommissioner ? `${myTeamName}'s roster` : `Your roster (${myTeamName})`}</p>
         <Card>
           <TradeRosterTable
             assets={myAssets}
@@ -382,7 +414,13 @@ export function TradeBuilder({
               Back
             </Button>
             <Button type="button" variant="primary" onClick={handleSend} disabled={sending}>
-              {sending ? "Sending…" : "Send Trade Proposal"}
+              {isCommissioner
+                ? sending
+                  ? "Executing…"
+                  : "Execute trade"
+                : sending
+                  ? "Sending…"
+                  : "Send Trade Proposal"}
             </Button>
           </div>
         </div>

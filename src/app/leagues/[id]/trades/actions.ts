@@ -9,6 +9,7 @@ import {
   cancelTrade,
   castTradeVeto,
   forceProcessTrade,
+  commissionerExecuteTrade,
   buildProposalItems,
   computeTradeFit,
   type TradeAssetSelection,
@@ -102,4 +103,29 @@ export async function forceProcessTradeAction(leagueId: string, tradeId: string)
   const { userId } = await auth.protect();
   await forceProcessTrade({ tradeId, callerUserId: userId });
   revalidatePath(`/leagues/${leagueId}/trades`);
+}
+
+// LM Roster Moves' Make Trade step 2 — same imperative-call, return-not-throw
+// shape as proposeTradeAction above, and for the same reason: called directly
+// from a client event handler (TradeBuilder's commissioner mode), where a
+// thrown Server Action error gets redacted to a generic digest in production.
+export async function commissionerExecuteTradeAction(
+  leagueId: string,
+  fromTeamId: string,
+  toTeamId: string,
+  give: TradeAssetSelection,
+  receive: TradeAssetSelection,
+): Promise<{ ok: true; redirectTo: string } | { ok: false; error: string }> {
+  const { userId } = await auth.protect();
+  let tradeId: string;
+  try {
+    ({ tradeId } = await commissionerExecuteTrade({ leagueId, fromTeamId, toTeamId, give, receive, callerUserId: userId }));
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't execute that trade." };
+  }
+  revalidatePath(`/leagues/${leagueId}/trades`);
+  revalidatePath(`/leagues/${leagueId}/teams/${fromTeamId}`);
+  revalidatePath(`/leagues/${leagueId}/teams/${toTeamId}`);
+  revalidatePath(`/leagues/${leagueId}/settings/roster-moves`);
+  return { ok: true, redirectTo: `/leagues/${leagueId}/settings/roster-moves?done=trade&tradeId=${tradeId}` };
 }

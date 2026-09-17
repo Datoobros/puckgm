@@ -47,9 +47,7 @@ export function RosterMovesFlow({ leagueId, teams, hasFarm }: { leagueId: string
             <option value="DROP">Drop Player</option>
             <option value="IR">Manage IR</option>
             {hasFarm && <option value="FARM">Manage Farm Team</option>}
-            <option value="TRADE" disabled>
-              Make Trade (Task 4)
-            </option>
+            <option value="TRADE">Make Trade</option>
             <option value="LINEUP" disabled>
               Edit Lineup (Task 12)
             </option>
@@ -67,24 +65,33 @@ export function RosterMovesFlow({ leagueId, teams, hasFarm }: { leagueId: string
           </select>
         </Row>
 
-        <Row label="Perform as">
-          <div className="space-y-2">
-            <label
-              className="flex items-center gap-2 text-sm"
-              title="Bypasses roster caps, waivers, FAAB, and the free-agency gate. Logged as a commissioner override."
-            >
-              <input type="radio" name="performAs" checked={performAs === "LM"} onChange={() => setPerformAs("LM")} />
-              League Manager
-            </label>
-            <label
-              className="flex items-center gap-2 text-sm"
-              title="Runs exactly as if that team's manager did it — all normal rules apply."
-            >
-              <input type="radio" name="performAs" checked={performAs === "TM"} onChange={() => setPerformAs("TM")} />
-              Team Manager
-            </label>
-          </div>
-        </Row>
+        {action === "TRADE" ? (
+          <Row label="Perform as">
+            <p className="text-xs text-muted">
+              Not applicable — a Make Trade always executes immediately as the League Manager,
+              with no acceptance or review window.
+            </p>
+          </Row>
+        ) : (
+          <Row label="Perform as">
+            <div className="space-y-2">
+              <label
+                className="flex items-center gap-2 text-sm"
+                title="Bypasses roster caps, waivers, FAAB, and the free-agency gate. Logged as a commissioner override."
+              >
+                <input type="radio" name="performAs" checked={performAs === "LM"} onChange={() => setPerformAs("LM")} />
+                League Manager
+              </label>
+              <label
+                className="flex items-center gap-2 text-sm"
+                title="Runs exactly as if that team's manager did it — all normal rules apply."
+              >
+                <input type="radio" name="performAs" checked={performAs === "TM"} onChange={() => setPerformAs("TM")} />
+                Team Manager
+              </label>
+            </div>
+          </Row>
+        )}
       </div>
 
       <div className="mt-4 flex gap-2">

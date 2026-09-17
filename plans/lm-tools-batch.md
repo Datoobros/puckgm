@@ -371,10 +371,11 @@ schedule cards, delete the legacy page.
 - Browser: full flow; the Trades page history shows the LM badge.
 
 ### Checklist
-- [ ] `commissionerExecuteTrade` + shared validation helper
-- [ ] TradeBuilder commissioner mode; Make Trade step 2
-- [ ] `Trade.commissionerExecuted` + badge
-- [ ] verified; PROGRESS.md; committed
+- [x] `commissionerExecuteTrade` + shared validation helper
+- [x] TradeBuilder commissioner mode; Make Trade step 2
+- [x] `Trade.commissionerExecuted` + badge (data layer done; badge itself moved to Task 5's
+      resolved-trades list — see PROGRESS.md/run log for why)
+- [x] verified; PROGRESS.md; committed
 
 ---
 

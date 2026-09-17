@@ -333,6 +333,11 @@ model Trade {
   // The 24h review window's end; null until respondedAt is set.
   reviewEndsAt     DateTime?
   state            TradeState @default(PROPOSED)
+  // LM Tools Task 4 — set only by commissionerExecuteTrade (the LM Make
+  // Trade override), never by the normal propose/accept flow. A real column
+  // rather than sniffing TransactionLog payloads for a "PROCESSED trade" the
+  // UI can trust.
+  commissionerExecuted Boolean @default(false)
 
   items TradeItem[]
   vetoes TradeVeto[]

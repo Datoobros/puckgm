@@ -2664,6 +2664,71 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   dialog harness limitation as Tasks 1–2) — its actual effect is covered by
   `lm-roster-moves-check.ts`.
 
+**Task 4 — LM Make Trade**
+- Migration `add_trade_commissioner_executed`: `Trade.commissionerExecuted Boolean @default(false)`
+  — a real column rather than sniffing `TransactionLog` payloads, set only by the new mutation
+  below.
+- `src/lib/trades/mutations.ts`: extracted `assertTradeAssetsValid` (ownership on both sides +
+  not-currently-on-waivers) out of `proposeTrade`'s inline checks into a private helper, shared
+  now with the new `commissionerExecuteTrade`. New function creates the `Trade` directly as
+  `PROCESSED`/`respondedAt: now`/`commissionerExecuted: true` (skipping propose/accept/review
+  entirely), calls the existing `executeTradeTransfers(tradeId, { bypassRoomCheck: true })` for
+  the actual asset movement, then writes its own extra `TransactionLog` row with
+  `commissionerOverride: true, performedBy: callerUserId` (separate from `executeTradeTransfers`'
+  own generic row, which doesn't know who the caller was). Deliberately narrower guard surface
+  than a normal trade — ownership, waivers, and `ORPHAN_FROZEN` still block it, but the
+  draft-in-progress freeze, trade deadline, already-locked-in-another-trade checks, and FAAB
+  availability don't — matching the "full administrative override" precedent every other LM
+  tool in this batch sets (confirmed against the plan's own narrow, explicit list of what this
+  function reuses, and its verification section, which tests exactly these four guards and no
+  others).
+- `TradeBuilder.tsx` gains `mode?: "propose" | "commissioner"` + `submitAction?` (same
+  `(leagueId, teamAId, teamBId, give, receive) -> {ok,redirectTo}|{ok,error}` shape as
+  `proposeTradeAction`, so one prop swaps it for `commissionerExecuteTradeAction`). Commissioner
+  mode: hides the builder's own internal "Trade with" card (the counterparty is picked one
+  level up, in LM Roster Moves' own Make Trade step — see below), headings read "`<Team>`'s
+  roster" instead of "Your roster", the fit pre-check (`checkTradeFitAction`) is skipped
+  entirely so Continue opens the confirm modal directly, and its button reads "Execute trade".
+  The default `mode="propose"` path is untouched — every new branch is `isCommissioner &&`-gated.
+- New `settings/roster-moves/MakeTradeStep.tsx` + `TradeWithSelect.tsx`: a "Trade with" team
+  picker (its own query param, `?with=`, on the roster-moves URL — not `/trades/new`) gates
+  loading both teams' `getTradeableAssets`/stats until a second team is actually chosen, then
+  renders `<TradeBuilder mode="commissioner" submitAction={commissionerExecuteTradeAction} />`.
+  `RosterMovesFlow.tsx`'s Action select: "Make Trade" is no longer disabled; its Perform-as
+  radios are replaced with a note ("not applicable — always executes immediately as the League
+  Manager") when Action = Make Trade, since perform-as has no meaning for an immediate LM-only
+  action.
+- **Plan/reality mismatch found, resolved without building extra scope**: the plan's item 4
+  ("`/trades` page ... render a PROCESSED commissioner trade in history with a Badge") assumes
+  `/trades` still has a resolved-trades history section — it doesn't; that section was removed
+  entirely ("History gone entirely") by the trades-batch's Task 2 the day before this plan was
+  written, and there's no `/trades/[tradeId]` plain-detail route either (only `/review`, for a
+  still-PROPOSED trade). Rather than rebuilding history UI in this task — which would duplicate
+  Task 5's own explicit "last 10 resolved trades with state badges" work on the new Trade
+  Review page — Task 4 stops at making the data correct and available
+  (`TradeDetail.commissionerExecuted`, populated in `mapTradeToDetail`) and Task 5 is where the
+  actual `Badge tone="gold"` render happens, on the list the plan already has it building.
+- Verified: `npx tsc --noEmit`/`npm run build` clean (including the schema migration and a
+  `prisma generate` re-run after stopping the dev server to release its lock on the client
+  DLL); new `scripts/lm-trade-check.ts` (disposable 2-team league, tiny 2-player active cap on
+  purpose) — a player-for-pick trade moves both assets, `Trade.state === "PROCESSED"` +
+  `commissionerExecuted === true`, exactly one `TransactionLog` row has
+  `commissionerOverride: true` (a second, generic row from `executeTradeTransfers` itself also
+  exists, as expected — the assertion is "exactly one row flagged," not "exactly one row
+  total"), refused for a non-commissioner caller, refused when a player's on waivers, refused
+  when a team is `ORPHAN_FROZEN`, and a trade that overflows the receiving team's cap still
+  executes; `trades-check.ts` and `trade-hardening-check.ts` (which exercise
+  `proposeTrade`/`assertTradeAssetsValid`'s new shared path) and `commissioner-tools-check.ts`
+  all still pass. Real browser check (`// TEMP:` bypass across the settings layouts,
+  `roster-moves/actions.ts`, and `trades/actions.ts`; reverted, `grep -rn "TEMP:" src/`
+  clean): full Make Trade flow on a disposable league — team pick, "Trade with" pick, asset
+  selection on both rosters (draft pick rendered correctly under the counterparty's assets),
+  Continue opened the Confirm Trade modal immediately with no fit-check pause, Execute trade
+  processed it, and a DB check confirmed the player and pick both actually moved. Also
+  confirmed `/trades` still renders cleanly with the new field present (no crash) and that
+  `/trades/new`'s propose path still resolves through its normal "not a manager here, redirect"
+  guard untouched.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

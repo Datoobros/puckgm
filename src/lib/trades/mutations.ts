@@ -230,15 +230,13 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
     throw new Error("This league doesn't use FAAB — there's nothing to trade.");
   }
 
-  await assertOwnsAssets(input.proposingTeamId, input.give);
-  await assertOwnsAssets(input.counterpartyTeamId, input.receive);
+  await assertTradeAssetsValid(input.proposingTeamId, input.counterpartyTeamId, input.give, input.receive);
 
   // Trade integrity (plans/trades-batch.md Task 1, issues #4/#5): a locked
-  // (already-UNDER_REVIEW-elsewhere) or on-waivers player can't be offered
-  // or requested on either side of a *new* proposal.
+  // (already-UNDER_REVIEW-elsewhere) player can't be offered or requested on
+  // either side of a *new* proposal.
   const allPlayerIds = [...input.give.playerIds, ...input.receive.playerIds];
   await assertPlayersNotTradeLocked(input.leagueId, allPlayerIds, "traded");
-  await assertPlayersNotOnWaivers(allPlayerIds);
   // Trade hardening (Task 1b, gap #1): the pick-side equivalent of the
   // player lock above — a pick already promised in another accepted trade
   // can't be offered or requested on a new proposal either.
@@ -288,6 +286,24 @@ export async function proposeTrade(input: ProposeTradeInput): Promise<{ tradeId:
   });
 
   return { tradeId };
+}
+
+/** Shared by proposeTrade and commissionerExecuteTrade — actual ownership on
+ * both sides, and nobody currently sitting in a waiver claim window (another
+ * team could claim him at any moment, mid-trade). Everything else
+ * proposeTrade separately checks (locked-in-another-pending-trade, the
+ * draft-in-progress freeze, the trade deadline, FAAB availability) is
+ * proposal-flow-specific and doesn't apply the same way to a commissioner's
+ * immediate override. */
+async function assertTradeAssetsValid(
+  fromTeamId: string,
+  toTeamId: string,
+  give: TradeAssetSelection,
+  receive: TradeAssetSelection,
+): Promise<void> {
+  await assertOwnsAssets(fromTeamId, give);
+  await assertOwnsAssets(toTeamId, receive);
+  await assertPlayersNotOnWaivers([...give.playerIds, ...receive.playerIds]);
 }
 
 async function assertOwnsAssets(teamId: string, assets: TradeAssetSelection): Promise<void> {
@@ -853,6 +869,90 @@ export async function forceProcessTrade(input: ForceProcessTradeInput): Promise<
   }
 }
 
+export interface CommissionerExecuteTradeInput {
+  leagueId: string;
+  fromTeamId: string;
+  toTeamId: string;
+  give: TradeAssetSelection;
+  receive: TradeAssetSelection;
+  callerUserId: string;
+}
+
+/** LM Tools' "Make Trade" — executes immediately, no acceptance, no 24h
+ * review, no veto window (ESPN's commissioner trade tool). Ownership and
+ * waiver-window checks still apply (assertTradeAssetsValid, shared with
+ * proposeTrade) — everything a normal trade additionally gates on (locked
+ * in another pending trade, the draft-in-progress freeze, the trade
+ * deadline, FAAB availability) does not, matching the "full administrative
+ * override" precedent every other LM tool sets. The conflict-of-interest
+ * guard other trade actions apply doesn't apply here either — the
+ * commissioner is deliberately acting for both sides, like ESPN; the audit
+ * log (commissionerOverride/performedBy below) is the safeguard. */
+export async function commissionerExecuteTrade(input: CommissionerExecuteTradeInput): Promise<{ tradeId: string }> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can execute a trade directly.");
+  }
+  if (input.fromTeamId === input.toTeamId) {
+    throw new Error("Pick two different teams to trade between.");
+  }
+
+  const [fromTeam, toTeam] = await Promise.all([
+    prisma.team.findUnique({ where: { id: input.fromTeamId } }),
+    prisma.team.findUnique({ where: { id: input.toTeamId } }),
+  ]);
+  if (!fromTeam || fromTeam.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  if (!toTeam || toTeam.leagueId !== input.leagueId) throw new Error("Counterparty team not found in this league.");
+  if (fromTeam.state === "ORPHAN_FROZEN" || toTeam.state === "ORPHAN_FROZEN") {
+    throw new Error("An orphaned team's roster is frozen — it can't trade.");
+  }
+
+  await assertTradeAssetsValid(input.fromTeamId, input.toTeamId, input.give, input.receive);
+
+  const draftItems = buildProposalItems({
+    proposingTeamId: input.fromTeamId,
+    counterpartyTeamId: input.toTeamId,
+    give: input.give,
+    receive: input.receive,
+  });
+
+  const now = new Date();
+  const tradeId = await prisma.$transaction(async (tx) => {
+    const trade = await tx.trade.create({
+      data: {
+        leagueId: input.leagueId,
+        proposedByTeamId: input.fromTeamId,
+        state: "PROCESSED",
+        respondedAt: now,
+        commissionerExecuted: true,
+      },
+    });
+    await tx.tradeItem.createMany({ data: draftItems.map((item) => ({ tradeId: trade.id, ...item })) });
+    return trade.id;
+  });
+
+  await executeTradeTransfers(tradeId, { bypassRoomCheck: true });
+
+  // Separate from executeTradeTransfers' own generic PROCESSED/FORCED log
+  // row (it doesn't know who the caller is or that this was an override) —
+  // this one specifically carries commissionerOverride/performedBy so an LM
+  // trade is distinguishable in the audit trail.
+  await prisma.transactionLog.create({
+    data: {
+      leagueId: input.leagueId,
+      type: "TRADE",
+      actorTeamId: input.fromTeamId,
+      payload: { tradeId, event: "PROCESSED", commissionerOverride: true, performedBy: input.callerUserId },
+    },
+  });
+
+  await Promise.all([
+    ensureLineupMaterialized(input.fromTeamId, todayUTC()),
+    ensureLineupMaterialized(input.toTeamId, todayUTC()),
+  ]);
+
+  return { tradeId };
+}
+
 export interface TradeDueResult {
   tradeId: string;
   outcome: TradeExecutionOutcome | "AUTO_CANCELLED";
@@ -925,6 +1025,7 @@ export interface TradeDetail {
   counterpartyTeamId: string;
   counterpartyTeamName: string;
   hasVetoed: boolean;
+  commissionerExecuted: boolean;
   items: TradeItemDetail[];
 }
 
@@ -951,6 +1052,7 @@ function mapTradeToDetail(t: TradeWithFullItems, viewingTeamId: string | null): 
     counterpartyTeamId: counterpartyTeam.id,
     counterpartyTeamName: counterpartyTeam.name,
     hasVetoed: viewingTeamId ? t.vetoes.some((v) => v.teamId === viewingTeamId) : false,
+    commissionerExecuted: t.commissionerExecuted,
     items: t.items.map((i) => ({
       itemType: i.itemType,
       fromTeamId: i.fromTeamId,
