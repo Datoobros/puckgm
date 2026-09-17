@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getLeague, isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getTradesForLeague, type TradeDetail } from "@/lib/trades/mutations";
+import { isTradeParticipant, canVetoTrade, canForceProcessTrade } from "@/lib/trades/permissions";
 import { Card, SectionLabel } from "@/components/Card";
 import { Button, LinkButton } from "@/components/Button";
 import { cancelTradeAction, castVetoAction, forceProcessTradeAction } from "./actions";
@@ -45,21 +46,13 @@ export default async function TradesPage(props: PageProps<"/leagues/[id]/trades"
 
   const trades = await getTradesForLeague(leagueId, myTeam?.id ?? null);
 
-  const isParticipant = (t: TradeDetail) => !!myTeam && (t.proposedByTeamId === myTeam.id || t.counterpartyTeamId === myTeam.id);
   const needsResponse = myTeam ? trades.filter((t) => t.state === "PROPOSED" && t.counterpartyTeamId === myTeam.id) : [];
   const myOpenProposals = myTeam ? trades.filter((t) => t.state === "PROPOSED" && t.proposedByTeamId === myTeam.id) : [];
   const pending = trades.filter((t) => t.state === "UNDER_REVIEW");
 
-  function canVeto(t: TradeDetail): boolean {
-    if (t.state !== "UNDER_REVIEW") return false;
-    // A commissioner who's a party to this specific trade can't decide it,
-    // same conflict-of-interest exclusion VOTE mode already applies.
-    if (settings.tradeVetoMode === "COMMISSIONER") return isCommissioner && !isParticipant(t);
-    return !!myTeam && !isParticipant(t) && !t.hasVetoed;
-  }
-  function canForceProcess(t: TradeDetail): boolean {
-    return isCommissioner && !isParticipant(t);
-  }
+  const vetoCtx = { tradeVetoMode: settings.tradeVetoMode, isCommissioner, myTeamId: myTeam?.id ?? null };
+  const canVeto = (t: TradeDetail) => canVetoTrade(t, vetoCtx);
+  const canForceProcess = (t: TradeDetail) => canForceProcessTrade(t, { isCommissioner, myTeamId: myTeam?.id ?? null });
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">

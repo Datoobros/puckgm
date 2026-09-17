@@ -2729,6 +2729,52 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   `/trades/new`'s propose path still resolves through its normal "not a manager here, redirect"
   guard untouched.
 
+**Task 5 — Trade Review page + Edit Waiver Order**
+- New `src/lib/trades/permissions.ts`: `isTradeParticipant`/`canVetoTrade`/`canForceProcessTrade`,
+  pure functions factored out of `trades/page.tsx`'s inline `canVeto`/`canForceProcess`/
+  `isParticipant` closures — both that page and the new one below now call the same
+  predicates, so the "a commissioner who's a party can't decide their own trade" rule can't
+  drift between the two surfaces.
+- New `settings/trade-review/page.tsx`: every `PROPOSED`/`UNDER_REVIEW` trade as a card
+  (both sides' full asset breakdown via the existing `TradeAssetSummary`, reused verbatim),
+  Veto/Force-through-now/Cancel gated by the shared predicates above, empty state "No trades
+  awaiting review." Below it, the last 10 resolved trades as a plain one-line-per-trade list
+  with a state `Badge` — and, closing the loop Task 4 flagged, a gold **"LM trade"** badge
+  wherever `commissionerExecuted` is true. This is the badge Task 4's plan item 4 wanted on
+  `/trades`, moved here since `/trades` lost its history section entirely one day before
+  this plan was written (see Task 4's note) — `/trades` itself is untouched by this task.
+- `src/lib/waivers/mutations.ts`: `setWaiverPriority({ leagueId, orderedTeamIds, callerUserId })`
+  — commissioner-only, requires the submitted id set to equal the league's current team set
+  exactly (same size, no dupes, none missing) before writing `waiverPriorityJson` directly
+  (bypassing `getOrInitWaiverPriority`'s reconciliation, since a validated full submission
+  needs no reconciling). `setWaiverPriorityAction` added to the existing
+  `leagues/[id]/waivers/actions.ts` (kept there rather than a new file, matching where its
+  sibling actions already live) — reads repeated `order` hidden-input values via
+  `formData.getAll`.
+- New `settings/waiver-order/page.tsx` + `WaiverOrderEditor.tsx` (client): a numbered list
+  seeded from `getOrInitWaiverPriority`, ▲/▼ buttons reordering local state, hidden `order`
+  inputs (one per row, in the current on-screen order — `FormData.getAll` preserves DOM
+  order) submitted on Save.
+- `Button.tsx`'s `BadgeTone` type export was missing (only `ButtonVariant`/`ButtonSize` were
+  exported) — exported it too, needed by the trade-review page's state-to-tone lookup table.
+- Verified: `npx tsc --noEmit`/`npm run build` clean; new `scripts/lm-waiver-order-check.ts`
+  (disposable 3-team league) — `setWaiverPriority` sets and persists a new order; a
+  missing-team submission is rejected and leaves the stored order untouched; a duplicate-team
+  submission is rejected; a non-commissioner caller is refused; and — the part that actually
+  proves the manual override and the automatic rotation compose correctly — a real awarded
+  waiver claim (via a throwaway unlock draft + `sendToFarm` + `submitWaiverClaim` +
+  `processExpiredWaivers`, the same shape `waiver-claim-check.ts` already uses) rotates the
+  winning team to the back of the *manually-set* order, not some earlier seeded one.
+  `commissioner-tools-check.ts` still passes. Real browser check (`// TEMP:` bypass;
+  reverted, `grep -rn "TEMP:" src/` clean) on a disposable league seeded with one
+  still-PROPOSED trade and one already-resolved LM trade: Trade Review showed the proposed
+  trade with full stat lines on both sides and only a Cancel button (the viewer — the
+  commissioner — is also the proposing team's manager, so Veto/Force correctly don't show
+  for a trade they're a party to); clicking Cancel moved it into the resolved list with a
+  CANCELLED badge; the resolved LM trade showed the gold "LM trade" badge next to PROCESSED.
+  Waiver Order: reordering with ▲ then Save round-tripped the new order across a fresh page
+  load.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

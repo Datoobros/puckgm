@@ -59,7 +59,7 @@ export function LinkButton({
   );
 }
 
-type BadgeTone = "muted" | "gold" | "navy" | "warning" | "danger" | "success";
+export type BadgeTone = "muted" | "gold" | "navy" | "warning" | "danger" | "success";
 
 const BADGE_TONES: Record<BadgeTone, { soft: string; solid: string }> = {
   muted: { soft: "bg-surface-tint text-muted", solid: "bg-muted text-white" },

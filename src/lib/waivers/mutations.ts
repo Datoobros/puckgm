@@ -20,7 +20,7 @@
 // the next daily tick after 48 hours have elapsed," up to ~24h of slop.
 
 import { prisma } from "@/lib/db";
-import { isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
+import { isTeamManager, managerOrCoManagerWhere, isLeagueCommissioner } from "@/lib/leagues/mutations";
 import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
 import { assertPlayersNotTradeLocked } from "@/lib/trades/locks";
 
@@ -59,6 +59,32 @@ async function rotatePriorityToBack(leagueId: string, teamId: string): Promise<v
   const current = await getOrInitWaiverPriority(leagueId);
   const next = [...current.filter((id) => id !== teamId), teamId];
   await prisma.league.update({ where: { id: leagueId }, data: { waiverPriorityJson: next } });
+}
+
+export interface SetWaiverPriorityInput {
+  leagueId: string;
+  orderedTeamIds: string[];
+  callerUserId: string;
+}
+
+/** LM Tools' Edit Waiver Order — a full manual override of the rotating
+ * queue above. The id set must equal the league's current team set exactly
+ * (no dupes, none missing) so a stale or partial submission can't silently
+ * drop a team from priority entirely. */
+export async function setWaiverPriority(input: SetWaiverPriorityInput): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can set waiver priority.");
+  }
+  const teams = await prisma.team.findMany({ where: { leagueId: input.leagueId }, select: { id: true } });
+  const teamIds = new Set(teams.map((t) => t.id));
+  const orderedSet = new Set(input.orderedTeamIds);
+  if (orderedSet.size !== input.orderedTeamIds.length) {
+    throw new Error("The waiver order lists the same team more than once.");
+  }
+  if (orderedSet.size !== teamIds.size || [...orderedSet].some((id) => !teamIds.has(id))) {
+    throw new Error("The waiver order must include every team in the league exactly once.");
+  }
+  await prisma.league.update({ where: { id: input.leagueId }, data: { waiverPriorityJson: input.orderedTeamIds } });
 }
 
 export interface ClaimablePlayer {

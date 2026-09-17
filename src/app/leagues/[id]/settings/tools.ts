@@ -93,10 +93,12 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Trade Review",
         description: "Review, veto, or force through pending trades.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/trade-review`,
       },
       {
         title: "Edit Waiver Order",
         description: "Change the waiver priority order for your league.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/waiver-order`,
       },
     ],
   },

@@ -409,9 +409,9 @@ schedule cards, delete the legacy page.
   Cancel removes it; Veto/Force buttons absent when the commissioner is a party.
 
 ### Checklist
-- [ ] trade-review page + shared `canVeto/canForce` predicate
-- [ ] `setWaiverPriority` + editor page
-- [ ] verified; PROGRESS.md; committed
+- [x] trade-review page + shared `canVeto/canForce` predicate
+- [x] `setWaiverPriority` + editor page
+- [x] verified; PROGRESS.md; committed
 
 ---
 
