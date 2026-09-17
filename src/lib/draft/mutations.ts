@@ -475,7 +475,7 @@ async function recordPick(
   pick: PendingPick,
   playerId: string,
   autopicked: boolean,
-  autopickMeta?: { group: string | null; reason: "NEED" | "BEST_AVAILABLE" },
+  autopickMeta?: { group: string | null; reason: "NEED" | "BEST_AVAILABLE"; forced?: boolean },
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const claim = await tx.draftPick.updateMany({
@@ -514,7 +514,13 @@ async function recordPick(
           overallPick: pick.overallPick,
           autopicked,
           slotType,
-          ...(autopickMeta ? { group: autopickMeta.group, reason: autopickMeta.reason } : {}),
+          ...(autopickMeta
+            ? {
+                group: autopickMeta.group,
+                reason: autopickMeta.reason,
+                ...(autopickMeta.forced ? { forced: true } : {}),
+              }
+            : {}),
         },
       },
     });
@@ -671,6 +677,74 @@ export async function resolveDraftState(draftId: string): Promise<DraftStateView
   }
 
   return buildView(await prisma.draft.findUniqueOrThrow({ where: { id: draftId } }));
+}
+
+export interface AutodraftBatchInput {
+  draftId: string;
+  callerUserId: string;
+}
+
+/** Commissioner-only escape hatch for an idle draft (draft-fix-batch Task 3)
+ * — the clock is read-driven (see file header), so nothing advances a draft
+ * nobody is polling; the user's first real draft froze for 3.5 hours because
+ * of exactly this. This forces up to MAX_AUTOPICKS_PER_CALL picks right now,
+ * ignoring the deadline entirely (still the same needs-based autopick), and
+ * acquires the same resolvingUntil lease resolveDraftState does so a
+ * concurrent poll from another open tab can't race it into a duplicate. The
+ * room's client calls this in a loop while status stays IN_PROGRESS, rather
+ * than one request trying to finish an entire multi-round draft — same
+ * serverless-time-limit reasoning MAX_AUTOPICKS_PER_CALL exists for at all. */
+export async function autodraftBatch(input: AutodraftBatchInput): Promise<DraftStateView> {
+  const draft = await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } });
+  if (!(await isLeagueCommissioner(draft.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can autodraft remaining picks.");
+  }
+  if (draft.status !== "IN_PROGRESS") return buildView(draft);
+
+  const now = new Date();
+  const claimed = await prisma.draft.updateMany({
+    where: { id: input.draftId, status: "IN_PROGRESS", OR: [{ resolvingUntil: null }, { resolvingUntil: { lt: now } }] },
+    data: { resolvingUntil: new Date(now.getTime() + LEASE_MS) },
+  });
+  if (claimed.count === 0) {
+    // Another caller (a poll's resolveDraftState, or a second commissioner
+    // click) is already resolving this draft — return the current view
+    // rather than race it; the client's loop calls again next iteration.
+    return buildView(await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } }));
+  }
+
+  try {
+    for (let i = 0; i < MAX_AUTOPICKS_PER_CALL; i++) {
+      const current = await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } });
+      if (current.status !== "IN_PROGRESS") break;
+
+      const pick = await getCurrentPick(input.draftId);
+      if (!pick) {
+        await prisma.draft.update({ where: { id: input.draftId }, data: { status: "COMPLETE", currentPickDeadline: null } });
+        break;
+      }
+
+      const available = await getAvailablePool(current);
+      if (available.length === 0) throw new Error("No players left in the draft pool to autopick.");
+      const decision = await chooseAutopickForTeam(current, pick.currentOwnerId, available);
+      if (!decision) throw new Error("No players left in the draft pool to autopick.");
+      try {
+        await recordPick(current, pick, decision.player.id, true, {
+          group: decision.player.group,
+          reason: decision.reason,
+          forced: true,
+        });
+      } catch (err) {
+        if (err instanceof PickAlreadyTakenError) continue;
+        throw err;
+      }
+      await advanceDeadline(current);
+    }
+  } finally {
+    await prisma.draft.updateMany({ where: { id: input.draftId }, data: { resolvingUntil: null } });
+  }
+
+  return buildView(await prisma.draft.findUniqueOrThrow({ where: { id: input.draftId } }));
 }
 
 export interface MakeDraftPickInput {

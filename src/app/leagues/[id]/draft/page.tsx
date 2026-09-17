@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
+import { getLeague, isTeamManager, isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getCurrentDraft, resolveDraftState } from "@/lib/draft/mutations";
 import { Card } from "@/components/Card";
 import { DraftRoom } from "./DraftRoom";
@@ -14,6 +14,7 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
   if (!league) notFound();
   const myTeam = league.teams.find((t) => isTeamManager(t, userId)) ?? null;
   const settings = league.settingsJson as unknown as LeagueSettings;
+  const isCommissioner = await isLeagueCommissioner(leagueId, userId);
 
   const draft = await getCurrentDraft(leagueId);
 
@@ -56,6 +57,7 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
             draftId={draft.id}
             myTeamId={myTeam?.id ?? null}
             positionMode={settings.rosterComposition.positionMode}
+            isCommissioner={isCommissioner}
           />
         </div>
       )}
@@ -68,11 +70,13 @@ async function DraftRoomLoader({
   draftId,
   myTeamId,
   positionMode,
+  isCommissioner,
 }: {
   leagueId: string;
   draftId: string;
   myTeamId: string | null;
   positionMode: "SEPARATE" | "COMBINED";
+  isCommissioner: boolean;
 }) {
   const initialState = await resolveDraftState(draftId);
   return (
@@ -82,6 +86,7 @@ async function DraftRoomLoader({
       myTeamId={myTeamId}
       initialState={initialState}
       positionMode={positionMode}
+      isCommissioner={isCommissioner}
     />
   );
 }

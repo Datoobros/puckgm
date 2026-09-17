@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Card } from "@/components/Card";
 import { Button, Badge } from "@/components/Button";
-import { resolveDraftStateAction, makeDraftPickAction } from "./actions";
+import { resolveDraftStateAction, makeDraftPickAction, autodraftBatchAction } from "./actions";
 import type { DraftStateView } from "@/lib/draft/mutations";
 
 // The first client-polling UI in this app — there's no live-update
@@ -42,12 +43,14 @@ export function DraftRoom({
   myTeamId,
   initialState,
   positionMode,
+  isCommissioner,
 }: {
   leagueId: string;
   draftId: string;
   myTeamId: string | null;
   initialState: DraftStateView;
   positionMode: "SEPARATE" | "COMBINED";
+  isCommissioner: boolean;
 }) {
   const [view, setView] = useState(initialState);
   const [fetchedAt, setFetchedAt] = useState(Date.now());
@@ -56,6 +59,7 @@ export function DraftRoom({
   const [position, setPosition] = useState<PositionFilter>("ALL");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autodrafting, setAutodrafting] = useState(false);
 
   const isMyTurn = !!myTeamId && view.currentPick?.teamId === myTeamId;
 
@@ -102,6 +106,25 @@ export function DraftRoom({
     }
   }
 
+  async function handleAutodraft() {
+    const remaining = view.currentPick ? view.totalPicks - view.currentPick.overallPick + 1 : 0;
+    if (!confirm(`Auto-draft all ${remaining} remaining picks now? This can't be undone.`)) return;
+    setAutodrafting(true);
+    setError(null);
+    try {
+      let next = view;
+      while (next.status === "IN_PROGRESS") {
+        next = await autodraftBatchAction(leagueId, draftId);
+        setView(next);
+        setFetchedAt(Date.now());
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't autodraft the remaining picks.");
+    } finally {
+      setAutodrafting(false);
+    }
+  }
+
   const progress =
     view.totalPicks > 0 ? (
       <p className="mb-4 text-xs font-medium uppercase tracking-wide text-muted">
@@ -116,6 +139,14 @@ export function DraftRoom({
         {progress}
         <Card className="!border-success/20 !bg-success-tint">
           <p className="text-sm font-medium text-success">Draft complete.</p>
+          {myTeamId && (
+            <p className="mt-2 text-sm text-success">
+              <Link href={`/leagues/${leagueId}/teams/${myTeamId}`} className="underline">
+                Go to your team
+              </Link>{" "}
+              — your drafted roster fills into lineup slots automatically the first time you view it.
+            </p>
+          )}
         </Card>
         <RecentPicks recentPicks={view.recentPicks} />
       </div>
@@ -145,6 +176,25 @@ export function DraftRoom({
             <p className="font-mono text-2xl tabular-nums">{formatClock(msRemaining)}</p>
           </div>
         </Card>
+      )}
+
+      <p className="text-xs text-muted">
+        The clock only runs while someone has this page open. Picks left unmade when the timer hits zero are
+        auto-drafted.
+      </p>
+
+      {isCommissioner && (
+        <div className="flex items-center gap-3">
+          <Button type="button" variant="secondary" disabled={pending || autodrafting} onClick={handleAutodraft}>
+            Autodraft remaining picks
+          </Button>
+          {autodrafting && (
+            <span className="text-xs text-muted">
+              Auto-drafting… pick {Math.min(view.currentPick?.overallPick ?? view.totalPicks, view.totalPicks)} of{" "}
+              {view.totalPicks}
+            </span>
+          )}
+        </div>
       )}
 
       {error && (
@@ -185,7 +235,12 @@ export function DraftRoom({
                     {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
                   </span>
                 </span>
-                <Button type="button" size="sm" disabled={!isMyTurn || pending} onClick={() => handlePick(p.id)}>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!isMyTurn || pending || autodrafting}
+                  onClick={() => handlePick(p.id)}
+                >
                   Draft
                 </Button>
               </li>

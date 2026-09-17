@@ -2368,6 +2368,68 @@ picker sees is deliberately left on the same raw-value order (see below).
   pick #1 landed on Connor McDavid, tagged `AUTO`, not a goalie. Cleaned up by exact name +
   id match (`deleteLeague`) afterward.
 
+## Draft fix batch, Task 3: room notice + commissioner "Autodraft remaining picks"
+
+The user-facing half of "nothing happens while nobody is watching" (see Task 1's postmortem
+above) — the clock genuinely only advances when someone's browser tab calls
+`resolveDraftState`, by design (no cron fine-grained enough for a countdown, no websockets).
+Left silent, that reads as a bug to anyone who leaves the room; this task says so plainly and
+gives the commissioner a way to just finish an idle draft.
+
+- **Honest clock notice** — a muted line under the on-the-clock card in `DraftRoom.tsx`:
+  "The clock only runs while someone has this page open. Picks left unmade when the timer
+  hits zero are auto-drafted." No code changed here, just making the existing (Task 1's
+  documented) behavior visible instead of surprising.
+- **`autodraftBatch(draftId, callerUserId)`** (`src/lib/draft/mutations.ts`) — a
+  commissioner-only sibling of `resolveDraftState`'s autopick loop, not a copy of its
+  deadline logic: it acquires the exact same `resolvingUntil` lease and calls the exact same
+  `chooseAutopickForTeam`/`recordPick` machinery, but **ignores the deadline entirely** and
+  is capped at `MAX_AUTOPICKS_PER_CALL` (8) per call same as the read-driven path, for the
+  same serverless-time-limit reason. Forced picks are tagged `forced: true` in the
+  `DRAFT_PICK` transaction log payload (alongside the existing `autopicked`/`group`/`reason`
+  fields) so a forced pick is distinguishable from a naturally-overdue one after the fact,
+  even though both render as `AUTO` in the room's recent-picks list (the distinction wasn't
+  asked for in the UI, only in the log).
+- **Client-side loop, not one long request** — `DraftRoom.tsx`'s new "Autodraft remaining
+  picks" button (commissioner-only, `confirm()`-gated: "Auto-draft all N remaining picks
+  now? This can't be undone.") calls `autodraftBatchAction` in a `while (status ===
+  "IN_PROGRESS")` loop on the client, showing "Auto-drafting… pick N of M" between calls —
+  a 20-pick draft finished in 2 real calls during verification (the lease meant only one of
+  several concurrent contenders ever does the work per call), a 60-pick one would take a
+  handful more. Manual pick buttons are disabled while a batch is in flight, and vice versa.
+- **"Draft complete" links to the viewer's own team**, not a generic message — reusing the
+  team-page batch's existing auto-fill-on-first-view behavior (`ensureLineupMaterialized`),
+  the room's copy says so directly: "your drafted roster fills into lineup slots
+  automatically the first time you view it." Only rendered when the viewer manages a team in
+  this league (a spectator sees just "Draft complete.").
+- **Verified in `scripts/draft-autodraft-check.ts`**: a lone `autodraftBatch` call (fresh,
+  unexpired 600s timer) force-completes a 4-pick draft in one call, every pick tagged
+  `forced: true` — proves the deadline is genuinely ignored, not just coincidentally overdue.
+  A non-commissioner's call throws and records nothing. Then, reusing Task 1's concurrency
+  harness shape: 6 concurrent callers (1 `autodraftBatch` as commissioner + 5
+  `resolveDraftState`) racing a backdated 15-pick/3-team draft to completion — zero
+  duplicate-drafted players, exactly 15 `DRAFT_PICK` logs, correct per-team ACTIVE/FARM
+  counts, at most 8 picks recorded per round of racing callers (the lease held). Which caller
+  actually wins the lease each round is nondeterministic by design, so this script doesn't
+  assert `autodraftBatch` specifically wins during the race — that property is proven
+  separately, deterministically, by the lone-call scenario above.
+- **Checked live in a real browser** (`preview_start {name: "puckgm-dev"}`, `// TEMP:`
+  hardcoded-userId in `src/app/leagues/[id]/layout.tsx`, the draft page, and
+  `makeDraftPickAction`/`autodraftBatchAction` in `actions.ts` — all reverted before commit,
+  `grep -rn "TEMP:" src/` clean): a fresh 2-team/10-round STARTUP draft, one real manual pick
+  (Connor McDavid, no `AUTO` tag) confirming the button doesn't interfere with normal picking,
+  then "Autodraft remaining picks" (the browser automation's native `confirm()` needed a
+  one-line `window.confirm = () => true` stub via the JS console — a test-driving quirk, not
+  a code change) — progress text advanced from "pick 2 of 20" through to COMPLETE, all 19
+  remaining picks tagged `AUTO` and positionally sane (D/F mixed in throughout, not a goalie
+  run), "Go to your team" link present, and the team page it led to showed all 10 drafted
+  players correctly auto-filled into lineup slots (7 skaters into F/UTIL or D/UTIL, 2 of the
+  3 drafted goalies into the 2 G slots, the 3rd correctly benched). Separately, on a fresh
+  in-progress draft, confirmed the button renders for the commissioner and is completely
+  absent for a non-commissioner (along with "Commissioner Settings" itself missing from
+  nav, unrelated to this task but reconfirmed by the same page load). Both disposable
+  leagues cleaned up by exact name + id (`deleteLeague`) afterward.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

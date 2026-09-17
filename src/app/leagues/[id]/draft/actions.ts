@@ -7,6 +7,7 @@ import {
   startDraft,
   resolveDraftState,
   makeDraftPick,
+  autodraftBatch,
   updateDraftSetup,
   cancelDraftSetup,
   resetDraftPickOwnership,
@@ -54,6 +55,13 @@ export async function makeDraftPickAction(leagueId: string, draftId: string, pla
   await makeDraftPick({ draftId, playerId, managerUserId: userId });
   revalidatePath(`/leagues/${leagueId}/draft`);
   return resolveDraftState(draftId);
+}
+
+export async function autodraftBatchAction(leagueId: string, draftId: string): Promise<DraftStateView> {
+  const { userId } = await auth.protect();
+  const view = await autodraftBatch({ draftId, callerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/draft`);
+  return view;
 }
 
 export async function updateDraftSetupAction(leagueId: string, draftId: string, formData: FormData) {
