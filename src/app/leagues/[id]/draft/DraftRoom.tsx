@@ -12,6 +12,23 @@ import type { DraftStateView } from "@/lib/draft/mutations";
 // any expired pick(s) server-side before returning the true current state.
 const POLL_MS = 3000;
 
+// Same tab-button filter idea as the Players page's PlayerStatsTable, scoped
+// to this league's positionMode — COMBINED shows one "F" tab, SEPARATE
+// shows C/L/R separately (Player.primaryPosition is NHL's single-letter
+// code, same discrepancy noted in src/lib/lineups/mutations.ts).
+type PositionFilter = "ALL" | "F" | "C" | "L" | "R" | "D" | "G";
+const FORWARD_POSITIONS = new Set(["C", "L", "R"]);
+
+function positionTabsFor(positionMode: "SEPARATE" | "COMBINED"): PositionFilter[] {
+  return positionMode === "COMBINED" ? ["ALL", "F", "D", "G"] : ["ALL", "C", "L", "R", "D", "G"];
+}
+
+function matchesPosition(pos: string | null, filter: PositionFilter): boolean {
+  if (filter === "ALL") return true;
+  if (filter === "F") return pos !== null && FORWARD_POSITIONS.has(pos);
+  return pos === filter;
+}
+
 function formatClock(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(total / 60);
@@ -24,16 +41,19 @@ export function DraftRoom({
   draftId,
   myTeamId,
   initialState,
+  positionMode,
 }: {
   leagueId: string;
   draftId: string;
   myTeamId: string | null;
   initialState: DraftStateView;
+  positionMode: "SEPARATE" | "COMBINED";
 }) {
   const [view, setView] = useState(initialState);
   const [fetchedAt, setFetchedAt] = useState(Date.now());
   const [now, setNow] = useState(Date.now());
   const [search, setSearch] = useState("");
+  const [position, setPosition] = useState<PositionFilter>("ALL");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,9 +79,11 @@ export function DraftRoom({
 
   const filteredPool = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return view.pool.slice(0, 50);
-    return view.pool.filter((p) => p.fullName.toLowerCase().includes(q)).slice(0, 50);
-  }, [view.pool, search]);
+    return view.pool
+      .filter((p) => matchesPosition(p.primaryPosition, position))
+      .filter((p) => !q || p.fullName.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [view.pool, search, position]);
 
   async function handlePick(playerId: string) {
     setPending(true);
@@ -132,6 +154,20 @@ export function DraftRoom({
       )}
 
       <div>
+        <div className="mb-3 flex items-center gap-5 border-b border-border">
+          {positionTabsFor(positionMode).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPosition(p)}
+              className={`border-b-2 px-0.5 pb-2 text-sm font-medium transition-colors ${
+                position === p ? "border-blue text-foreground" : "border-transparent text-muted hover:text-foreground"
+              }`}
+            >
+              {p === "ALL" ? "All" : p}
+            </button>
+          ))}
+        </div>
         <input
           type="text"
           placeholder="Search available players…"

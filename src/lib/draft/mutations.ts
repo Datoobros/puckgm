@@ -11,18 +11,26 @@
 // up through several missed picks in one call rather than needing one call
 // per miss.
 //
-// Autopick ranks by career fantasy points for a STARTUP draft (real NHL
-// players with real stats — same ranking autoSetLineup already uses) but
-// falls back to real NHL draft position for a ROOKIE draft, since a
-// freshly-ingested prospect has zero GameStatLine rows and would tie at 0
-// points with every other prospect — real draft order (lower overall pick =
-// considered the better prospect) is the closest honest proxy available.
+// Autopick ranking and needs-based selection (draft-fix-batch Task 2) live
+// in src/lib/draft/ranking.ts — this file just wires the board's ranked pool
+// (getRankedDraftPoolBase/getDraftPool) and the per-team autopick decision
+// (chooseAutopickForTeam) into pick recording. See that file's header for
+// the value/positional-need logic that replaced "just take the highest
+// career-points player" after it drafted 24 goalies in a row.
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getLeagueOwnershipMap, activeRosterCap } from "@/lib/rosters/ownership";
-import { getPlayerStatsAggregate } from "@/lib/players/rankings";
+import {
+  buildStartupValuePool,
+  buildRookieValuePool,
+  getLeagueNeeds,
+  chooseAutopick,
+  goalieHardCap,
+  type RankedPoolPlayer,
+  type AutopickDecision,
+} from "@/lib/draft/ranking";
 
 // Resolver lease (draft-fix-batch Task 1) — how long resolveDraftState holds
 // exclusive rights to autopick for a draft before another caller is allowed
@@ -350,45 +358,81 @@ export interface DraftPoolPlayer {
 
 // Pool cost (draft-fix-batch Task 1) — buildView calls getDraftPool on
 // every 3s poll from every open client, and the STARTUP ranking underneath
-// (getPlayerStatsAggregate over the whole player pool) costs ~1.5s on its
-// own. The ranked *base* list (everyone, regardless of ownership) is
-// memoized per (leagueId, season, type) for 60s in this module-level Map —
-// fine per serverless instance, since a stale minute only ever affects
-// *ordering* among available players. Ownership filtering always reads
-// live below, so a player someone just drafted never lingers as available.
+// (two full-pool getPlayerStatsAggregate passes, see ranking.ts) costs real
+// time on its own. The ranked *base* list (everyone, regardless of
+// ownership) is memoized per (leagueId, season, type) for 60s in this
+// module-level Map — fine per serverless instance, since a stale minute
+// only ever affects *ordering* among available players. Ownership filtering
+// always reads live below, so a player someone just drafted never lingers
+// as available.
 const POOL_CACHE_TTL_MS = 60_000;
-const draftPoolBaseCache = new Map<string, { base: DraftPoolPlayer[]; expiresAt: number }>();
+const draftPoolBaseCache = new Map<string, { base: RankedPoolPlayer[]; expiresAt: number }>();
 
-async function getRankedDraftPoolBase(draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number }): Promise<DraftPoolPlayer[]> {
+/** The value-ranked board order (draft-fix-batch Task 2 — position-group-
+ * aware value, see ranking.ts) — everyone regardless of ownership. */
+async function getRankedDraftPoolBase(draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number }): Promise<RankedPoolPlayer[]> {
   const cacheKey = `${draft.leagueId}:${draft.season}:${draft.type}`;
   const cached = draftPoolBaseCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.base;
 
-  const base: DraftPoolPlayer[] =
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: draft.leagueId } });
+  const settings = league.settingsJson as unknown as LeagueSettings;
+  const positionMode = settings.rosterComposition.positionMode;
+
+  const base =
     draft.type === "STARTUP"
-      ? (await getPlayerStatsAggregate()) // full pool, pre-sorted desc by career points
-          .map((r) => ({ id: r.id, fullName: r.fullName, primaryPosition: r.primaryPosition, currentNhlOrg: r.currentNhlOrg }))
-      : (
-          await prisma.player.findMany({
-            where: { draftYear: draft.season },
-            orderBy: { draftOverallPick: "asc" },
-          })
-        ).map((p) => ({ id: p.id, fullName: p.fullName, primaryPosition: p.primaryPosition, currentNhlOrg: p.currentNhlOrg }));
+      ? await buildStartupValuePool(positionMode, settings.scoringConfig)
+      : await buildRookieValuePool(draft.season, positionMode);
 
   draftPoolBaseCache.set(cacheKey, { base, expiresAt: Date.now() + POOL_CACHE_TTL_MS });
   return base;
 }
 
-/** Already sorted by autopick priority — pool[0] is what autopick takes.
- * teamId is accepted but unused for now; Task 2's needs-aware ranking will
- * use it to reorder the pool by that specific team's positional needs. */
+async function getAvailablePool(draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number }): Promise<RankedPoolPlayer[]> {
+  const base = await getRankedDraftPoolBase(draft);
+  const ownership = await getLeagueOwnershipMap(draft.leagueId, base.map((p) => p.id));
+  return base.filter((p) => !ownership.has(p.id));
+}
+
+/** Needs-based autopick decision for one team (draft-fix-batch Task 2) —
+ * value-over-replacement among groups the team still needs (computeGroupTargets),
+ * falling back to best-available-overall once every need is met, subject to
+ * the goalie hard cap even then. `available` is passed in rather than
+ * refetched, since every caller already has it (avoids a duplicate
+ * pool/ownership read). */
+async function chooseAutopickForTeam(
+  draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number },
+  teamId: string,
+  available: RankedPoolPlayer[],
+): Promise<AutopickDecision | null> {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: draft.leagueId } });
+  const settings = league.settingsJson as unknown as LeagueSettings;
+  const { needByTeam, remainingLeagueNeed, haveByTeam } = await getLeagueNeeds(draft.leagueId, settings);
+  return chooseAutopick({
+    pool: available,
+    positionMode: settings.rosterComposition.positionMode,
+    need: needByTeam.get(teamId) ?? {},
+    remainingLeagueNeed,
+    hardCapG: goalieHardCap(settings.rosterComposition),
+    haveG: haveByTeam.get(teamId)?.G ?? 0,
+  });
+}
+
+/** Board order for the room: the plain value ranking (getRankedDraftPoolBase),
+ * not per-team needs — so a manager picking manually sees a sensible list,
+ * not one secretly reordered around someone else's roster gaps. Passing
+ * `teamId` reorders the *front* of the list to whatever that team's
+ * needs-based autopick would currently take, for a caller that wants to
+ * preview or act on that specific choice. */
 export async function getDraftPool(
   draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number },
   teamId?: string,
 ): Promise<DraftPoolPlayer[]> {
-  const base = await getRankedDraftPoolBase(draft);
-  const ownership = await getLeagueOwnershipMap(draft.leagueId, base.map((p) => p.id));
-  return base.filter((p) => !ownership.has(p.id));
+  const available = await getAvailablePool(draft);
+  if (!teamId) return available;
+  const decision = await chooseAutopickForTeam(draft, teamId, available);
+  if (!decision) return available;
+  return [decision.player, ...available.filter((p) => p.id !== decision.player.id)];
 }
 
 async function getCurrentPick(draftId: string) {
@@ -426,7 +470,13 @@ class PickAlreadyTakenError extends Error {
  * both land there. ensureLineupMaterialized is deliberately not called here
  * — unchanged from the team-page batch's decision that the first team-page
  * view after the draft auto-fills the whole roster at once. */
-async function recordPick(draft: DraftRow, pick: PendingPick, playerId: string, autopicked: boolean): Promise<void> {
+async function recordPick(
+  draft: DraftRow,
+  pick: PendingPick,
+  playerId: string,
+  autopicked: boolean,
+  autopickMeta?: { group: string | null; reason: "NEED" | "BEST_AVAILABLE" },
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const claim = await tx.draftPick.updateMany({
       where: { id: pick.id, usedOnPlayerId: null },
@@ -458,7 +508,14 @@ async function recordPick(draft: DraftRow, pick: PendingPick, playerId: string, 
         leagueId: draft.leagueId,
         type: "DRAFT_PICK",
         actorTeamId: pick.currentOwnerId,
-        payload: { playerId, round: pick.round, overallPick: pick.overallPick, autopicked, slotType },
+        payload: {
+          playerId,
+          round: pick.round,
+          overallPick: pick.overallPick,
+          autopicked,
+          slotType,
+          ...(autopickMeta ? { group: autopickMeta.group, reason: autopickMeta.reason } : {}),
+        },
       },
     });
   });
@@ -594,11 +651,12 @@ export async function resolveDraftState(draftId: string): Promise<DraftStateView
       }
       if (!draft.currentPickDeadline || draft.currentPickDeadline > new Date()) break;
 
-      const pool = await getDraftPool(draft);
-      const top = pool[0];
-      if (!top) throw new Error("No players left in the draft pool to autopick.");
+      const available = await getAvailablePool(draft);
+      if (available.length === 0) throw new Error("No players left in the draft pool to autopick.");
+      const decision = await chooseAutopickForTeam(draft, current.currentOwnerId, available);
+      if (!decision) throw new Error("No players left in the draft pool to autopick.");
       try {
-        await recordPick(draft, current, top.id, true);
+        await recordPick(draft, current, decision.player.id, true, { group: decision.player.group, reason: decision.reason });
       } catch (err) {
         // Someone else (a manual pick that isn't lease-gated) recorded this
         // exact pick between our read and our write — re-read and continue

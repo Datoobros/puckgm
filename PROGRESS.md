@@ -2282,6 +2282,92 @@ botched league once Tasks 1–3 are all shipped.
   `slotTypeForDraftPick`'s in-transaction check is what actually still prevents an overflow
   (throwing mid-draft rather than silently corrupting), not a second setup-time re-check.
 
+## Draft fix batch, Task 2: needs-based autopick ranking
+
+The other half of the "Experimenting" postmortem (see Task 1 above): 69 of 139 picks in the
+botched draft were goalies because `getDraftPool` ranked STARTUP by raw career fantasy
+points with no positional awareness, and goalies score far more than skaters under
+`STARTER_SCORING` (0.2/save + 4/win — a full-season starter can out-total a top forward by
+2-3x). New `src/lib/draft/ranking.ts` fixes the *autopick* decision; the board a manual
+picker sees is deliberately left on the same raw-value order (see below).
+
+- **Position groups and per-team targets** — `positionGroupsFor`/`groupForPosition` mirror
+  `src/lib/lineups/mutations.ts`'s starting-slot eligibility (COMBINED → F/D/G, SEPARATE →
+  C/L/R/D/G — reused via `eligibleSlotsForPosition`/`capFor`, not re-derived). `computeGroupTargets`
+  gives each group a target roster count: its starter count, plus a bench share. The bench
+  pool (`UTIL + BENCH`) splits proportionally across *skater* groups only (round half up,
+  any rounding remainder to the largest group); goalies get a flat `+1` instead of a
+  proportional cut — a proportional share would just reopen the original bug, since goalies
+  outscore skaters enough that "need" would never stop wanting more of them. That flat `+1`
+  is also `goalieHardCap` — a team never autopicks more goalies than this, full stop, even
+  once every group's need hits zero (farm rounds included).
+- **Player value** — `buildStartupValuePool`: fantasy points in the most recent
+  *fully-ingested* season (finds the real max `GameStatLine.gameDate` and matches it to a
+  `STAT_RANGES` season, rather than trusting the calendar — same caveat as the lineups
+  seasons code), using the league's own `scoringConfig`. Tie-break career points, then name.
+  A player with zero games that season ranks by career points instead, but always below
+  every player who actually played this season (a large fixed offset keeps the two buckets
+  from crossing). `buildRookieValuePool` is unchanged in spirit (real NHL draft position —
+  prospects have no stats) but now also tags each prospect with a position group.
+- **Value-over-replacement autopick** — `chooseAutopick`: among the groups a team still
+  needs (`need[group] = max(0, target − have)`, `have` counted from the team's currently
+  open roster slots, any tier), pick the one with the highest value-over-replacement —
+  `value(best available) − value(the player at index remainingLeagueNeed[group])`, where
+  `remainingLeagueNeed` sums every team's need for that group league-wide. This is the actual
+  fix: goalies score high in absolute terms, but the position is deep — the drop from best to
+  replacement-level is small — while a run on top skaters can leave a real cliff, so VOR
+  correctly routes picks to whichever group is actually scarce right now, not whichever
+  scores the most on a scoreboard. Once no group has need left (farm rounds), falls back to
+  best-available-overall, still respecting `goalieHardCap`. `getLeagueNeeds` (the one DB
+  loader in `ranking.ts`) computes `have`/`need`/`remainingLeagueNeed` fresh on every call —
+  no caching, unlike the pool base, since roster composition changes every single pick.
+- **Wiring in `src/lib/draft/mutations.ts`** — `getRankedDraftPoolBase` now builds via
+  `ranking.ts` instead of a raw `getPlayerStatsAggregate()` sort. `getDraftPool(draft, teamId?)`
+  keeps the board's plain value order when `teamId` is omitted (a manual picker should never
+  see the list secretly reordered around someone else's needs) but reorders its front to that
+  team's actual autopick choice when a caller passes `teamId` — the parameter Task 1 added and
+  left unused for this. `resolveDraftState`'s autopick loop calls the same underlying decision
+  (`chooseAutopickForTeam`) directly so it can log `group`/`reason` (`"NEED"` or
+  `"BEST_AVAILABLE"`) onto the `DRAFT_PICK` transaction log alongside the existing fields.
+- **Room UI** — `DraftRoom.tsx` gained a position filter row (`All · F/D/G` for COMBINED,
+  `All · C/L/R/D/G` for SEPARATE — same tab-button style as the Players page's
+  `PlayerStatsTable`), filtering the client-side pool list by `primaryPosition`. The board's
+  "All" tab is still raw-value order, which under this scoring config is genuinely
+  goalie-heavy at the very top — confirmed real, not a bug (see below) — so the filter tabs
+  are the actual mitigation for a manual picker, the same way ESPN/Yahoo boards handle a
+  position that outscores others under certain scoring settings.
+- **Honest finding, not a defect**: with `STARTER_SCORING`'s real weights, a full NHL season's
+  raw point total for a starting goalie can be 2-3x a top forward's, so the board's "All" tab
+  legitimately shows dozens of goalies before the first skater — verified this is the actual
+  scoring math, not a ranking bug, before treating it as done. The *autopick* fix (VOR, not
+  raw value) is what actually keeps a real draft from over-drafting goalies; the raw-value
+  board was always going to look this way once position filters were added as the mitigation,
+  per the plan's own decision not to needs-reorder the manual board.
+- Verified in `scripts/draft-ranking-check.ts`: pure-function checks against hand-computed
+  numbers from the plan's own rule (Experimenting's exact COMBINED composition — F:6 D:4 G:2
+  UTIL:1 BENCH:6 — targets to F:10, D:7, G:3, matching `goalieHardCap`'s 3 exactly), a
+  fabricated scenario confirming a team already holding 2 goalies takes a skater over a 3rd
+  goalie while F/D needs are open, and a single-team 19-pick simulated sequence staying within
+  ≤3 G / ≥4 D. Then a real DB run: disposable 3-team league using Experimenting's exact
+  composition (farm 6, IR 2), a 19-round STARTUP draft fully autodrafted via repeated
+  `resolveDraftState` calls against a backdated deadline (completed in 8 calls) — every team
+  landed ≤3 G, ≥4 D, ≥6 F, zero duplicate-drafted players, and Team A's actual first picks were
+  Connor McDavid, Macklin Celebrini, Zach Werenski, Rasmus Dahlin, Cole Caufield... a sane
+  real draft, not a goalie run. Re-ran `draft-check.ts`, `draft-concurrency-check.ts`,
+  `free-agency-gate-check.ts`, `trade-hardening-check.ts` (including its live-draft-freeze
+  case), and `persistent-lineup-check.ts` afterward — all passed unchanged. `npx tsc --noEmit`
+  and `npm run build` both clean.
+- Checked live in a real browser (`preview_start {name: "puckgm-dev"}`) via the `// TEMP:`
+  hardcoded-userId technique — this time needed in three places (`src/app/leagues/[id]/layout.tsx`,
+  the draft page, and `resolveDraftStateAction`/`makeDraftPickAction` in `actions.ts`, since the
+  room's 3-second poll calls its own server action independently of the page's own auth check —
+  all reverted before commit, `grep -rn "TEMP:" src/` clean): a disposable 3-team STARTUP draft
+  with Experimenting's exact composition confirmed the position filter tabs (All/F/D/G) each
+  show a clean, correctly-filtered list, and — while just reading the board — the live 90s+
+  countdown actually expired mid-session and autopicked for real (not the script): Team A's
+  pick #1 landed on Connor McDavid, tagged `AUTO`, not a goalie. Cleaned up by exact name +
+  id match (`deleteLeague`) afterward.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

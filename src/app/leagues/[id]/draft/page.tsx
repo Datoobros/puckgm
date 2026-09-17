@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { getLeague, isTeamManager } from "@/lib/leagues/mutations";
+import { getLeague, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
 import { getCurrentDraft, resolveDraftState } from "@/lib/draft/mutations";
 import { Card } from "@/components/Card";
 import { DraftRoom } from "./DraftRoom";
@@ -13,6 +13,7 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
   const league = await getLeague(leagueId);
   if (!league) notFound();
   const myTeam = league.teams.find((t) => isTeamManager(t, userId)) ?? null;
+  const settings = league.settingsJson as unknown as LeagueSettings;
 
   const draft = await getCurrentDraft(leagueId);
 
@@ -50,14 +51,37 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
           <p className="mb-4 text-sm text-muted">
             {draft.type === "STARTUP" ? "Startup" : "Rookie"} draft — {draft.season}
           </p>
-          <DraftRoomLoader leagueId={leagueId} draftId={draft.id} myTeamId={myTeam?.id ?? null} />
+          <DraftRoomLoader
+            leagueId={leagueId}
+            draftId={draft.id}
+            myTeamId={myTeam?.id ?? null}
+            positionMode={settings.rosterComposition.positionMode}
+          />
         </div>
       )}
     </div>
   );
 }
 
-async function DraftRoomLoader({ leagueId, draftId, myTeamId }: { leagueId: string; draftId: string; myTeamId: string | null }) {
+async function DraftRoomLoader({
+  leagueId,
+  draftId,
+  myTeamId,
+  positionMode,
+}: {
+  leagueId: string;
+  draftId: string;
+  myTeamId: string | null;
+  positionMode: "SEPARATE" | "COMBINED";
+}) {
   const initialState = await resolveDraftState(draftId);
-  return <DraftRoom leagueId={leagueId} draftId={draftId} myTeamId={myTeamId} initialState={initialState} />;
+  return (
+    <DraftRoom
+      leagueId={leagueId}
+      draftId={draftId}
+      myTeamId={myTeamId}
+      initialState={initialState}
+      positionMode={positionMode}
+    />
+  );
 }
