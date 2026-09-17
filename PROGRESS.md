@@ -2051,6 +2051,94 @@ overflow a roster, and marks the players a pending trade already has locked.
   fix (Task 3's product code) was at fault — purely a gap in which files the verification sweep
   had touched.
 
+## Scoreboard redesign (scoreboard-batch, Task 1)
+
+First of a two-task batch (`plans/scoreboard-batch.md`) to match the Scoreboard to ESPN's
+actual layout. Task 2 (the Matchup detail page the new "Matchup" button links to) is a
+separate session — the button already points at its real route,
+`/leagues/[id]/matchups/[matchupId]`, which 404s until that session ships (accepted in the
+plan).
+
+- **Layout** (`src/app/leagues/[id]/scoreboard/page.tsx`): header row gained a
+  `Badge tone="muted"` ("DYNASTY LEAGUE"/"REDRAFT LEAGUE", from `settings.leagueType`) next to
+  the title, and a `LinkButton variant="ghost"` "Projected Playoff Bracket" linking to the
+  already-existing `/leagues/[id]/standings/bracket`. The controls row replaced the old
+  Prev/Next buttons + "Week N of M · dates · Final" line with a "Matchups" label, a new
+  `MatchupWeekSelect` client component (every period in the season, not just adjacent ones —
+  jump straight to any week), and a `Final`/`In progress` `Badge` (muted/success) for the
+  selected week; the existing `TeamScheduleSelect` stays, now right-aligned. Matchup cards went
+  from a small centered-score 2-column grid to full-width, stacked, 3-column ESPN-style cards
+  (`md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]`, divider borders, stacks to one column on
+  mobile): a teams column (logo/name/seed, bold score, trailing team's name goes `text-muted`
+  only once the week is `final`), a Top Scorers column, and a "Matchup" `LinkButton` column.
+- **Top-scorer fill behavior, and why**: `getTeamTopScorersForPeriod` is now a thin
+  slice-and-map wrapper over a new `getTeamPeriodPlayerPoints(teamId, start, end, scoringConfig)`
+  (`src/lib/matchups/standings.ts`) — every player who was actually **started** (non-BE
+  `LineupEntry`) at least once in the period, with real fantasy points (0.0 for a started player
+  whose stat line doesn't exist yet — before his game, or before any game in the period has
+  happened). Sorted by real points desc, then by **career fantasy points desc** (one
+  `getPlayerStatsAggregate({ playerIds, scoringConfig })` call per team) as a tie-break, then by
+  name. The career-points tie-break is the whole point of this function: before any games are
+  played, every started player ties at 0.0, and without a secondary sort they'd render in
+  arbitrary DB order — sorting by career points instead means the columns still read as "these
+  are your real best players, they just haven't scored yet," matching the plan's "Top Scorers"
+  reframing of ESPN's "Projected Leaders" (this app has no stat-projection data source). A team
+  with zero lineup rows at all for the period still renders "Lineup not set" (muted), unchanged
+  from before. `getTeamTopScorersForPeriod`'s own signature is untouched, so the league-home
+  Scores card (which already called it) needed no changes.
+- **New `teamInitials(name)` helper** (`src/lib/teams/initials.ts`, plain/client-safe) — teams
+  have no abbreviation field, so this derives one for the Top Scorers column's team-initials
+  label: first letter of each of up to 4 words, uppercased; a single-word name uses its first 3
+  letters instead.
+- **New `formatPeriodRange(start, end)`** added to the existing `src/lib/dates.ts` (already the
+  shared plain date-util home, safe for both server and client) — "Sep 29 - Oct 4", or
+  "Oct 5 - 11" when both dates fall in the same UTC month, matching the reference screenshot's
+  hyphen exactly. Used by `MatchupWeekSelect`'s option labels
+  (`src/app/leagues/[id]/scoreboard/MatchupWeekSelect.tsx`, a new client component listing every
+  `MatchupPeriod` for the season — `Matchup N (range)` for regular season, `roundLabel (range)`
+  for playoffs via the existing `playoffRoundLabel`). **Task 2 should import this same function**
+  for the Matchup detail page's subtitle rather than reimplementing it, per the plan.
+- **What was removed**: the old Prev/Next buttons and "Week N of M · dates · Final" summary line
+  (superseded by the week-select + badge); the old small 2-column `MatchupCard`/
+  `MatchupTeamColumn` layout and its inline `TopScorer` chip row (superseded by the new
+  `MatchupCard`/`TeamRow`/`TopScorersRow`); `periodCount` (a raw `prisma.matchupPeriod.count`)
+  in favor of fetching the full period list once and reusing it for both the week-select options
+  and playoff-round-label lookups.
+- Verified in a new `scripts/scoreboard-check.ts` against the real DB (disposable
+  "Scoreboard Test League (delete me)", `deleteLeague` cleanup, fixture `Player` rows tagged
+  `(delete me)`): a real scorer sorts first; two started-but-scoreless players both show a real
+  `0.0` and sort in career-points order right after the real scorer (not omitted, not arbitrary
+  order); a benched (BE) player with a huge in-period stat line never appears at all;
+  `getTeamTopScorersForPeriod` returns at most its limit with the same top entry;
+  `sum(PeriodPlayerPoints.points)` for a team equals `getTeamScoreForPeriod` for the same range.
+  `npx tsc --noEmit` and `npm run build` both clean.
+- Checked live in a real browser (`preview_start {name: "puckgm-dev"}`) via the `// TEMP:`
+  hardcoded-userId bypass in `src/app/leagues/[id]/layout.tsx` and the scoreboard page itself
+  (both reverted before commit, `grep -rn "TEMP:" src/` clean): seeded a 4-team, 3-week league
+  with a new two-script seed/cleanup pair (`scripts/scoreboard-seed.ts` /
+  `scripts/scoreboard-seed.ts --cleanup`, same split as `header-modal-test-league.ts`) — one
+  week fully in the past (final), one straddling today (in progress), one entirely in the
+  future (no lineup rows yet, by design). Confirmed: the week select's option labels read
+  exactly `Matchup 1 (Sep 7 - 13)` / `Matchup 2 (Sep 14 - 20)` / `Matchup 3 (Sep 21 - 27)` and
+  switching actually navigates (`?week=N`) and updates the matchups/badge; the `Final`/
+  `In progress` badge flips correctly per week; the future week's cards show `0.0` and
+  "Lineup not set" (no lineup rows yet, same as a real never-viewed week); the trailing team's
+  name in the final week actually carries the `text-muted` class (confirmed via computed
+  style, not just eyeballing) while the winner's doesn't; the "Projected Playoff Bracket" link's
+  href is correct (redirects to Clerk sign-in since that page's own independent
+  `auth.protect()` wasn't bypassed — out of scope for this task); the team-schedule dropdown
+  still switches to the full-season per-team view correctly. Also opened the real
+  **"Experimenting"** league (`cmts0s1uu0000lc0405mux8c5`) read-only: all 22 periods (21
+  regular-season weeks + 1 "Championship" round) listed correctly in the week select, the
+  current matchup rendered real team logos with `0.0`/"Lineup not set" for both empty-rostered
+  teams, no console errors. Deleted the seed league and its fixture players by exact name
+  afterward; never touched Experimenting.
+- **Cosmetic-only artifact, not a bug**: the seeded fixture players' short-name display
+  ("F. Lastname") renders as "S. me)" in the screenshot, because the fixture full names end in
+  the required `(delete me)` cleanup marker (itself two words) and `shortPlayerName` just takes
+  the first and last whitespace-separated tokens — real player names (always exactly two words)
+  format correctly as e.g. "C. McDavid".
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

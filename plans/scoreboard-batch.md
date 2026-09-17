@@ -162,5 +162,5 @@ database; `// TEMP:` auth bypasses reverted before commit; commit messages expla
 - `PROGRESS.md` section; tick the checklist; mark the batch shipped (date); commit (don't push).
 
 ## Checklist
-- [ ] Task 1 — scoreboard redesign
+- [x] Task 1 — scoreboard redesign
 - [ ] Task 2 — matchup detail page

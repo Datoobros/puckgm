@@ -1,16 +1,17 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getLeague } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
-import { getScoreboardForPeriod, getTeamSchedule } from "@/lib/matchups/standings";
+import { getScoreboardForPeriod, getTeamSchedule, playoffRoundLabel } from "@/lib/matchups/standings";
 import { Card } from "@/components/Card";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { TeamScheduleList } from "@/components/TeamScheduleList";
-import { LinkButton } from "@/components/Button";
+import { LinkButton, Badge } from "@/components/Button";
+import { teamInitials } from "@/lib/teams/initials";
 import { TeamScheduleSelect } from "./TeamScheduleSelect";
+import { MatchupWeekSelect, type WeekOption } from "./MatchupWeekSelect";
 import type { TopScorer } from "@/lib/matchups/standings";
 
 export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/scoreboard">) {
@@ -45,16 +46,32 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
     );
   }
 
-  const [scoreboard, periodCount] = await Promise.all([
+  const [scoreboard, periods] = await Promise.all([
     getScoreboardForPeriod(leagueId, league.currentSeason, settings.scoringConfig, requestedPeriodNo),
-    prisma.matchupPeriod.count({ where: { leagueId, season: league.currentSeason } }),
+    prisma.matchupPeriod.findMany({ where: { leagueId, season: league.currentSeason }, orderBy: { periodNo: "asc" } }),
   ]);
 
+  const playoffPeriods = periods.filter((p) => p.isPlayoffs);
+  const weekOptions: WeekOption[] = periods.map((p) => ({
+    periodNo: p.periodNo,
+    isPlayoffs: p.isPlayoffs,
+    roundLabel: p.isPlayoffs ? playoffRoundLabel(playoffPeriods.length, playoffPeriods.findIndex((pp) => pp.id === p.id)) : null,
+    startDate: p.startDate,
+    endDate: p.endDate,
+  }));
+
+  const isFinal = scoreboard ? scoreboard.matchups.some((m) => m.final) : false;
+
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-6xl px-6 py-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Scoreboard</h1>
-        {scoreboard && <TeamScheduleSelect leagueId={leagueId} teams={teams} selectedTeamId="" />}
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Scoreboard</h1>
+          <Badge tone="muted">{settings.leagueType === "REDRAFT" ? "REDRAFT LEAGUE" : "DYNASTY LEAGUE"}</Badge>
+        </div>
+        <LinkButton variant="ghost" href={`/leagues/${leagueId}/standings/bracket`}>
+          Projected Playoff Bracket
+        </LinkButton>
       </div>
 
       {!scoreboard ? (
@@ -63,32 +80,16 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
         </Card>
       ) : (
         <>
-          <div className="mt-4 flex items-center gap-2">
-            <LinkButton
-              href={`/leagues/${leagueId}/scoreboard?week=${Math.max(1, scoreboard.periodNo - 1)}`}
-              size="sm"
-              className={scoreboard.periodNo <= 1 ? "pointer-events-none opacity-30" : ""}
-            >
-              ← Prev
-            </LinkButton>
-            <span className="text-sm text-muted">
-              {scoreboard.isPlayoffs && <span className="font-medium text-gold">{scoreboard.roundLabel} · </span>}
-              Week {scoreboard.periodNo} of {periodCount}
-              {" · "}
-              {scoreboard.startDate.toISOString().slice(0, 10)} – {scoreboard.endDate.toISOString().slice(0, 10)}
-              {" · "}
-              {scoreboard.matchups.some((m) => m.final) ? "Final" : "In progress"}
-            </span>
-            <LinkButton
-              href={`/leagues/${leagueId}/scoreboard?week=${Math.min(periodCount, scoreboard.periodNo + 1)}`}
-              size="sm"
-              className={scoreboard.periodNo >= periodCount ? "pointer-events-none opacity-30" : ""}
-            >
-              Next →
-            </LinkButton>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold">Matchups</span>
+            <MatchupWeekSelect leagueId={leagueId} options={weekOptions} selectedPeriodNo={scoreboard.periodNo} />
+            <Badge tone={isFinal ? "muted" : "success"}>{isFinal ? "Final" : "In progress"}</Badge>
+            <div className="ml-auto">
+              <TeamScheduleSelect leagueId={leagueId} teams={teams} selectedTeamId="" />
+            </div>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="mt-6 flex flex-col gap-4">
             {scoreboard.matchups.length === 0 ? (
               <Card>
                 <p className="text-sm text-muted">Bye week for every team, or nothing scheduled.</p>
@@ -97,6 +98,9 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
               scoreboard.matchups.map((m) => (
                 <MatchupCard
                   key={m.matchupId}
+                  leagueId={leagueId}
+                  matchupId={m.matchupId}
+                  final={m.final}
                   home={{ name: m.homeTeamName, logoUrl: m.homeTeamLogoUrl, seed: m.homeSeed, score: m.homeScore, topScorers: m.homeTopScorers }}
                   away={{ name: m.awayTeamName, logoUrl: m.awayTeamLogoUrl, seed: m.awaySeed, score: m.awayScore, topScorers: m.awayTopScorers }}
                 />
@@ -117,53 +121,88 @@ interface MatchupSide {
   topScorers: TopScorer[];
 }
 
-/** Horizontal side-by-side matchup card — home team left, away team right,
- * flanking a centered score, matching ESPN's actual scoreboard layout
- * (this app previously stacked home-over-away instead). Top scorers are
- * real fantasy points scored within the period so far, not "Projected
- * Leaders" like ESPN's — this app has no stat-projection data source, so
- * that's honestly labeled as what it actually is. */
-function MatchupCard({ home, away }: { home: MatchupSide; away: MatchupSide }) {
-  const homeWinning = home.score >= away.score;
-  const awayWinning = away.score >= home.score;
+/** "Connor McDavid" -> "C. McDavid" — the top-scorer row's compact name
+ * format (there isn't room for a full name beside a 40px headshot in a
+ * three-player-wide row). */
+function shortPlayerName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return fullName;
+  return `${parts[0][0]}. ${parts[parts.length - 1]}`;
+}
+
+/** ESPN-style full-width matchup card: teams column, top-scorers column,
+ * and a "Matchup" action column, separated by dividers (stacks to one
+ * column on mobile). Replaces the old small centered-score card. */
+function MatchupCard({
+  leagueId,
+  matchupId,
+  final,
+  home,
+  away,
+}: {
+  leagueId: string;
+  matchupId: string;
+  final: boolean;
+  home: MatchupSide;
+  away: MatchupSide;
+}) {
   return (
     <Card className="!p-0 overflow-hidden">
-      <div className="flex items-center gap-3 p-4">
-        <MatchupTeamColumn side={home} winning={homeWinning} align="left" />
-        <div className="flex shrink-0 items-center gap-2 px-1">
-          <span className={`tabular-nums text-lg ${homeWinning ? "font-semibold" : "text-muted"}`}>{home.score.toFixed(1)}</span>
-          <span className="text-xs text-muted">–</span>
-          <span className={`tabular-nums text-lg ${awayWinning ? "font-semibold" : "text-muted"}`}>{away.score.toFixed(1)}</span>
+      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+        <div className="divide-y divide-border border-b border-border md:border-b-0 md:border-r">
+          <TeamRow side={home} final={final} otherScore={away.score} />
+          <TeamRow side={away} final={final} otherScore={home.score} />
         </div>
-        <MatchupTeamColumn side={away} winning={awayWinning} align="right" />
+        <div className="divide-y divide-border border-b border-border md:border-b-0 md:border-r">
+          <TopScorersRow side={home} />
+          <TopScorersRow side={away} />
+        </div>
+        <div className="flex items-center justify-center p-4">
+          <LinkButton variant="secondary" className="rounded-full px-5" href={`/leagues/${leagueId}/matchups/${matchupId}`}>
+            Matchup
+          </LinkButton>
+        </div>
       </div>
     </Card>
   );
 }
 
-function MatchupTeamColumn({ side, winning, align }: { side: MatchupSide; winning: boolean; align: "left" | "right" }) {
-  const isRight = align === "right";
+function TeamRow({ side, final, otherScore }: { side: MatchupSide; final: boolean; otherScore: number }) {
+  const trailing = final && side.score < otherScore;
   return (
-    <div className={`flex min-w-0 flex-1 items-center gap-2 ${isRight ? "flex-row-reverse text-right" : ""}`}>
-      <TeamLogo url={side.logoUrl} alt={side.name} size={36} />
-      <div className="min-w-0">
-        <div className={`truncate text-sm ${winning ? "font-semibold" : ""}`}>
-          {side.seed !== null && <span className="text-muted">({side.seed}) </span>}
-          {side.name}
-        </div>
-        {side.topScorers.length > 0 && (
-          <div className={`mt-1 flex flex-wrap items-center gap-2 ${isRight ? "justify-end" : ""}`}>
-            {side.topScorers.map((p) => (
-              <div key={p.playerId} className={`flex shrink-0 items-center gap-1 ${isRight ? "flex-row-reverse" : ""}`} title={p.fullName}>
-                <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={18} />
-                <span className="text-[11px] text-muted">
-                  {p.fullName.split(" ").slice(-1)[0]} {p.points.toFixed(1)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+    <div className="flex items-center gap-3 p-4">
+      <TeamLogo url={side.logoUrl} alt={side.name} size={44} />
+      <div className={`min-w-0 flex-1 truncate text-lg font-semibold ${trailing ? "text-muted" : ""}`}>
+        {side.seed !== null && <span className="text-muted">({side.seed}) </span>}
+        {side.name}
       </div>
+      <div className="shrink-0 text-2xl font-bold tabular-nums">{side.score.toFixed(1)}</div>
+    </div>
+  );
+}
+
+function TopScorersRow({ side }: { side: MatchupSide }) {
+  return (
+    <div className="flex items-start gap-4 p-4">
+      <div className="w-24 shrink-0">
+        <div className="text-sm text-muted">Top Scorers</div>
+        <div className="text-xs font-semibold">{teamInitials(side.name)}</div>
+      </div>
+      {side.topScorers.length === 0 ? (
+        <div className="pt-1 text-sm text-muted">Lineup not set</div>
+      ) : (
+        <div className="flex flex-1 flex-wrap gap-4">
+          {side.topScorers.map((p) => (
+            <div key={p.playerId} className="flex items-center gap-2" title={p.fullName}>
+              <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={40} />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">{shortPlayerName(p.fullName)}</div>
+                <div className="text-xs text-muted">{p.points.toFixed(1)} pts</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

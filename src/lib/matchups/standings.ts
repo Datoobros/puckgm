@@ -8,6 +8,7 @@
 
 import { prisma } from "@/lib/db";
 import { computeFantasyPoints, type ScoringConfig } from "@/lib/scoring/engine";
+import { getPlayerStatsAggregate } from "@/lib/players/rankings";
 
 /** "Championship" / "Semifinal" / "Quarterfinal" for the last three rounds
  * of a bracket, else a plain "Round N" (unreachable in practice — brackets
@@ -48,18 +49,34 @@ export interface TopScorer {
   points: number;
 }
 
-/** Real per-player fantasy points within a period, for whoever was actually
- * STARTED (non-BE) — same scope as getTeamScoreForPeriod, just broken out
- * per player instead of summed. Used for the Scoreboard's "Top Scorers" row;
- * this app has no stat-projection data source, so this is real results so
- * far, not a projection (see PROGRESS.md's "Known gaps" on projections). */
-export async function getTeamTopScorersForPeriod(
+export interface PeriodPlayerPoints {
+  playerId: string;
+  fullName: string;
+  headshotUrl: string | null;
+  primaryPosition: string | null;
+  currentNhlOrg: string | null;
+  /** Distinct dates within the period this player was in a non-BE lineup
+   * slot — a player can start on more than one date if the period spans
+   * several days (a "week" is a MatchupPeriod's whole date range). */
+  gamesStarted: number;
+  points: number;
+}
+
+/** Every player STARTED (non-BE LineupEntry) at least once within a period,
+ * with real fantasy points scored so far (0 for a started player whose game
+ * hasn't happened yet, or before any game in the period has been played —
+ * this app has no stat-projection data source, see PROGRESS.md). Sorted by
+ * points desc, then by career fantasy points desc (a single
+ * getPlayerStatsAggregate call per team) so the pre-season all-zero rows
+ * still land in a meaningful order instead of arbitrary DB order, then by
+ * name. Powers both getTeamTopScorersForPeriod (sliced to a UI-sized list)
+ * and the Matchup detail page's full per-team table (Task 2). */
+export async function getTeamPeriodPlayerPoints(
   teamId: string,
   start: Date,
   end: Date,
   scoringConfig: ScoringConfig,
-  limit = 3,
-): Promise<TopScorer[]> {
+): Promise<PeriodPlayerPoints[]> {
   const entries = await prisma.lineupEntry.findMany({
     where: { teamId, gameDate: { gte: start, lte: end }, lineupSlot: { not: "BE" } },
     include: { player: true },
@@ -77,12 +94,66 @@ export async function getTeamTopScorersForPeriod(
   }
 
   const playerById = new Map(entries.map((e) => [e.playerId, e.player]));
-  const rows: TopScorer[] = [...pointsByPlayer.entries()].map(([playerId, points]) => {
+  const gamesStartedByPlayer = new Map<string, Set<string>>();
+  for (const e of entries) {
+    const dates = gamesStartedByPlayer.get(e.playerId) ?? new Set<string>();
+    dates.add(e.gameDate.toISOString().slice(0, 10));
+    gamesStartedByPlayer.set(e.playerId, dates);
+  }
+
+  // Career fantasy points, for the pre-season (all-zero) tie-break only —
+  // one query for every distinct player on this team in range, reusing the
+  // same ranking every points display in the app ultimately runs through.
+  const playerIds = [...playerById.keys()];
+  const careerRows = await getPlayerStatsAggregate({ playerIds, scoringConfig });
+  const careerPointsByPlayer = new Map(careerRows.map((r) => [r.id, r.points]));
+
+  const rows: PeriodPlayerPoints[] = playerIds.map((playerId) => {
     const player = playerById.get(playerId)!;
-    return { playerId, fullName: player.fullName, headshotUrl: player.headshotUrl, points };
+    return {
+      playerId,
+      fullName: player.fullName,
+      headshotUrl: player.headshotUrl,
+      primaryPosition: player.primaryPosition,
+      currentNhlOrg: player.currentNhlOrg,
+      gamesStarted: gamesStartedByPlayer.get(playerId)?.size ?? 0,
+      points: pointsByPlayer.get(playerId) ?? 0,
+    };
   });
-  rows.sort((a, b) => b.points - a.points);
-  return rows.slice(0, limit);
+
+  rows.sort((a, b) => {
+    if (b.points !== a.points) return b.points - a.points;
+    const careerA = careerPointsByPlayer.get(a.playerId) ?? 0;
+    const careerB = careerPointsByPlayer.get(b.playerId) ?? 0;
+    if (careerB !== careerA) return careerB - careerA;
+    return a.fullName.localeCompare(b.fullName);
+  });
+
+  return rows;
+}
+
+/** Real per-player fantasy points within a period, for whoever was actually
+ * STARTED (non-BE) — same scope as getTeamScoreForPeriod, just broken out
+ * per player instead of summed. Used for the Scoreboard's "Top Scorers"
+ * column; this app has no stat-projection data source, so this is real
+ * results so far (plus started-but-scoreless players at 0.0), not a
+ * projection. Thin wrapper over getTeamPeriodPlayerPoints, kept as its own
+ * export/signature so the league-home Scores card (and anything else
+ * already calling it) needed no changes. */
+export async function getTeamTopScorersForPeriod(
+  teamId: string,
+  start: Date,
+  end: Date,
+  scoringConfig: ScoringConfig,
+  limit = 3,
+): Promise<TopScorer[]> {
+  const rows = await getTeamPeriodPlayerPoints(teamId, start, end, scoringConfig);
+  return rows.slice(0, limit).map((r) => ({
+    playerId: r.playerId,
+    fullName: r.fullName,
+    headshotUrl: r.headshotUrl,
+    points: r.points,
+  }));
 }
 
 export interface StandingsRow {
