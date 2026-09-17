@@ -10,6 +10,7 @@ import {
   updateLeagueSettings,
   regenerateInviteCode,
   getLeague,
+  getLeagueCommissioner,
   setCoCommissioner,
   isLeagueCommissioner,
   renameTeam,
@@ -141,7 +142,10 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
   });
   revalidatePath(`/leagues/${leagueId}`);
   revalidatePath(`/leagues/${leagueId}/settings`);
-  redirect(`/leagues/${leagueId}/settings?saved=1`);
+  // Task 2 splits this into per-page partial actions and deletes this one —
+  // until then it still backs settings/legacy/page.tsx, so it redirects
+  // there rather than to the new hub (which no longer renders this form).
+  redirect(`/leagues/${leagueId}/settings/legacy?saved=1`);
 }
 
 export async function startNewSeasonAction(leagueId: string) {
@@ -162,6 +166,29 @@ export async function setCoCommissionerAction(leagueId: string, teamId: string, 
   const { userId } = await auth.protect();
   await setCoCommissioner({ leagueId, teamId, callerUserId: userId, isCoCommissioner: formData.get("isCoCommissioner") === "on" });
   revalidatePath(`/leagues/${leagueId}/settings`);
+}
+
+// Batch version for settings/powers/page.tsx — one Save button for every
+// team's checkbox at once. Checked here explicitly (not just left to
+// setCoCommissioner's own per-row check) so a caller with zero changed rows
+// still gets refused outright, rather than silently "succeeding" with no
+// writes and no error.
+export async function setCoCommissionersAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const primary = await getLeagueCommissioner(leagueId);
+  if (!primary || primary !== userId) {
+    throw new Error("Only the primary commissioner can change LM powers.");
+  }
+  const league = await getLeague(leagueId);
+  if (!league) throw new Error("League not found.");
+  for (const team of league.teams) {
+    const next = formData.get(`cocomm_${team.id}`) === "on";
+    if (next !== team.isCoCommissioner) {
+      await setCoCommissioner({ leagueId, teamId: team.id, callerUserId: userId, isCoCommissioner: next });
+    }
+  }
+  revalidatePath(`/leagues/${leagueId}/settings/powers`);
+  redirect(`/leagues/${leagueId}/settings/powers?saved=1`);
 }
 
 export async function renameTeamAction(leagueId: string, teamId: string, formData: FormData) {
@@ -241,6 +268,28 @@ export async function setTeamDivisionAction(leagueId: string, teamId: string, fo
   await setTeamDivision({ leagueId, teamId, callerUserId: userId, division });
   revalidatePath(`/leagues/${leagueId}/settings`);
   revalidatePath(`/leagues/${leagueId}/standings`);
+}
+
+// Save-all for settings/teams-divisions/page.tsx — one submit renaming and/or
+// re-dividing every team whose row actually changed, instead of one form per
+// field per team.
+export async function saveTeamsAndDivisionsAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const league = await getLeague(leagueId);
+  if (!league) throw new Error("League not found.");
+  for (const team of league.teams) {
+    const name = String(formData.get(`name_${team.id}`) ?? "").trim();
+    if (name && name !== team.name) {
+      await renameTeam({ leagueId, teamId: team.id, callerUserId: userId, name });
+    }
+    const divisionRaw = String(formData.get(`division_${team.id}`) ?? "").trim();
+    if (divisionRaw !== (team.division ?? "")) {
+      await setTeamDivision({ leagueId, teamId: team.id, callerUserId: userId, division: divisionRaw });
+    }
+  }
+  revalidatePath(`/leagues/${leagueId}/settings/teams-divisions`);
+  revalidatePath(`/leagues/${leagueId}/standings`);
+  redirect(`/leagues/${leagueId}/settings/teams-divisions?saved=1`);
 }
 
 export async function resetScheduleAction(leagueId: string, season: number) {

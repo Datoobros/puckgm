@@ -192,10 +192,10 @@ restructuring — no new backend behavior.
 - `npx tsx scripts/commissioner-tools-check.ts` still passes.
 
 ### Checklist
-- [ ] layout.tsx gate, tools.ts registry, hub page
-- [ ] managers / powers / teams-divisions / delete pages
-- [ ] legacy page holds the not-yet-moved forms; nav label renamed
-- [ ] verified per above; PROGRESS.md section added; committed
+- [x] layout.tsx gate, tools.ts registry, hub page
+- [x] managers / powers / teams-divisions / delete pages
+- [x] legacy page holds the not-yet-moved forms; nav label renamed
+- [x] verified per above; PROGRESS.md section added; committed
 
 ---
 

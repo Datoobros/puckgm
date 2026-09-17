@@ -48,7 +48,7 @@ export function LeagueNav({
             pathname === `/leagues/${leagueId}/settings` ? "border-gold text-gold" : "border-transparent text-gold hover:text-gold/80"
           }`}
         >
-          Commissioner Settings
+          LM Tools
         </Link>
       )}
     </nav>

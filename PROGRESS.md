@@ -2506,6 +2506,68 @@ commissioner can run a correct draft through the fixed code.
   anyone else. Flagged here (Task 1b audit) so the user remembers to set up a co-commissioner
   before this actually matters in the real league.
 
+## League Manager Tools batch (`plans/lm-tools-batch.md`)
+
+Rebuilding the single 500-line "Commissioner Settings" page into an ESPN-style **League
+Manager Tools** hub — one card per topic, one page per tool. Twelve tasks planned; this is
+an unattended overnight run of Tasks 1–6 (Task 7 needs a human to receive a real invite
+email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
+
+**Task 1 — hub, layout gate, membership/teams pages**
+- `src/app/leagues/[id]/settings/layout.tsx` (new): the commissioner gate (`isLeagueCommissioner`)
+  now lives once, at the layout level — every sub-page renders inside it. Every Server
+  Action still re-checks independently; the layout is UX only, not the security boundary.
+- `src/app/leagues/[id]/settings/tools.ts` (new): the hub's data-driven card/row registry
+  (`LM_TOOL_CARDS`). A row with no `href` renders as muted "Coming soon" text instead of a
+  link — later tasks (2, 5, 8–11) add hrefs as each tool ships, without touching the hub
+  page itself.
+- `settings/page.tsx` is now the hub: six cards, `grid-cols-1 md:grid-cols-2 xl:grid-cols-3`,
+  confirmed 1/2/3 columns at mobile/tablet/desktop widths in a real browser.
+- New sub-pages: `settings/managers` (table Team | Manager | Status | Actions, manager shown
+  via `getUserDisplayName` instead of a raw Clerk ID; Reassign/Orphan/claim-link/Delete per
+  row, plus the Add Team form and the league invite-link card moved here from the old page),
+  `settings/powers` (one list, checkboxes, single Save — new batch action
+  `setCoCommissionersAction`, primary-commissioner-only, explicitly checked up front so a
+  caller with zero changed rows is still refused rather than silently "succeeding"),
+  `settings/teams-divisions` (rename + division text inputs, new batch action
+  `saveTeamsAndDivisionsAction` — Task 6 upgrades divisions to named entities later),
+  `settings/delete` (just `DeleteLeagueButton` + the warning copy).
+- `settings/legacy/page.tsx` (new, temporary): verbatim copy of everything not yet moved —
+  the league settings form (roster limits/composition, FAAB, trades, trade deadline,
+  scoring), the Draft card, the Schedule card, the REDRAFT Season card. Linked from the hub
+  as a small muted "Legacy settings page" line. `updateLeagueSettingsAction` now redirects
+  here (`?saved=1`) instead of to the hub, since the hub no longer renders that form. Task 2
+  deletes this file once everything in it has a real home.
+- `TeamManagementCard.tsx` deleted (split across managers/teams-divisions); nav label
+  "Commissioner Settings" → "LM Tools" (`LeagueNav.tsx` and the two links on the Draft page).
+- **Pre-existing gap found while verifying, fixed in the test script, not the product
+  code**: `scripts/commissioner-tools-check.ts` predates `assertFreeAgencyOpen` (added two
+  days earlier by the team-page batch's "lock free agency until the startup draft
+  completes" commit, `451cd51`) and has been failing since — every fresh DYNASTY league it
+  creates has free agency closed until a completed STARTUP draft exists, but the script
+  never ran one. Same category of stale-script-assumption as the `CURRENT_SCHEDULE_SEASON`
+  fix PROGRESS.md already documents for `faab-check.ts`/`trades-check.ts`. Fixed by adding a
+  throwaway 1-round/4-pick STARTUP draft (season 2020, deliberately distinct from the
+  season-2031 STARTUP draft the script sets up later under test) right after team creation,
+  set up and autodrafted to completion in one `autodraftBatch` call — opens free agency for
+  the rest of the script, matching how a real league actually behaves. **Not fixed**:
+  `waiver-claim-check.ts` and `faab-check.ts` almost certainly have the same latent gap
+  (grepped — neither sets up a draft either) but weren't touched, since fixing them isn't
+  this batch's job; flagged here for whoever hits them next.
+- Verified: `npx tsc --noEmit` and `npm run build` clean; `commissioner-tools-check.ts`
+  passes in full (including the pre-existing orphan/reassign round-trip and the
+  co-commissioner permission checks) after the fix above; real browser check against a
+  disposable "LM Tools Test League (delete me)" league (`// TEMP:` hardcoded userId,
+  reverted — `grep -rn "TEMP:" src/` clean) — hub renders correctly at desktop (3 cols) and
+  mobile (1 col) widths, Managers page Reassign/claim-link/Add-Team round-trip against the
+  real DB, Powers page Save round-trips a co-commissioner toggle, Teams & Divisions Save
+  round-trips a rename + division, Delete League page renders, and a non-commissioner caller
+  gets the gate message both on the hub and on a sub-page hit directly (no "LM Tools" nav
+  link shown either). Orphan/Delete themselves use `confirm()` — this browser harness
+  auto-suppresses native JS dialogs, so those two specific actions were verified at the
+  mutation/script level (`commissioner-tools-check.ts`) rather than by clicking through the
+  confirm prompt in the browser.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

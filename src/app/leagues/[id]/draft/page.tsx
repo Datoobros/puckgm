@@ -27,7 +27,7 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
           <p className="text-sm text-muted">
             No draft has been set up for this league yet. A commissioner can start one from{" "}
             <Link href={`/leagues/${leagueId}/settings`} className="underline">
-              Commissioner Settings
+              LM Tools
             </Link>
             .
           </p>
@@ -42,7 +42,7 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
             </Link>{" "}
             if you like. The commissioner can start the clock from{" "}
             <Link href={`/leagues/${leagueId}/settings`} className="underline">
-              Commissioner Settings
+              LM Tools
             </Link>
             .
           </p>

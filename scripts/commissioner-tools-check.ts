@@ -29,7 +29,7 @@ import { setLineupSlot } from "@/lib/lineups/mutations";
 import { submitWaiverClaim, processExpiredWaivers, getOrInitWaiverPriority } from "@/lib/waivers/mutations";
 import { submitFaBid, processFaabBids } from "@/lib/faab/mutations";
 import { proposeTrade, respondToTrade, castTradeVeto, forceProcessTrade, getTradeableAssets } from "@/lib/trades/mutations";
-import { setUpDraft, updateDraftSetup, cancelDraftSetup, resetDraftPickOwnership } from "@/lib/draft/mutations";
+import { setUpDraft, startDraft, autodraftBatch, updateDraftSetup, cancelDraftSetup, resetDraftPickOwnership } from "@/lib/draft/mutations";
 import { generateSchedule, resetSchedule } from "@/lib/matchups/mutations";
 import { getStandings } from "@/lib/matchups/standings";
 import { STARTER_SCORING } from "@/lib/scoring/engine";
@@ -79,6 +79,21 @@ async function main() {
   const { teamId: teamC } = await createTeam({ leagueId, managerUserId: "ctools-C", teamName: "Team C" });
   const { teamId: teamD } = await createTeam({ leagueId, managerUserId: "ctools-D", teamName: "Team D" });
   console.log("league:", leagueId, { teamA, teamB, teamC, teamD });
+
+  // Free agency is closed for a DYNASTY league until it has a COMPLETE
+  // STARTUP draft (src/lib/draft/mutations.ts's assertFreeAgencyOpen, added
+  // after this script was first written — gates addPlayerToRoster/
+  // submitWaiverClaim/submitFaBid, all exercised below). Season 2020 here is
+  // deliberately distinct from season 2031 used later in this script for the
+  // "draft settings editing" STARTUP draft under test — DYNASTY's gate isn't
+  // season-scoped, so any completed STARTUP draft opens it for good.
+  const { draftId: unlockDraftId } = await setUpDraft({
+    leagueId, season: 2020, type: "STARTUP", roundCount: 1, orderMode: "MANUAL",
+    manualOrder: [teamA, teamB, teamC, teamD], pickTimerSeconds: 600, callerUserId: "ctools-A",
+  });
+  await startDraft({ draftId: unlockDraftId, callerUserId: "ctools-A" });
+  const unlockView = await autodraftBatch({ draftId: unlockDraftId, callerUserId: "ctools-A" });
+  assert(unlockView.status === "COMPLETE", "the throwaway 4-pick unlock draft completes in one autodraftBatch call");
 
   console.log("\n-- co-commissioners --");
   await setCoCommissioner({ leagueId, teamId: teamB, callerUserId: "ctools-A", isCoCommissioner: true });
