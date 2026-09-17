@@ -130,3 +130,51 @@ completed.
      mutation level instead.
 
 ---
+
+## Task 4 — LM Make Trade
+
+- **Status**: done
+- **Commit**: `2f5504e` — "LM Tools batch Task 4: LM Make Trade"
+- **Verification**: `npx tsc --noEmit` clean; `npm run build` clean (needed a
+  `preview_stop` + `npx prisma generate` after `prisma migrate dev`, since the running dev
+  server held a lock on the client DLL — see decision #1); new
+  `npx tsx scripts/lm-trade-check.ts` — ALL CHECKS PASSED; `trades-check.ts`,
+  `trade-hardening-check.ts`, `commissioner-tools-check.ts` all still pass; real browser
+  check on a disposable "LM Tools Test League (delete me)" (`// TEMP:` bypass across the
+  settings layouts, `roster-moves/actions.ts`, `trades/actions.ts` — reverted,
+  `grep -rn "TEMP:" src/` clean): full Make Trade flow (team pick → "Trade with" pick →
+  select a player and a pick on each side → Continue skips straight to the Confirm Trade
+  modal, no fit-check pause → Execute trade), confirmed via direct DB read that the player
+  and pick both actually moved to the right teams.
+- **Screenshot**: same no-file-export note as prior tasks; visually confirmed inline (the
+  Confirm Trade modal with "Execute trade" as the button label, draft pick and player chips
+  rendering correctly for both sides).
+- **Decisions/findings not covered by the plan**:
+  1. `npx prisma migrate dev` applied the migration fine but Prisma Client regeneration
+     failed with `EPERM` (the running dev server had the client `.dll` open). Stopped the
+     preview server, ran `npx prisma generate` standalone, then restarted the preview — not
+     a data problem, just a Windows file-lock ordering issue worth remembering for any
+     future task in this run that touches the schema.
+  2. **Plan/reality mismatch, resolved by deferring to Task 5 rather than duplicating
+     work**: Task 4 item 4 says `/trades` should render a PROCESSED commissioner trade "in
+     history with a Badge" — but `/trades` has no resolved-trade history section at all
+     ("History gone entirely," per the trades-batch Task 2 commit message, dated the day
+     *before* this LM Tools plan). Confirmed live in the browser too: the executed trade is
+     genuinely invisible on `/trades` today (no crash, just nothing to show it in). Rather
+     than rebuild that removed UI here — which would duplicate Task 5's own explicit "last
+     10 resolved trades with state badges" requirement on the new Trade Review page — I
+     stopped Task 4 at making the data correct and available
+     (`TradeDetail.commissionerExecuted`) and will render the actual `Badge tone="gold"` in
+     Task 5, on the list the plan already has it building. Flagging this loudly here so it
+     isn't missed: **Task 5 must include the LM-trade badge**, or this requirement falls
+     through the crack between two tasks.
+  3. Narrowed `commissionerExecuteTrade`'s guard surface to exactly what the plan's explicit
+     text and verification section name (ownership, waivers, `ORPHAN_FROZEN`) and
+     deliberately did *not* carry over `proposeTrade`'s deadline/draft-in-progress/
+     already-locked-in-another-trade/FAAB-availability checks, since none of those are
+     mentioned in the plan's item 1 or tested in its verification section, and the whole
+     point of an LM trade (per the plan's own "full bypass" framing elsewhere in this
+     batch) is administrative override. Recorded here as the clearest single judgment call
+     in this task, in case the user wants any of those checks added later.
+
+---
