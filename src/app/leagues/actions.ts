@@ -21,6 +21,7 @@ import {
   setTeamDivision,
   type RosterComposition,
   type LeagueSettings,
+  type UpdateLeagueSettingsInput,
 } from "@/lib/leagues/mutations";
 import { startNewSeason } from "@/lib/leagues/season";
 import { generateSchedule, resetSchedule } from "@/lib/matchups/mutations";
@@ -93,40 +94,86 @@ export async function generateScheduleAction(leagueId: string, formData: FormDat
   revalidatePath(`/leagues/${leagueId}/scoreboard`);
 }
 
-export async function updateLeagueSettingsAction(leagueId: string, formData: FormData) {
+// Maps the league's current stored settings onto updateLeagueSettings's full
+// input shape — each partial-update action below spreads this and overrides
+// only the fields its own form actually edits. updateLeagueSettings itself
+// stays a full-input call (its validation and LeagueSettingsLog diffing
+// already work correctly against a full object); this is what lets three
+// separate small forms share it without each having to resend every field.
+export async function currentSettingsInput(leagueId: string, callerUserId: string): Promise<UpdateLeagueSettingsInput> {
+  const league = await getLeague(leagueId);
+  if (!league) throw new Error("League not found.");
+  const s = league.settingsJson as unknown as LeagueSettings;
+  return {
+    leagueId,
+    callerUserId,
+    farmSlots: s.farmSlots,
+    irSlots: s.irSlots,
+    waiverGpThreshold: s.waiverGpThreshold,
+    callupsPerWeek: s.callupsPerWeek,
+    scoringConfig: s.scoringConfig,
+    faabEnabled: s.faabEnabled,
+    faabBudget: s.faabBudget,
+    faabMinBid: s.faabMinBid,
+    faabMaxBid: s.faabMaxBid,
+    tradeVetoMode: s.tradeVetoMode,
+    tradeDeadline: s.tradeDeadline,
+    rosterComposition: s.rosterComposition,
+    draftPickTradingEnabled: s.draftPickTradingEnabled !== false,
+  };
+}
+
+export async function updateLeagueGeneralSettingsAction(leagueId: string, formData: FormData) {
   const { userId } = await auth.protect();
-
+  const base = await currentSettingsInput(leagueId, userId);
   const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
-  const scoringConfig: ScoringConfig = {};
-  for (const { key } of EDITABLE_SCORING_FIELDS) {
-    scoringConfig[key] = Number(formData.get(`scoring_${key}`) ?? 0);
-  }
-
   const faabMaxBidRaw = String(formData.get("faabMaxBid") ?? "").trim();
   const tradeVetoModeRaw = String(formData.get("tradeVetoMode") ?? "COMMISSIONER");
   const tradeDeadlineRaw = String(formData.get("tradeDeadline") ?? "").trim();
 
-  // positionMode is never read from the form here — it's locked forever, so
-  // it's always taken from the league's current settings, not the caller.
-  const league = await getLeague(leagueId);
-  if (!league) throw new Error("League not found.");
-  const currentSettings = league.settingsJson as unknown as LeagueSettings;
-  const positionMode = currentSettings.rosterComposition.positionMode;
-
   await updateLeagueSettings({
-    leagueId,
-    callerUserId: userId,
-    farmSlots: num("farmSlots"),
-    irSlots: num("irSlots"),
-    waiverGpThreshold: num("waiverGpThreshold"),
-    callupsPerWeek: num("callupsPerWeek"),
-    scoringConfig,
+    ...base,
     faabEnabled: formData.get("faabEnabled") === "on",
     faabBudget: num("faabBudget"),
     faabMinBid: num("faabMinBid"),
     faabMaxBid: faabMaxBidRaw === "" ? null : Math.max(0, Number(faabMaxBidRaw) | 0),
     tradeVetoMode: tradeVetoModeRaw === "VOTE" ? "VOTE" : "COMMISSIONER",
     tradeDeadline: tradeDeadlineRaw === "" ? null : tradeDeadlineRaw,
+    draftPickTradingEnabled: formData.get("draftPickTradingEnabled") === "on",
+  });
+  revalidatePath(`/leagues/${leagueId}`);
+  revalidatePath(`/leagues/${leagueId}/settings/league`);
+  redirect(`/leagues/${leagueId}/settings/league?saved=1`);
+}
+
+export async function updateScoringSettingsAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const base = await currentSettingsInput(leagueId, userId);
+  const scoringConfig: ScoringConfig = {};
+  for (const { key } of EDITABLE_SCORING_FIELDS) {
+    scoringConfig[key] = Number(formData.get(`scoring_${key}`) ?? 0);
+  }
+
+  await updateLeagueSettings({ ...base, scoringConfig });
+  revalidatePath(`/leagues/${leagueId}`);
+  revalidatePath(`/leagues/${leagueId}/settings/scoring`);
+  redirect(`/leagues/${leagueId}/settings/scoring?saved=1`);
+}
+
+export async function updateRosterSettingsAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const base = await currentSettingsInput(leagueId, userId);
+  const num = (key: string) => Math.max(0, Number(formData.get(key) ?? 0) | 0);
+  // positionMode is never read from the form — it's locked forever, so it's
+  // always taken from the league's current settings, not the caller.
+  const positionMode = base.rosterComposition.positionMode;
+
+  await updateLeagueSettings({
+    ...base,
+    farmSlots: num("farmSlots"),
+    irSlots: num("irSlots"),
+    waiverGpThreshold: num("waiverGpThreshold"),
+    callupsPerWeek: num("callupsPerWeek"),
     rosterComposition: {
       positionMode,
       C: positionMode === "SEPARATE" ? num("rosterC") : 0,
@@ -138,14 +185,10 @@ export async function updateLeagueSettingsAction(leagueId: string, formData: For
       UTIL: num("rosterUTIL"),
       BENCH: num("rosterBENCH"),
     },
-    draftPickTradingEnabled: formData.get("draftPickTradingEnabled") === "on",
   });
   revalidatePath(`/leagues/${leagueId}`);
-  revalidatePath(`/leagues/${leagueId}/settings`);
-  // Task 2 splits this into per-page partial actions and deletes this one —
-  // until then it still backs settings/legacy/page.tsx, so it redirects
-  // there rather than to the new hub (which no longer renders this form).
-  redirect(`/leagues/${leagueId}/settings/legacy?saved=1`);
+  revalidatePath(`/leagues/${leagueId}/settings/roster-settings`);
+  redirect(`/leagues/${leagueId}/settings/roster-settings?saved=1`);
 }
 
 export async function startNewSeasonAction(leagueId: string) {

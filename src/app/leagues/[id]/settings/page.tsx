@@ -51,13 +51,6 @@ export default async function LeagueManagerToolsPage(props: PageProps<"/leagues/
           </Card>
         ))}
       </div>
-
-      <p className="mt-8 text-xs text-muted">
-        <Link href={`/leagues/${leagueId}/settings/legacy`} className="hover:underline">
-          Legacy settings page
-        </Link>{" "}
-        — everything not moved into its own tool yet.
-      </p>
     </div>
   );
 }

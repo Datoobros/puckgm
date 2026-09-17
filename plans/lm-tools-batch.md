@@ -250,10 +250,10 @@ schedule cards, delete the legacy page.
   and cancels a draft; Schedule Settings generates and resets a schedule.
 
 ### Checklist
-- [ ] three partial actions + helper; old action removed
-- [ ] league / scoring / roster-settings / schedule-settings / draft-settings pages
-- [ ] legacy page deleted; hub fully linked for built tools
-- [ ] verified; PROGRESS.md; committed
+- [x] three partial actions + helper; old action removed
+- [x] league / scoring / roster-settings / schedule-settings / draft-settings pages
+- [x] legacy page deleted; hub fully linked for built tools
+- [x] verified; PROGRESS.md; committed
 
 ---
 

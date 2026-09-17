@@ -40,6 +40,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Draft Settings",
         description: "Set up or edit an upcoming startup or rookie draft.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/draft-settings`,
       },
       {
         title: "Reset Draft",
@@ -53,10 +54,12 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Edit League Settings",
         description: "Manage FAAB, trade rules, and other league-wide settings.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/league`,
       },
       {
         title: "Edit Scoring Settings",
         description: "Adjust the points awarded for each statistical category.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/scoring`,
       },
       {
         title: "Edit Teams and Divisions",
@@ -80,6 +83,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Edit Roster Settings",
         description: "Set farm/IR slots, callup limits, and roster composition.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/roster-settings`,
       },
       {
         title: "Roster Moves",
@@ -101,6 +105,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Edit Schedule Settings",
         description: "Generate or reset the regular-season and playoff schedule.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/schedule-settings`,
       },
       {
         title: "Edit Head-to-Head Schedule",

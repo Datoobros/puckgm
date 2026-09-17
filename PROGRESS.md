@@ -2568,6 +2568,41 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   mutation/script level (`commissioner-tools-check.ts`) rather than by clicking through the
   confirm prompt in the browser.
 
+**Task 2 — settings pages: league, scoring, roster, schedule, draft**
+- `src/app/leagues/actions.ts`: `updateLeagueSettingsAction` (one giant form, all fields)
+  replaced by `currentSettingsInput(leagueId, callerUserId)` — reads the league's stored
+  settings and maps them onto `updateLeagueSettings`'s full input shape — plus three small
+  actions that each spread it and override only their own fields:
+  `updateLeagueGeneralSettingsAction` (FAAB, trade veto mode, trade deadline, draft-pick
+  trading), `updateScoringSettingsAction` (`scoringConfig`), `updateRosterSettingsAction`
+  (farm/IR/waiver/callup limits + roster composition numeric fields, `positionMode` always
+  taken from the league's current value, never the form). `updateLeagueSettings` itself is
+  unchanged — still a full-input call, its validation and `LeagueSettingsLog` diffing were
+  already correct.
+- Five new pages replace the old one-page form: `settings/league` (FAAB/Trades/Trade
+  deadline + the "Locked forever" summary, now correctly listing roster composition as
+  *not* locked; REDRAFT leagues also get the Season card), `settings/scoring` (the scoring
+  grid), `settings/roster-settings` (roster limits + composition), `settings/schedule-settings`
+  (generate/reset — copy fixed: "can be reset and regenerated until a week actually
+  completes," not "one-time"), `settings/draft-settings` (the Draft card verbatim, its two
+  internal action imports left alone since `DraftSetupForm.tsx`/`DraftSetupEditForm.tsx`
+  didn't move, only its own `startDraftAction`/`resetDraftPickOwnershipAction` import
+  switched from a relative `../draft/actions` to the absolute `@/app/leagues/[id]/draft/actions`
+  since the page itself moved a level deeper).
+- `settings/legacy/page.tsx` deleted along with its hub link; `tools.ts` now links all five
+  of these tools plus everything Task 1 already linked — every card on the hub is either a
+  real link or an honest "Coming soon" now, no more escape hatch to a temporary page.
+- Verified: `npx tsc --noEmit`/`npm run build` clean; `grep -rn "updateLeagueSettingsAction\|settings/legacy" src/` empty; new `scripts/lm-settings-split-check.ts` (disposable league)
+  proves each partial action's merge changes only its own fields — every other field
+  byte-equal before/after, `LeagueSettingsLog` rows written only for the fields that
+  actually changed (including a no-op resubmit writing zero rows); real browser check
+  (`// TEMP:` bypass, reverted) — scoring-value change shows the saved banner and Standings
+  still renders, IR-slot change shows up immediately on the team page's `IR (0 / N)` label,
+  FAAB toggle persists across reload, Draft Settings sets up then cancels a draft
+  (`Cancel this draft` is `confirm()`-gated like Task 1's destructive actions — verified via
+  a direct `cancelDraftSetup` call instead, same reasoning as Task 1), Schedule Settings
+  generates then resets a schedule (same `confirm()` situation for Reset, same workaround).
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to
