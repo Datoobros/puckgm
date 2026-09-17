@@ -2430,6 +2430,51 @@ gives the commissioner a way to just finish an idle draft.
   nav, unrelated to this task but reconfirmed by the same page load). Both disposable
   leagues cleaned up by exact name + id (`deleteLeague`) afterward.
 
+## Draft fix batch, Task 4: Experimenting cleanup (run 2026-09-17)
+
+The last step of the postmortem (see Tasks 1-3 above): with the mechanism fixed, deleted the
+botched first draft's corrupted output from the real "Experimenting" league so the
+commissioner can run a correct draft through the fixed code.
+
+- **`scripts/reset-experimenting-botched-draft.ts`** — scoped to the league by exact name
+  ("Experimenting") AND id, and to the exact draft by id, aborting on any mismatch (same
+  shared-prod-DB convention as `reset-experimenting-for-draft.ts`). Two more abort guards
+  before writing anything: any `TradeItem` referencing one of the draft's picks (none should
+  exist — no trade feature touches picks from an incomplete/corrupted draft in practice, but
+  checked rather than assumed), and any open `RosterSlot` for the league's teams with
+  `effectiveFrom` older than `draft.createdAt` (the league had 0 open slots before this draft
+  per the 2026-09-15 reset, so every open slot found should be this draft's own artifact —
+  finding an older one would mean something else touched these rosters between the reset and
+  the draft, worth stopping for). `--dry-run` prints every count and writes nothing.
+- **`--dry-run` matched 4 of 5 expected counts exactly** (228 `RosterSlot`, 228 `DRAFT_PICK`
+  logs, 60 `DraftPick`, 1 `Draft`) but found **24 `LineupEntry` rows, not the 14** the plan
+  anticipated. Read-only diagnostic before proceeding: 14 belonged to "Rebuild Squad" (exactly
+  matching the plan's number — that team's page was the one viewed when the plan's read-only
+  investigation was written) and the other 10 to "Finn" (0 for "Dev" — its page was never
+  viewed), all dated 2026-09-16/17 and created within the same draft-night/early-morning
+  window as the rest. Confirmed with the user before running for real: the league had zero
+  lineup rows after the Sept 15 reset and no rostered players until this draft, so every
+  lineup row found is still a direct product of the botched draft (correct drafted rosters ->
+  auto-fill-on-first-view materializing a lineup) regardless of which team's page triggered
+  it or when — the plan's "14" was simply a snapshot taken before Finn's team page (or an
+  early-morning cron materialization) added the other 10, not evidence of a second issue.
+- **Real run deleted**: 24 `LineupEntry`, 228 `RosterSlot` (closed, not just deleted —
+  actually hard-deleted, since these are bug artifacts, not real history worth an audit
+  trail), 228 `TransactionLog` `DRAFT_PICK` rows, 60 `DraftPick` rows, 1 `Draft` row. Wrote one
+  `TransactionLog` `COMMISSIONER_RESET` row (`payload: { reason: "botched startup draft
+  removed", draftId }`) recording the cleanup itself. Read-only snapshot immediately after,
+  built into the script: open roster slots 0, lineup rows 0, drafts 0, `getFreeAgencyStatus`
+  -> closed / `NO_STARTUP_DRAFT` — all matching the plan's expected end state exactly.
+- **Checked live in a real browser** (`preview_start {name: "puckgm-dev"}`, `// TEMP:`
+  hardcoded commissioner userId in `src/app/leagues/[id]/layout.tsx` and `players/page.tsx`,
+  reverted before commit, `grep -rn "TEMP:" src/` clean): the Players page for Experimenting
+  shows "Set up the draft in League Settings to open free agency." again, with the
+  commissioner's "Go to League Settings" link — free agency correctly re-locked, same banner
+  a league with no completed startup draft has always shown.
+- Batch shipped: all four tasks (atomic/cap-aware pick recording, needs-based autopick
+  ranking, room notice + Autodraft-remaining-picks, this cleanup) committed. The user sets up
+  a fresh startup draft from Commissioner Settings whenever ready.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

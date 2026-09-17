@@ -228,4 +228,6 @@ Keep the script in the repo; note the run date in PROGRESS.md.
 - [x] Task 1 — atomic, cap-aware, bounded pick recording (+ lease migration)
 - [x] Task 2 — needs-based autopick ranking + room board order/filter
 - [x] Task 3 — room notice + Autodraft remaining picks
-- [ ] Task 4 — Experimenting cleanup (run once; record date)
+- [x] Task 4 — Experimenting cleanup (run once; record date) — ran 2026-09-17
+
+**Batch shipped.**
