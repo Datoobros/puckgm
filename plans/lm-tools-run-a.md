@@ -53,3 +53,39 @@ completed.
      fixed, just noting it in case it looks like a new bug later.
 
 ---
+
+## Task 2 — Settings pages: league, scoring, roster, schedule, draft
+
+- **Status**: done
+- **Commit**: `f8833e2` — "LM Tools batch Task 2: split settings into league/scoring/roster/schedule/draft pages"
+- **Verification**: `npx tsc --noEmit` clean; `npm run build` clean;
+  `grep -rn "updateLeagueSettingsAction\|settings/legacy" src/` empty; new
+  `npx tsx scripts/lm-settings-split-check.ts` — ALL CHECKS PASSED (byte-equal
+  untouched-field assertions + exact `LeagueSettingsLog` field sets, for all three partial
+  actions' merge logic, plus a no-op-writes-zero-rows check); real browser check against a
+  fresh disposable "LM Tools Test League (delete me)" (`// TEMP:` bypass in
+  `leagues/[id]/layout.tsx`, `settings/layout.tsx`, `leagues/actions.ts`,
+  `leagues/[id]/draft/actions.ts` — all reverted, `grep -rn "TEMP:" src/` clean).
+- **Screenshot**: none taken this task — every check was either a page-text read (banner
+  text, IR-slot label, draft/schedule state) or a DB assertion; nothing needed a visual
+  diff. Same "no file-export path for this harness's screenshots" note as Task 1 applies if
+  one had been needed.
+- **Decisions made that the plan didn't cover**:
+  1. Draft Settings' "Cancel this draft" and Schedule Settings' "Reset schedule" are both
+     `confirm()`-gated, same browser-harness limitation as Task 1's Orphan/Delete. Verified
+     both by calling the underlying mutation directly (`cancelDraftSetup`, `resetSchedule`)
+     against the same disposable league instead of clicking through the suppressed dialog,
+     then confirmed the page reflects the change on reload. Discovered along the way: calling
+     a Server Action that itself calls `revalidatePath` directly from a bare `tsx` script
+     throws ("Invariant: static generation store missing") *after* the mutation already ran
+     — so `cancelDraftSetupAction` looked like it failed but had actually already cancelled
+     the draft. Switched to calling the plain `lib/` mutation functions directly for this
+     kind of script-level check from here on, not the `"use server"` action wrappers.
+  2. The plan's step 6 says fix `DraftSetupForm`/`DraftSetupEditForm`'s imports "since they
+     move a level" — they don't actually move (they stay in `settings/`, only
+     `draft-settings/page.tsx` is new and one level deeper), so their own internal
+     `../draft/actions` relative imports were correctly left untouched; only
+     `draft-settings/page.tsx`'s own import of `startDraftAction`/
+     `resetDraftPickOwnershipAction` needed the absolute-path fix the plan describes.
+
+---
