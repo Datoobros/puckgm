@@ -163,4 +163,4 @@ database; `// TEMP:` auth bypasses reverted before commit; commit messages expla
 
 ## Checklist
 - [x] Task 1 — scoreboard redesign
-- [ ] Task 2 — matchup detail page
+- [x] Task 2 — matchup detail page

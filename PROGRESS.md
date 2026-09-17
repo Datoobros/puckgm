@@ -2054,10 +2054,10 @@ overflow a roster, and marks the players a pending trade already has locked.
 ## Scoreboard redesign (scoreboard-batch, Task 1)
 
 First of a two-task batch (`plans/scoreboard-batch.md`) to match the Scoreboard to ESPN's
-actual layout. Task 2 (the Matchup detail page the new "Matchup" button links to) is a
-separate session — the button already points at its real route,
-`/leagues/[id]/matchups/[matchupId]`, which 404s until that session ships (accepted in the
-plan).
+actual layout. Task 2 (the Matchup detail page the new "Matchup" button links to) was a
+separate session — the button pointed at its real route, `/leagues/[id]/matchups/[matchupId]`,
+which 404d until that session shipped it (accepted in the plan; see the section below —
+shipped same-day).
 
 - **Layout** (`src/app/leagues/[id]/scoreboard/page.tsx`): header row gained a
   `Badge tone="muted"` ("DYNASTY LEAGUE"/"REDRAFT LEAGUE", from `settings.leagueType`) next to
@@ -2138,6 +2138,53 @@ plan).
   the required `(delete me)` cleanup marker (itself two words) and `shortPlayerName` just takes
   the first and last whitespace-separated tokens — real player names (always exactly two words)
   format correctly as e.g. "C. McDavid".
+
+## Matchup detail page (scoreboard-batch, Task 2) — batch shipped 2026-09-16
+
+Second and final task of `plans/scoreboard-batch.md`. The Scoreboard's "Matchup" button
+(added in Task 1, pointing at `/leagues/[id]/matchups/[matchupId]`) now resolves to a real
+page instead of 404ing.
+
+- New route `src/app/leagues/[id]/matchups/[matchupId]/page.tsx` (server, `auth.protect()`).
+  Validates the matchup belongs to the league (`prisma.matchup.findFirst({ where: { id:
+  matchupId, matchupPeriod: { leagueId } } })`) before rendering, `notFound()` otherwise —
+  same shape as the existing team-schedule page's `team.leagueId !== leagueId` check.
+- New `getMatchupDetail(matchupId, scoringConfig)` in `src/lib/matchups/standings.ts` — one
+  `Matchup` row plus both teams' scores and full per-player breakdowns, built from the exact
+  same `getTeamScoreForPeriod`/`getTeamPeriodPlayerPoints` pair the Scoreboard itself calls
+  (Task 1), so the two pages can never disagree on a score. Returns `null` for a nonexistent
+  matchup id; the page treats that as `notFound()`.
+- **Layout**: `max-w-5xl`, "← Scoreboard" link back to `/leagues/[id]/scoreboard?week=N`
+  (the same week the matchup belongs to). Title `{home} vs {away}`; subtitle
+  `Matchup N · <range> · Final|In progress` (playoff weeks show the round label instead of
+  "Matchup N"), reusing Task 1's `formatPeriodRange`/`playoffRoundLabel` — no second date
+  formatter. A `Card` score strip shows both teams' logos/names/big scores side by side, the
+  trailing team's score going `text-muted` once the week is `final` (same convention as the
+  Scoreboard card). Below it, two per-team tables (`md:grid-cols-2`, stacked on mobile):
+  Player (headshot, name, `pos · NHL` muted) / GS (distinct dates started) / PTS, rows in the
+  order `getTeamPeriodPlayerPoints` already sorts them (real points desc, then career-points
+  tie-break, then name), with a `Total` footer row equal to the score strip's number. A team
+  with no lineup rows for the week shows "No lineup set for this week yet." instead of an
+  empty table. Player names are plain text — no player detail page exists yet to link to.
+- Extended `scripts/scoreboard-check.ts` (didn't need a new script — same league/period
+  fixtures already cover this) with `getMatchupDetail` assertions: the real matchup
+  `generateSchedule` paired for period 1 resolves, its per-side scores match
+  `getTeamScoreForPeriod` for both teams independently, a side's own per-player points sum to
+  its own score, and a nonexistent matchup id returns `null`. `npx tsc --noEmit` and
+  `npm run build` both clean — the new dynamic route needed `npx next typegen` run once first
+  (Next 16's typed-route generation for `PageProps<"...">` hadn't seen the new segment yet).
+- Checked live in a real browser via the `// TEMP:` hardcoded-userId bypass (three places this
+  time: `src/app/leagues/[id]/layout.tsx`, the scoreboard page, and this new page — all
+  reverted before commit, `grep -rn "TEMP:" src/` clean) against the existing
+  `scripts/scoreboard-seed.ts` league (reused as-is, no new seed script needed): from the
+  Scoreboard, an in-progress week's matchup page showed both tables with the same players and
+  points as the Scoreboard's Top Scorers column, totals equal to the card's scores exactly
+  (15.9/27.9 and 33.9/21.9 across the two matchups); the back link returned to `?week=2`
+  (the same week); a future week with no lineup rows yet showed "No lineup set for this week
+  yet." for both sides and `0.0`/`0.0` in the score strip. Also opened one real
+  **"Experimenting"** league matchup (`cmts0s1uu0000lc0405mux8c5`, read-only) and confirmed
+  the same empty state renders with no console errors. No bugs found this task — Task 1 had
+  already built and verified every data function this page reuses.
 
 ## Known gaps, deliberately not built (ask before building)
 

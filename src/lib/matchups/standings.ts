@@ -580,3 +580,83 @@ export async function getScoreboardForPeriod(
     matchups: results,
   };
 }
+
+export interface MatchupDetailSide {
+  teamId: string;
+  name: string;
+  logoUrl: string | null;
+  seed: number | null;
+  score: number;
+  players: PeriodPlayerPoints[];
+}
+
+export interface MatchupDetail {
+  matchupId: string;
+  periodNo: number;
+  isPlayoffs: boolean;
+  roundLabel: string | null;
+  startDate: Date;
+  endDate: Date;
+  final: boolean;
+  home: MatchupDetailSide;
+  away: MatchupDetailSide;
+}
+
+/** Full per-player detail for a single Matchup — the Scoreboard card's
+ * "Matchup" button target (scoreboard-batch Task 2). Reuses the exact same
+ * getTeamScoreForPeriod/getTeamPeriodPlayerPoints pair the Scoreboard
+ * itself calls, so the two pages can never disagree on a score. null when
+ * matchupId doesn't exist; the page turns that into notFound(). */
+export async function getMatchupDetail(matchupId: string, scoringConfig: ScoringConfig): Promise<MatchupDetail | null> {
+  const matchup = await prisma.matchup.findUnique({
+    where: { id: matchupId },
+    include: { matchupPeriod: true, homeTeam: true, awayTeam: true },
+  });
+  if (!matchup) return null;
+
+  const period = matchup.matchupPeriod;
+  const final = period.endDate <= new Date();
+
+  const [homeScore, awayScore, homePlayers, awayPlayers] = await Promise.all([
+    getTeamScoreForPeriod(matchup.homeTeamId, period.startDate, period.endDate, scoringConfig),
+    getTeamScoreForPeriod(matchup.awayTeamId, period.startDate, period.endDate, scoringConfig),
+    getTeamPeriodPlayerPoints(matchup.homeTeamId, period.startDate, period.endDate, scoringConfig),
+    getTeamPeriodPlayerPoints(matchup.awayTeamId, period.startDate, period.endDate, scoringConfig),
+  ]);
+
+  let roundLabel: string | null = null;
+  if (period.isPlayoffs) {
+    const playoffPeriods = await prisma.matchupPeriod.findMany({
+      where: { leagueId: period.leagueId, season: period.season, isPlayoffs: true },
+      orderBy: { periodNo: "asc" },
+    });
+    const roundIndex = playoffPeriods.findIndex((p) => p.id === period.id);
+    roundLabel = roundIndex === -1 ? null : playoffRoundLabel(playoffPeriods.length, roundIndex);
+  }
+
+  return {
+    matchupId: matchup.id,
+    periodNo: period.periodNo,
+    isPlayoffs: period.isPlayoffs,
+    roundLabel,
+    startDate: period.startDate,
+    endDate: period.endDate,
+    final,
+    home: {
+      teamId: matchup.homeTeamId,
+      name: matchup.homeTeam.name,
+      logoUrl: matchup.homeTeam.logoUrl,
+      seed: matchup.homeSeed,
+      score: homeScore,
+      players: homePlayers,
+    },
+    away: {
+      teamId: matchup.awayTeamId,
+      name: matchup.awayTeam.name,
+      logoUrl: matchup.awayTeam.logoUrl,
+      seed: matchup.awaySeed,
+      score: awayScore,
+      players: awayPlayers,
+    },
+  };
+}

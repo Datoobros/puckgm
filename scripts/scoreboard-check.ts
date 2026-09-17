@@ -2,15 +2,22 @@
 // (src/lib/matchups/standings.ts): getTeamPeriodPlayerPoints' started-players
 // scope (BE excluded), its 0.0-for-started-but-scoreless behavior, and its
 // sort (real points desc, then career-points tie-break, then name);
-// getTeamTopScorersForPeriod as a thin slice/map over the same data; and
-// that a team's total PeriodPlayerPoints always equals getTeamScoreForPeriod
-// for the same range (the scoreboard's card and its top-scorers column must
-// never disagree with the score itself).
+// getTeamTopScorersForPeriod as a thin slice/map over the same data; that a
+// team's total PeriodPlayerPoints always equals getTeamScoreForPeriod for
+// the same range (the scoreboard's card and its top-scorers column must
+// never disagree with the score itself); and (Task 2) that getMatchupDetail
+// agrees with the scoreboard on both teams' totals and rejects a matchup id
+// that doesn't exist.
 
 import { prisma } from "@/lib/db";
 import { createLeague, createTeam, deleteLeague } from "@/lib/leagues/mutations";
 import { generateSchedule } from "@/lib/matchups/mutations";
-import { getTeamPeriodPlayerPoints, getTeamTopScorersForPeriod, getTeamScoreForPeriod } from "@/lib/matchups/standings";
+import {
+  getTeamPeriodPlayerPoints,
+  getTeamTopScorersForPeriod,
+  getTeamScoreForPeriod,
+  getMatchupDetail,
+} from "@/lib/matchups/standings";
 
 const SCORING = { goals: 2 };
 
@@ -102,6 +109,23 @@ async function main() {
   const sumOfRows = rows.reduce((s, r) => s + r.points, 0);
   const teamScore = await getTeamScoreForPeriod(teamA, period.startDate, period.endDate, SCORING);
   assert(sumOfRows === teamScore, `sum of per-player points (${sumOfRows}) equals the team's period score (${teamScore})`);
+
+  console.log("\n-- getMatchupDetail --");
+  const matchup = await prisma.matchup.findFirst({ where: { matchupPeriodId: period.id } });
+  assert(matchup !== null, "generateSchedule paired teamA vs teamB for period 1");
+  const detail = await getMatchupDetail(matchup!.id, SCORING);
+  assert(detail !== null, "getMatchupDetail returns a row for a real matchup id");
+  const detailHome = detail!.home.teamId === teamA ? detail!.home : detail!.away;
+  const detailAway = detail!.home.teamId === teamA ? detail!.away : detail!.home;
+  assert(detailHome.score === teamScore, `detail's teamA score (${detailHome.score}) matches getTeamScoreForPeriod (${teamScore})`);
+  const otherScore = await getTeamScoreForPeriod(detailAway.teamId, period.startDate, period.endDate, SCORING);
+  assert(detailAway.score === otherScore, `detail's other-team score (${detailAway.score}) matches getTeamScoreForPeriod (${otherScore})`);
+  assert(
+    detailHome.players.reduce((s, p) => s + p.points, 0) === detailHome.score,
+    "detail's per-player points for teamA sum to its own score",
+  );
+  const bogusDetail = await getMatchupDetail("nonexistent-matchup-id", SCORING);
+  assert(bogusDetail === null, "a nonexistent matchup id returns null (the page turns this into notFound())");
 
   console.log("\nAll scoreboard checks passed.");
 
