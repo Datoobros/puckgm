@@ -2603,6 +2603,67 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   a direct `cancelDraftSetup` call instead, same reasoning as Task 1), Schedule Settings
   generates then resets a schedule (same `confirm()` situation for Reset, same workaround).
 
+**Task 3 — LM Roster Moves (Add/Drop/Manage IR/Manage Farm) + team-page controls removed**
+- `src/lib/rosters/mutations.ts`: `commissionerAddPlayer` gains an optional `targetSlotType`
+  (default `ACTIVE`) so an LM add can land directly on Farm or IR, not just Active —
+  `ensureLineupMaterialized` now only runs for an ACTIVE add. **Real gap found and fixed**:
+  `commissionerDropPlayer` and `commissionerMovePlayer` never checked `ORPHAN_FROZEN` (only
+  `commissionerAddPlayer` did) — every other roster mutation in this app gates on it, this
+  was just missed when those two were written. Fixed by adding the same check; caught by
+  this task's own required verification ("every action refused on an ORPHAN_FROZEN team in
+  both modes"), not by inspection. All three commissioner mutations' `TransactionLog`
+  payloads now also carry `performedBy: callerUserId`.
+- New `src/app/leagues/[id]/settings/roster-moves/`: `actions.ts` (`lmAddPlayerAction`/
+  `lmDropPlayerAction`/`lmMovePlayerAction`, each returning `{ ok: true } | { ok: false,
+  error }` instead of throwing, so a refusal renders inline rather than crashing the Server
+  Action boundary), `RosterMovesFlow.tsx` (client, ESPN's "Choose Transaction" step 1 —
+  Action/Team/Perform-as, `router.push`es `?action=&team=&as=` on Continue rather than
+  updating the URL live, so browser Back lands cleanly on a fresh step 1), four step-2
+  renderers (`AddPlayerStep.tsx` — reuses the deleted `CommissionerAddPlayerBox`'s
+  debounced-search shape, LM mode adds a destination select; `DropPlayerStep.tsx`;
+  `ManageIrStep.tsx`; `ManageFarmStep.tsx`, hidden from the Action list for REDRAFT
+  leagues), and a shared `RosterMoveActionButton.tsx` client component every step-2 row
+  uses (calls the server action directly — client components can call a `"use server"`
+  function without it being threaded through as a prop — shows the returned error inline
+  with the "switch to League Manager" hint when it's a TM-mode refusal).
+- Team Manager mode's Move action has no single manager-facing "move" primitive to call, so
+  `lmMovePlayerAction` looks up the player's actual current slot and dispatches to whichever
+  real mutation matches (`sendToFarm`/`callUpToActive`/`placeOnIR`/`activateFromIR`) — same
+  behavior a manager driving their own team page would get. IR→FARM in TM mode chains
+  `activateFromIR` then `sendToFarm` (no single mutation goes straight there) and surfaces
+  whatever waiver exposure the second leg produces.
+- **Team page** (`teams/[teamId]/page.tsx`): every `isCommissionerViewing` branch removed —
+  the extra `<th>`/`<td>` commissioner columns on the Skaters/Goalies tables, the Farm and
+  IR sections' inline Active/IR/Farm/Drop buttons, and the "Commissioner controls" card
+  (the `CommissionerAddPlayerBox` search). Replaced with one muted pointer line, shown only
+  when viewing a team you don't manage as the commissioner: "Need to edit this roster? Use
+  LM Tools → Roster Moves." `CommissionerAddPlayerBox.tsx` deleted;
+  `commissionerAddPlayerAction`/`commissionerDropPlayerAction`/`commissionerMovePlayerAction`
+  deleted from `teams/[teamId]/actions.ts` (superseded by the roster-moves actions above).
+- Verified: `npx tsc --noEmit`/`npm run build` clean; new `scripts/lm-roster-moves-check.ts`
+  (disposable 2-team league) — LM add with `targetSlotType: FARM` lands on Farm; TM add is
+  refused by the free-agency gate before any startup draft completes while LM add bypasses
+  it; TM-mode demotion (`sendToFarm`) waiver-exposes an 80+ GP player and sets a real
+  `waiverExpiresAt`, LM-mode move (`commissionerMovePlayer`) on an identical player does
+  not; every LM mutation refused for a non-commissioner caller; every action (both modes)
+  refused on an `ORPHAN_FROZEN` team; `commissioner-tools-check.ts` still passes. Real
+  browser check (`// TEMP:` bypass — this time also needed in `teams/[teamId]/page.tsx`
+  itself, not just the settings layouts, to actually exercise `isCommissionerViewing`;
+  reverted, `grep -rn "TEMP:" src/` clean): full step-1-to-step-2 flow for Add (to Farm,
+  searched and added Connor McDavid), Manage Farm (Send to Farm → Call up round-trip),
+  Manage IR (Place on IR **from Farm** — succeeds in LM mode via the bypass, which
+  `placeOnIR` itself would refuse — activate back to Active); the TM-mode error path
+  (free-agency-closed, since this disposable league has no completed draft) showed the
+  inline error + "switch to League Manager" hint correctly; the target team's page showed
+  the pointer line with no leftover override controls, while the commissioner's own team
+  page was completely unchanged (still the full manager `RosterMoveBoard`). **One real bug
+  found and fixed via the browser check**: `AddPlayerStep`'s search-result dropdown stayed
+  open after a failed add, visually overlapping the inline error message underneath it
+  (absolutely-positioned) — fixed by closing the dropdown on both success and failure.
+  Drop Player's `confirm()`-gated button itself wasn't clicked through (same suppressed-
+  dialog harness limitation as Tasks 1–2) — its actual effect is covered by
+  `lm-roster-moves-check.ts`.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

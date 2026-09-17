@@ -27,8 +27,6 @@ import {
   dropPlayerAction,
   sendToFarmAction,
   callUpAction,
-  commissionerDropPlayerAction,
-  commissionerMovePlayerAction,
   regenerateCoManagerClaimCodeAction,
   removeCoManagerAction,
 } from "./actions";
@@ -44,7 +42,6 @@ import type {
 import { ViewControls } from "./ViewControls";
 import { DateStrip } from "./DateStrip";
 import { AutoSetLineupButton } from "./AutoSetLineupButton";
-import { CommissionerAddPlayerBox } from "./CommissionerAddPlayerBox";
 import { LogoUploadForm } from "./LogoUploadForm";
 import { getTeamNotifications } from "@/lib/notifications/feed";
 import { NotificationsButton } from "./NotificationsButton";
@@ -605,19 +602,6 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                         </Button>
                       </form>
                     )}
-                    {!isManager && isCommissionerViewing && (
-                      <span className="flex items-center gap-1.5">
-                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "ACTIVE")}>
-                          <Button type="submit" size="sm">→ Active</Button>
-                        </form>
-                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "IR")}>
-                          <Button type="submit" size="sm">→ IR</Button>
-                        </form>
-                        <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, s.playerId)}>
-                          <Button type="submit" variant="danger" size="sm">− Drop</Button>
-                        </form>
-                      </span>
-                    )}
                   </span>
                 </li>
               );
@@ -856,15 +840,13 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
           </p>
 
           {isCommissionerViewing && (
-            <div className="mt-6">
-              <SectionLabel>Commissioner controls</SectionLabel>
-              <Card>
-                <p className="mb-2 text-xs text-muted">
-                  Full override — bypasses roster cap, waiver exemption, and FAAB checks.
-                </p>
-                <CommissionerAddPlayerBox leagueId={leagueId} teamId={teamId} />
-              </Card>
-            </div>
+            <p className="mt-4 text-xs text-muted">
+              Need to edit this roster?{" "}
+              <Link href={`/leagues/${leagueId}/settings/roster-moves`} className="hover:underline">
+                Use LM Tools → Roster Moves
+              </Link>
+              .
+            </p>
           )}
 
           {isManager && moveBoard ? (
@@ -892,9 +874,6 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   slotGroups={SKATER_DIVIDER_GROUPS}
                   statsById={statsById}
                   columns={SKATER_COLUMNS}
-                  leagueId={leagueId}
-                  teamId={teamId}
-                  isCommissionerViewing={isCommissionerViewing}
                   lineupFor={lineupFor}
                   waiverGpThreshold={settings.waiverGpThreshold}
                   positionMode={settings.rosterComposition.positionMode}
@@ -909,9 +888,6 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                   slotGroups={GOALIE_DIVIDER_GROUPS}
                   statsById={statsById}
                   columns={GOALIE_COLUMNS}
-                  leagueId={leagueId}
-                  teamId={teamId}
-                  isCommissionerViewing={isCommissionerViewing}
                   lineupFor={lineupFor}
                   waiverGpThreshold={settings.waiverGpThreshold}
                   positionMode={settings.rosterComposition.positionMode}
@@ -940,19 +916,6 @@ export default async function TeamRosterPage(props: PageProps<"/leagues/[id]/tea
                             </span>
                             <Badge tone="muted">{s.player.officialRosterStatus ?? "IR"}</Badge>
                           </span>
-                          {isCommissionerViewing && (
-                            <span className="flex items-center gap-1.5">
-                              <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "ACTIVE")}>
-                                <Button type="submit" size="sm">→ Active</Button>
-                              </form>
-                              <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, s.playerId, "FARM")}>
-                                <Button type="submit" size="sm">→ Farm</Button>
-                              </form>
-                              <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, s.playerId)}>
-                                <Button type="submit" variant="danger" size="sm">− Drop</Button>
-                              </form>
-                            </span>
-                          )}
                         </li>
                       ))}
                     </ul>
@@ -976,9 +939,6 @@ function RosterTable({
   slotGroups,
   statsById,
   columns,
-  leagueId,
-  teamId,
-  isCommissionerViewing,
   lineupFor,
   waiverGpThreshold,
   positionMode,
@@ -988,9 +948,6 @@ function RosterTable({
   slotGroups: string[][];
   statsById: Map<string, PlayerStatsRow>;
   columns: StatColumn[];
-  leagueId: string;
-  teamId: string;
-  isCommissionerViewing: boolean;
   lineupFor: (s: RosterSlotWithPlayer) => LineupInfo;
   waiverGpThreshold: number;
   positionMode: "SEPARATE" | "COMBINED";
@@ -1019,7 +976,6 @@ function RosterTable({
                 {col.label}
               </th>
             ))}
-            {isCommissionerViewing && <th className="py-2 pr-4" />}
           </tr>
         </thead>
         <tbody>
@@ -1071,30 +1027,6 @@ function RosterTable({
                     {stats ? (col.format ? col.format(col.get(stats)) : col.get(stats)) : "—"}
                   </td>
                 ))}
-                {isCommissionerViewing && (
-                  <td className="py-2 pr-4 text-right">
-                    <div className="flex justify-end gap-1.5">
-                      {s.slotType !== "ACTIVE" && (
-                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "ACTIVE")}>
-                          <Button type="submit" size="sm">→ Active</Button>
-                        </form>
-                      )}
-                      {s.slotType !== "FARM" && (
-                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "FARM")}>
-                          <Button type="submit" size="sm">→ Farm</Button>
-                        </form>
-                      )}
-                      {s.slotType !== "IR" && (
-                        <form action={commissionerMovePlayerAction.bind(null, leagueId, teamId, playerId, "IR")}>
-                          <Button type="submit" size="sm">→ IR</Button>
-                        </form>
-                      )}
-                      <form action={commissionerDropPlayerAction.bind(null, leagueId, teamId, playerId)}>
-                        <Button type="submit" variant="danger" size="sm">− Drop</Button>
-                      </form>
-                    </div>
-                  </td>
-                )}
               </tr>
             );
           })}

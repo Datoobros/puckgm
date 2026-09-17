@@ -490,12 +490,19 @@ export interface CommissionerRosterInput {
   callerUserId: string;
 }
 
+export interface CommissionerAddPlayerInput extends CommissionerRosterInput {
+  /** Defaults to ACTIVE. LM Roster Moves' Add Player step lets a commissioner
+   * land a player directly on Farm or IR — a startup-draft-style bulk add
+   * shouldn't have to go through ACTIVE first just to immediately move him. */
+  targetSlotType?: "ACTIVE" | "FARM" | "IR";
+}
+
 /** Commissioner-only direct roster edits — full override, matching the
  * existing waiver-award/FAAB-win "overflow allowed" precedent: these skip
  * the cap-check branch entirely rather than threading a bypass flag
  * through the manager-facing functions above. Still blocked on a frozen
  * (ORPHAN_FROZEN) team — reassign it first. */
-export async function commissionerAddPlayer(input: CommissionerRosterInput): Promise<void> {
+export async function commissionerAddPlayer(input: CommissionerAddPlayerInput): Promise<void> {
   if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can directly edit another team's roster.");
   }
@@ -515,25 +522,32 @@ export async function commissionerAddPlayer(input: CommissionerRosterInput): Pro
     );
   }
 
+  const targetSlotType = input.targetSlotType ?? "ACTIVE";
+
   await prisma.$transaction([
-    prisma.rosterSlot.create({ data: { teamId: input.teamId, playerId: input.playerId, slotType: "ACTIVE" } }),
+    prisma.rosterSlot.create({ data: { teamId: input.teamId, playerId: input.playerId, slotType: targetSlotType } }),
     prisma.transactionLog.create({
       data: {
         leagueId: input.leagueId,
         type: "ROSTER_ADD",
         actorTeamId: input.teamId,
-        payload: { playerId: input.playerId, slotType: "ACTIVE", commissionerOverride: true },
+        payload: { playerId: input.playerId, slotType: targetSlotType, commissionerOverride: true, performedBy: input.callerUserId },
       },
     }),
   ]);
 
-  await ensureLineupMaterialized(input.teamId, todayUTC());
+  if (targetSlotType === "ACTIVE") {
+    await ensureLineupMaterialized(input.teamId, todayUTC());
+  }
 }
 
 export async function commissionerDropPlayer(input: CommissionerRosterInput): Promise<void> {
   if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can directly edit another team's roster.");
   }
+  const dropTeam = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
+  if (dropTeam.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  if (dropTeam.state === "ORPHAN_FROZEN") throw new Error("Reassign this orphaned team before editing its roster.");
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, effectiveTo: null },
   });
@@ -546,7 +560,7 @@ export async function commissionerDropPlayer(input: CommissionerRosterInput): Pr
         leagueId: input.leagueId,
         type: "ROSTER_DROP",
         actorTeamId: input.teamId,
-        payload: { playerId: input.playerId, commissionerOverride: true },
+        payload: { playerId: input.playerId, commissionerOverride: true, performedBy: input.callerUserId },
       },
     }),
   ]);
@@ -565,6 +579,9 @@ export async function commissionerMovePlayer(input: CommissionerMovePlayerInput)
   if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can directly edit another team's roster.");
   }
+  const moveTeam = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
+  if (moveTeam.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
+  if (moveTeam.state === "ORPHAN_FROZEN") throw new Error("Reassign this orphaned team before editing its roster.");
   const slot = await prisma.rosterSlot.findFirst({
     where: { teamId: input.teamId, playerId: input.playerId, effectiveTo: null },
   });
@@ -579,7 +596,7 @@ export async function commissionerMovePlayer(input: CommissionerMovePlayerInput)
         leagueId: input.leagueId,
         type: "COMMISSIONER_MOVE",
         actorTeamId: input.teamId,
-        payload: { playerId: input.playerId, fromSlotType: slot.slotType, toSlotType: input.targetSlotType },
+        payload: { playerId: input.playerId, fromSlotType: slot.slotType, toSlotType: input.targetSlotType, performedBy: input.callerUserId },
       },
     }),
   ]);

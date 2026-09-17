@@ -88,6 +88,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Roster Moves",
         description: "Add, drop, or move players on any team's roster.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/roster-moves`,
       },
       {
         title: "Trade Review",

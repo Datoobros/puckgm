@@ -328,10 +328,10 @@ schedule cards, delete the legacy page.
   the deleted UI).
 
 ### Checklist
-- [ ] `commissionerAddPlayer` slot param; roster-moves actions with performAs
-- [ ] step-1 form + four step-2 pages
-- [ ] team-page controls and `CommissionerAddPlayerBox` removed
-- [ ] verified; PROGRESS.md; committed
+- [x] `commissionerAddPlayer` slot param; roster-moves actions with performAs
+- [x] step-1 form + four step-2 pages
+- [x] team-page controls and `CommissionerAddPlayerBox` removed
+- [x] verified; PROGRESS.md; committed
 
 ---
 
