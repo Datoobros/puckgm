@@ -117,6 +117,11 @@ model League {
   // either — in favor of a rotating queue that's the permanent mechanic,
   // not just a bootstrap). Winning a claim sends that team to the back.
   waiverPriorityJson Json?
+  // Named divisions (LM Tools Task 6) — ordered string array, nullable/empty
+  // for a league that hasn't set any up. Team.division must be one of these
+  // (or null) — see setTeamDivision. Display/standings only, same as before
+  // this feature named them: no schedule or playoff-seeding awareness.
+  divisionsJson Json?
 
   teams            Team[]
   settingsLog      LeagueSettingsLog[]

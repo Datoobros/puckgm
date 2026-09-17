@@ -19,6 +19,9 @@ import {
   regenerateTeamClaimCode,
   deleteTeam,
   setTeamDivision,
+  getLeagueDivisions,
+  setLeagueDivisions,
+  renameLeagueDivision,
   type RosterComposition,
   type LeagueSettings,
   type UpdateLeagueSettingsInput,
@@ -333,6 +336,37 @@ export async function saveTeamsAndDivisionsAction(leagueId: string, formData: Fo
   revalidatePath(`/leagues/${leagueId}/settings/teams-divisions`);
   revalidatePath(`/leagues/${leagueId}/standings`);
   redirect(`/leagues/${leagueId}/settings/teams-divisions?saved=1`);
+}
+
+// Divisions section of settings/teams-divisions/page.tsx (LM Tools Task 6).
+// "Add" and "Remove" both go through setLeagueDivisions (full-list
+// replacement) — Remove is just resubmitting the list without that name.
+// Rename gets its own dedicated action so teams move with the name instead
+// of being cleared, which a bare list diff can't distinguish from a removal.
+export async function addDivisionAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const newDivision = String(formData.get("newDivision") ?? "").trim();
+  if (!newDivision) throw new Error("Division name is required.");
+  const current = await getLeagueDivisions(leagueId);
+  await setLeagueDivisions({ leagueId, callerUserId: userId, divisions: [...current, newDivision] });
+  revalidatePath(`/leagues/${leagueId}/settings/teams-divisions`);
+  revalidatePath(`/leagues/${leagueId}/standings`);
+}
+
+export async function removeDivisionAction(leagueId: string, division: string) {
+  const { userId } = await auth.protect();
+  const current = await getLeagueDivisions(leagueId);
+  await setLeagueDivisions({ leagueId, callerUserId: userId, divisions: current.filter((d) => d !== division) });
+  revalidatePath(`/leagues/${leagueId}/settings/teams-divisions`);
+  revalidatePath(`/leagues/${leagueId}/standings`);
+}
+
+export async function renameDivisionAction(leagueId: string, from: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const to = String(formData.get("name") ?? "").trim();
+  await renameLeagueDivision({ leagueId, callerUserId: userId, from, to });
+  revalidatePath(`/leagues/${leagueId}/settings/teams-divisions`);
+  revalidatePath(`/leagues/${leagueId}/standings`);
 }
 
 export async function resetScheduleAction(leagueId: string, season: number) {

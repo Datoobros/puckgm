@@ -244,6 +244,61 @@ export async function claimTeam(input: { claimCode: string; newManagerUserId: st
 /** Display/standings-grouping only (src/lib/matchups/standings.ts) —
  * deliberately not wired into schedule generation or playoff seeding.
  * Blank/whitespace-only clears the division (null = no division). */
+/** Named divisions (LM Tools Task 6) — display/standings only, an ordered
+ * list of names a team's `division` must belong to (or be null). */
+export async function getLeagueDivisions(leagueId: string): Promise<string[]> {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  return (league.divisionsJson as unknown as string[] | null) ?? [];
+}
+
+/** Full replacement of the league's division list. Any team whose current
+ * division isn't in the new list gets cleared back to null (this is how
+ * "remove a division" works — call this with the smaller list) — renaming
+ * goes through renameLeagueDivision instead, which moves teams along with
+ * the name rather than clearing them. */
+export async function setLeagueDivisions(input: { leagueId: string; callerUserId: string; divisions: string[] }): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can edit divisions.");
+  }
+  const trimmed = input.divisions.map((d) => d.trim()).filter((d) => d.length > 0);
+  const unique = new Set(trimmed);
+  if (unique.size !== trimmed.length) {
+    throw new Error("Division names must be unique.");
+  }
+
+  const current = await getLeagueDivisions(input.leagueId);
+  const removed = current.filter((d) => !unique.has(d));
+
+  await prisma.$transaction([
+    prisma.league.update({ where: { id: input.leagueId }, data: { divisionsJson: trimmed } }),
+    ...(removed.length > 0
+      ? [prisma.team.updateMany({ where: { leagueId: input.leagueId, division: { in: removed } }, data: { division: null } })]
+      : []),
+  ]);
+}
+
+/** Renames one division in place, moving every team currently assigned to
+ * it along with the name — the "Remove" case in setLeagueDivisions clears
+ * teams instead precisely because it can't tell a rename from a genuine
+ * removal from a bare list diff; this function makes a rename unambiguous. */
+export async function renameLeagueDivision(input: { leagueId: string; callerUserId: string; from: string; to: string }): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can edit divisions.");
+  }
+  const to = input.to.trim();
+  if (!to) throw new Error("Division name can't be empty.");
+
+  const current = await getLeagueDivisions(input.leagueId);
+  if (!current.includes(input.from)) throw new Error(`"${input.from}" isn't a division in this league.`);
+  if (to !== input.from && current.includes(to)) throw new Error(`"${to}" is already a division in this league.`);
+
+  const next = current.map((d) => (d === input.from ? to : d));
+  await prisma.$transaction([
+    prisma.league.update({ where: { id: input.leagueId }, data: { divisionsJson: next } }),
+    prisma.team.updateMany({ where: { leagueId: input.leagueId, division: input.from }, data: { division: to } }),
+  ]);
+}
+
 export async function setTeamDivision(input: { leagueId: string; teamId: string; callerUserId: string; division: string | null }): Promise<void> {
   if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
     throw new Error("Only the league commissioner can set a team's division.");
@@ -251,6 +306,12 @@ export async function setTeamDivision(input: { leagueId: string; teamId: string;
   const team = await prisma.team.findUniqueOrThrow({ where: { id: input.teamId } });
   if (team.leagueId !== input.leagueId) throw new Error("Team not found in this league.");
   const division = input.division?.trim() || null;
+  if (division !== null) {
+    const divisions = await getLeagueDivisions(input.leagueId);
+    if (!divisions.includes(division)) {
+      throw new Error(`"${division}" isn't a division in this league — add it first.`);
+    }
+  }
   await prisma.team.update({ where: { id: input.teamId }, data: { division } });
 }
 

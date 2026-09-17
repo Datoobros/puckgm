@@ -436,9 +436,9 @@ schedule cards, delete the legacy page.
 - Browser: Standings groups by the new names.
 
 ### Checklist
-- [ ] schema + mutations
-- [ ] page upgrade
-- [ ] verified; PROGRESS.md; committed
+- [x] schema + mutations
+- [x] page upgrade
+- [x] verified; PROGRESS.md; committed
 
 ---
 

@@ -2775,6 +2775,53 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   Waiver Order: reordering with ▲ then Save round-tripped the new order across a fresh page
   load.
 
+**Task 6 — Named divisions**
+- Migration `add_league_divisions`: `League.divisionsJson Json?` (ordered string array).
+- `src/lib/leagues/mutations.ts`: `getLeagueDivisions(leagueId)`; `setLeagueDivisions({
+  leagueId, callerUserId, divisions })` — full-list replacement, trimmed/unique/non-empty
+  names, and any team whose current division isn't in the new list gets cleared to `null`
+  (this is how "remove a division" works: resubmit the list without that name);
+  `renameLeagueDivision({ leagueId, callerUserId, from, to })` — a dedicated function
+  because a bare list diff can't tell a rename from a remove-then-add; it renames the
+  division in place and moves every team currently on it along with the new name.
+  `setTeamDivision` now requires its `division` argument to actually be one of the league's
+  registered divisions (or `null`) — previously accepted any free-text string.
+- `settings/teams-divisions/page.tsx` gains a "Divisions" section above the existing team
+  table: each division is its own row (rename text input + Rename button, plus a separate
+  Remove button — two sibling `<form>`s per row rather than nesting, matching the per-row
+  multi-form pattern already used on the Managers page) and an "Add a division" input at
+  the bottom. The team table's Division column is now a `<select>` (None + the registered
+  list) instead of free text, so a commissioner can no longer accidentally create an
+  unregistered division name by typo.
+- **Real regression found and fixed while verifying**: `commissioner-tools-check.ts`'s
+  existing divisions section called `setTeamDivision({..., division: "East"})` directly
+  without ever registering "East" as a real division — worked fine before this task
+  (free-text was allowed) but broke the instant `setTeamDivision` started requiring list
+  membership. Fixed by adding a `setLeagueDivisions({..., divisions: ["East", "West"]})`
+  call before the existing assignments — this is squarely a consequence of this task's own
+  contract change (the plan explicitly says "setTeamDivision now requires the value to be
+  in the list"), not a pre-existing unrelated gap, so fixing the product's own regression
+  test here (rather than working around it) was the right call, same as any other task.
+- **Unrelated infrastructure snag, resolved**: `npx prisma migrate dev` hung on
+  `pg_advisory_lock` for 10s and failed (`P1002`) on the first two attempts — a stale idle
+  Postgres session (pid visible via `pg_stat_activity`) from Task 4's earlier interrupted
+  migration attempt (the EPERM/dev-server-DLL-lock incident) never released the lock.
+  Diagnosed via a **read-only** `pg_locks`/`pg_stat_activity` query, then terminated that
+  one specific idle backend PID with `pg_terminate_backend` (nothing else running, nothing
+  user-data-related) — migration succeeded immediately after.
+- Verified: `npx tsc --noEmit`/`npm run build` clean; new `scripts/lm-divisions-check.ts` —
+  add two divisions, assign one, assigning a nonexistent division name is rejected, rename
+  one → both the division list and every team already on it follow, renaming onto an
+  already-existing name or a nonexistent division is rejected, remove one → its teams
+  clear to `null` while a team on a division that survived is untouched, a submission with
+  a duplicate name is rejected, both mutations refused for a non-commissioner caller;
+  `commissioner-tools-check.ts` passes again after the fix above. Real browser check
+  (`// TEMP:` bypass, reverted, `grep -rn "TEMP:" src/` clean) on a disposable 4-team league
+  with a generated schedule: added East and West, assigned two teams each, Save
+  round-tripped correctly, and the Standings page's existing East/West tabs (unchanged code
+  — it already grouped by `Team.division`) correctly filtered to exactly the right two
+  teams per division.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

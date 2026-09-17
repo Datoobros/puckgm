@@ -22,6 +22,7 @@ import {
   claimTeam,
   deleteTeam,
   setTeamDivision,
+  setLeagueDivisions,
   regenerateInviteCode,
 } from "@/lib/leagues/mutations";
 import { addPlayerToRoster, dropPlayerFromRoster, sendToFarm, commissionerAddPlayer } from "@/lib/rosters/mutations";
@@ -320,6 +321,11 @@ async function main() {
   await rejects(() => resetSchedule(leagueId, "ctools-A", 2031), "resetting is refused once a week has already completed");
 
   console.log("\n-- divisions (display-only) --");
+  // LM Tools batch Task 6: setTeamDivision now requires the value to be a
+  // real division registered on the league first — register East/West here
+  // before assigning, where this script previously assigned a free-text
+  // name directly.
+  await setLeagueDivisions({ leagueId, callerUserId: "ctools-A", divisions: ["East", "West"] });
   await setTeamDivision({ leagueId, teamId: teamA, callerUserId: "ctools-A", division: "East" });
   await setTeamDivision({ leagueId, teamId: teamB, callerUserId: "ctools-A", division: "East" });
   await setTeamDivision({ leagueId, teamId: teamC, callerUserId: "ctools-A", division: "West" });
