@@ -225,7 +225,7 @@ would touch, writes nothing). Run the dry run first and include its output in th
 Keep the script in the repo; note the run date in PROGRESS.md.
 
 ## Checklist
-- [ ] Task 1 — atomic, cap-aware, bounded pick recording (+ lease migration)
+- [x] Task 1 — atomic, cap-aware, bounded pick recording (+ lease migration)
 - [ ] Task 2 — needs-based autopick ranking + room board order/filter
 - [ ] Task 3 — room notice + Autodraft remaining picks
 - [ ] Task 4 — Experimenting cleanup (run once; record date)

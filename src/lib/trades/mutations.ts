@@ -22,7 +22,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isLeagueCommissioner, isTeamManager, managerOrCoManagerWhere } from "@/lib/leagues/mutations";
-import { activeRosterCap } from "@/lib/rosters/mutations";
+import { activeRosterCap } from "@/lib/rosters/ownership";
 import { getAvailableBudget, getOrInitFaabBudget } from "@/lib/faab/mutations";
 import { clearLineupFrom, ensureLineupMaterialized } from "@/lib/lineups/mutations";
 import { todayUTC } from "@/lib/dates";

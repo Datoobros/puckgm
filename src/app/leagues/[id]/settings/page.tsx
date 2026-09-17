@@ -6,6 +6,7 @@ import { getLeague, getLeagueCommissioner, isLeagueCommissioner, teamHasHistory,
 import { EDITABLE_SCORING_FIELDS } from "@/lib/scoring/engine";
 import { updateLeagueSettingsAction, generateScheduleAction, regenerateInviteCodeAction } from "@/app/leagues/actions";
 import { startDraftAction, resetDraftPickOwnershipAction } from "../draft/actions";
+import { getMaxDraftRounds } from "@/lib/draft/mutations";
 import { DeleteLeagueButton } from "@/components/DeleteLeagueButton";
 import { StartNewSeasonButton } from "@/components/StartNewSeasonButton";
 import { ResetScheduleButton } from "@/components/ResetScheduleButton";
@@ -49,6 +50,7 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
     _count: { _all: true },
   });
   const pickCountByDraftId = new Map(draftPickCounts.map((g) => [g.draftId, g._count._all]));
+  const maxDraftRounds = await getMaxDraftRounds(leagueId);
 
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
@@ -353,13 +355,19 @@ export default async function LeagueSettingsPage(props: PageProps<"/leagues/[id]
                       teams={league.teams.map((t) => ({ id: t.id, name: t.name }))}
                       currentRoundCount={(pickCountByDraftId.get(d.id) ?? league.teams.length) / Math.max(1, league.teams.length)}
                       currentPickTimerSeconds={d.pickTimerSeconds}
+                      maxRounds={maxDraftRounds}
                     />
                   )}
                 </li>
               ))}
             </ul>
           )}
-          <DraftSetupForm leagueId={leagueId} teams={league.teams.map((t) => ({ id: t.id, name: t.name }))} defaultSeason={currentSeason} />
+          <DraftSetupForm
+            leagueId={leagueId}
+            teams={league.teams.map((t) => ({ id: t.id, name: t.name }))}
+            defaultSeason={currentSeason}
+            maxRounds={maxDraftRounds}
+          />
           <div className="mt-4 border-t border-border pt-3">
             <ConfirmActionButton
               action={resetDraftPickOwnershipAction.bind(null, leagueId)}

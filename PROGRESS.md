@@ -2186,6 +2186,102 @@ page instead of 404ing.
   the same empty state renders with no console errors. No bugs found this task — Task 1 had
   already built and verified every data function this page reuses.
 
+## Draft fix batch, Task 1: atomic pick claim, cap-aware, bounded catch-up
+
+The first real startup draft run against "Experimenting" (2026-09-16) went wrong in four
+ways at once (see `plans/draft-fix-batch.md`'s "What happened" section, written from a
+read-only DB investigation before any code changed): every pick recorded ~4 times (228 open
+`RosterSlot` rows for 60 real picks, 70 players double-rostered), 69 of 139 picks were
+goalies (Task 2's problem, not this one), zero roster-cap awareness (`recordPick` always
+wrote `slotType: "ACTIVE"`), and a 3.5-hour idle gap followed by every poller racing to
+autopick the same overdue picks at once. This task fixes the mechanism; Task 4 cleans up the
+botched league once Tasks 1–3 are all shipped.
+
+- **Resolver lease** — `Draft.resolvingUntil DateTime?` (migration
+  `20260917025239_add_draft_resolving_lease`). `resolveDraftState` (`src/lib/draft/
+  mutations.ts`) now only attempts to autopick when something is actually overdue; it first
+  tries to claim the draft (`resolvingUntil: null OR < now` → set to `now + 15s`) via a
+  single `updateMany` — Postgres serializes concurrent claims to the same row, so exactly one
+  caller ever wins per contested moment, and every loser just returns the current view
+  immediately (the polling client sees the winner's progress on its next 3s tick). The lease
+  is released in a `finally` once the winner's work is done.
+- **Bounded catch-up** — the old `for (i < 1000)` unbounded loop (exactly what let one
+  request resolve 58 real overdue picks, and their duplicates, in one call) is now capped at
+  `MAX_AUTOPICKS_PER_CALL = 8`. A backlog bigger than that spans multiple calls/polls instead
+  of one giant one — verified this actually happens (8 then 7, not 15-in-one-shot) in the
+  concurrency check below.
+- **Atomic pick claim** — `recordPick` is now one interactive `$transaction`: the claim
+  itself is `tx.draftPick.updateMany({ where: { id: pick.id, usedOnPlayerId: null }, ... })`
+  — real row-locking makes "two callers both see the same unused pick" structurally
+  impossible now, not just unlikely. A `count !== 1` throws a new (unexported)
+  `PickAlreadyTakenError`, caught by both `resolveDraftState`'s autopick loop (re-reads and
+  continues — a manual pick isn't lease-gated, so it can legitimately win a race against an
+  autopick) and `makeDraftPick` (rethrown as "That pick was just made — the board has moved
+  on."). A defensive double-roster count (`playerId` already has an open `RosterSlot` in the
+  league) runs inside the same transaction and rolls the claim back if it ever somehow fires
+  — should be unreachable, since the pool this player came from already excludes anyone
+  rostered, but the botched draft is exactly the kind of "should be unreachable" this app has
+  learned not to trust blindly.
+- **Cap-aware `slotType`** — new `slotTypeForDraftPick({ activeCount, farmCount, settings,
+  draftType })`, called from inside `recordPick`'s transaction (counts read there too, so two
+  concurrent picks for the *same team* can't both see "room in ACTIVE" and both land there).
+  STARTUP fills ACTIVE first, spilling to FARM once ACTIVE is full; ROOKIE fills FARM first
+  (per the plan's explicit decision), spilling to ACTIVE once FARM is full. Throws "Roster is
+  full — the draft has more rounds than roster spots." if neither tier has room — the
+  defensive backstop behind round-count validation, not the primary guard.
+- **Round-count validation** — new `getMaxDraftRounds(leagueId)`: `activeRosterCap(settings)
+  + settings.farmSlots`, minus whichever team currently has the most open roster slots (any
+  tier — a player already on IR still occupies a spot the draft can't also fill). `setUpDraft`
+  and `updateDraftSetup` both reject a `roundCount` above this with a message naming the real
+  max. The settings page (`DraftSetupForm.tsx`/`DraftSetupEditForm.tsx`) shows it as
+  `max`/helper text on the Rounds input, computed once in `settings/page.tsx` and passed to
+  both forms.
+- **`activeRosterCap` moved to `src/lib/rosters/ownership.ts`** (joining
+  `getLeagueOwnershipMap` there) — `slotTypeForDraftPick`/`getMaxDraftRounds` need it from
+  `draft/mutations.ts`, which can't import from `rosters/mutations.ts` (that file already
+  imports `assertFreeAgencyOpen` back from `draft/mutations.ts`; importing the other way too
+  would be the exact cycle `ownership.ts` was created to avoid in the first place). Five call
+  sites repointed to the new import path, no shim/re-export left behind at the old one.
+- **Pool cost** — `getDraftPool` split into a memoized ranked base list
+  (`getRankedDraftPoolBase`, keyed `leagueId:season:type`, 60s TTL, module-level `Map`) and a
+  live ownership filter. `buildView` calls `getDraftPool` on every 3s poll from every open
+  tab; the STARTUP ranking underneath (`getPlayerStatsAggregate()` over the whole pool) was
+  costing ~1.5s on every single one of those before this. A stale minute only ever affects
+  *ordering* among available players — ownership always reads live, so a just-drafted player
+  never lingers as available to someone else's poll. Signature gained an optional `teamId`
+  param, unused until Task 2's needs-aware ranking.
+- Verified in a new `scripts/draft-concurrency-check.ts` against the real DB: League 1 (3
+  teams, active cap 3, farm 2) — `roundCount=6` throws naming the real max (5) and leaves no
+  stray `Draft` row; a 5-round draft (15 picks), backdated an hour, resolved via **6 truly
+  concurrent `resolveDraftState` calls** repeated until `COMPLETE` — resolved in exactly 2
+  rounds (8 picks, then 7), zero rejected calls either round, exactly 15 open `RosterSlot`
+  rows, exactly 15 `DRAFT_PICK` logs, zero players with more than one open slot, all 15
+  `usedOnPlayerId` values distinct, every team landing at exactly 3 ACTIVE + 2 FARM. League 2
+  (fresh teams, room to spare in ACTIVE) confirmed a ROOKIE draft's picks land on FARM, not
+  ACTIVE. `npx tsc --noEmit` and `npm run build` both clean.
+- **Re-ran every existing regression script that touches `draft/mutations.ts`** — real signal,
+  not just this task's own script: `free-agency-gate-check.ts`, `trade-hardening-check.ts`
+  (including its own "trades frozen during a live draft" case), and `persistent-lineup-check.ts`
+  all passed unchanged. `qol-batch-check.ts` and `commissioner-tools-check.ts` both hit
+  `"Free agency is closed until the draft is complete."` partway through — confirmed via
+  `git stash` to fail *identically* on the pre-Task-1 code, so this is pre-existing staleness
+  (both scripts predate the free-agency-gate feature, from `plans/team-page-batch.md`, and
+  were never updated for it), not a regression from this task.
+- **One real regression this task's own changes did cause, found and fixed**:
+  `draft-check.ts`'s deadline-chaining test asserted a fixed 5-second margin after 3 chained
+  autopicks (`-25000ms` backdate, 10s timer) — `recordPick` now legitimately does more
+  sequential DB round-trips per pick (the atomic claim, the double-roster guard, a settings
+  read, two roster counts, all inside one transaction, against the real remote dev DB) than
+  the old 3-statement array transaction did, and 3 real autopicks against Neon was eating
+  into that margin. Fixed by widening it (30s timer, `-61000ms` backdate — same 3 autopicks,
+  same final pick, just a 29s margin instead of 5s) rather than chasing a tighter one; the
+  test's own comment now explains why the margin needed to grow.
+- **Known, deliberate**: the round-count guard on `setUpDraft`/`updateDraftSetup` checks
+  against currently-open roster slots at *setup* time — if a commissioner adds players to
+  rosters (or a manager's roster otherwise grows) between setting up a draft and starting it,
+  `slotTypeForDraftPick`'s in-transaction check is what actually still prevents an overflow
+  (throwing mid-draft rather than silently corrupting), not a second setup-time re-check.
+
 ## Known gaps, deliberately not built (ask before building)
 
 - **Dropping a player whose game already started forfeits his points that day** —

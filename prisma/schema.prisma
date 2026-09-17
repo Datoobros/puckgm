@@ -294,6 +294,11 @@ model Draft {
   pickTimerSeconds    Int         @default(90)
   currentPickDeadline DateTime?
   createdAt           DateTime    @default(now())
+  // Resolver lease (draft-fix-batch Task 1) — resolveDraftState claims this
+  // (now + 15s) before autopicking so concurrent pollers/pick attempts don't
+  // race each other into recording the same pick multiple times. Cleared
+  // back to null once the resolving call finishes.
+  resolvingUntil      DateTime?
 
   picks DraftPick[]
 

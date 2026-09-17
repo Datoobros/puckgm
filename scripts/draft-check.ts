@@ -39,7 +39,7 @@ async function main() {
   console.log("\n-- STARTUP draft: manual order, 2 rounds, 4 teams = 8 picks, snake --");
   const { draftId } = await setUpDraft({
     leagueId, season: 2027, type: "STARTUP", roundCount: 2, orderMode: "MANUAL",
-    manualOrder: [teamA, teamB, teamC, teamD], pickTimerSeconds: 10, callerUserId: "draft-test-A",
+    manualOrder: [teamA, teamB, teamC, teamD], pickTimerSeconds: 30, callerUserId: "draft-test-A",
   });
   const picks = await prisma.draftPick.findMany({ where: { draftId }, orderBy: { overallPick: "asc" } });
   assert(picks.length === 8, "8 DraftPick rows created (4 teams x 2 rounds)");
@@ -75,12 +75,17 @@ async function main() {
   assert(!poolAfterPick1.some((p) => p.id === firstPickPlayer.id), "the drafted player no longer appears in the pool");
 
   console.log("\n-- deadline chaining: catches up through exactly as many picks as the elapsed time allows, not all-or-nothing --");
-  // pickTimerSeconds is 10. Backdating the current deadline (now on pick #2,
-  // Team B) by 25s should autopick picks #2 (B), #3 (C), and #4 (D) — each
-  // chained deadline is +10s from the last, landing at -25000+10000+10000+10000
-  // = +5000ms (5s in the future) by the time pick #5 is checked, which is
+  // pickTimerSeconds is 30. Backdating the current deadline (now on pick #2,
+  // Team B) by 61s should autopick picks #2 (B), #3 (C), and #4 (D) — each
+  // chained deadline is +30s from the last, landing at -61000+30000+30000+30000
+  // = +29000ms (29s in the future) by the time pick #5 is checked, which is
   // NOT yet due. Pick #5 (D again — the snake turn) should be left pending.
-  await prisma.draft.update({ where: { id: draftId }, data: { currentPickDeadline: new Date(Date.now() - 25000) } });
+  // (A generous margin, not the bare minimum — draft-fix-batch Task 1 made
+  // recordPick a heavier transaction, atomic claim + cap-aware slotType, so
+  // three real chained autopicks now legitimately take longer wall-clock
+  // time against the remote dev DB than the old single-array-transaction
+  // version did; a tight margin here was flaking on that alone.)
+  await prisma.draft.update({ where: { id: draftId }, data: { currentPickDeadline: new Date(Date.now() - 61000) } });
   const stateAfterCatchUp = await resolveDraftState(draftId);
   const usedAfterCatchUp = await prisma.draftPick.count({ where: { draftId, usedOnPlayerId: { not: null } } });
   assert(usedAfterCatchUp === 4, "exactly 4 picks used total (1 manual + 3 chained autopicks), not all 8");

@@ -14,19 +14,12 @@
 import { prisma } from "@/lib/db";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { isLeagueCommissioner, isTeamManager } from "@/lib/leagues/mutations";
+import { activeRosterCap } from "@/lib/rosters/ownership";
 import { voidPendingClaimsForPlayer } from "@/lib/waivers/mutations";
 import { setLineupSlot, swapLineupSlots, ensureLineupMaterialized, clearLineupFrom } from "@/lib/lineups/mutations";
 import { assertFreeAgencyOpen } from "@/lib/draft/mutations";
 import { assertPlayersNotTradeLocked } from "@/lib/trades/locks";
 import { todayUTC } from "@/lib/dates";
-
-export function activeRosterCap(settings: LeagueSettings): number {
-  // Object.values would also pick up positionMode ("SEPARATE"/"COMBINED"), a
-  // string, not a slot count — exclude it explicitly rather than summing
-  // every value blindly.
-  const { positionMode: _positionMode, ...counts } = settings.rosterComposition;
-  return Object.values(counts).reduce((sum, n) => sum + n, 0);
-}
 
 // A player is officially on IR per real data (src/lib/players/injuries.ts,
 // synced from ESPN) — LTIR isn't distinguished from IR by that source, but

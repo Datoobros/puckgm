@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Show } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
 import { getTeamsForUser, type LeagueSettings } from "@/lib/leagues/mutations";
-import { getRosterCounts, activeRosterCap } from "@/lib/rosters/mutations";
+import { getRosterCounts } from "@/lib/rosters/mutations";
+import { activeRosterCap } from "@/lib/rosters/ownership";
 import { Card, SectionLabel } from "@/components/Card";
 import { LinkButton } from "@/components/Button";
 

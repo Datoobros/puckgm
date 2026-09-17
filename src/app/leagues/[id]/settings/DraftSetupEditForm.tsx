@@ -10,12 +10,14 @@ export function DraftSetupEditForm({
   teams,
   currentRoundCount,
   currentPickTimerSeconds,
+  maxRounds,
 }: {
   leagueId: string;
   draftId: string;
   teams: { id: string; name: string }[];
   currentRoundCount: number;
   currentPickTimerSeconds: number;
+  maxRounds: number;
 }) {
   const [orderMode, setOrderMode] = useState<"" | "RANDOM" | "MANUAL">("");
   const [manualOrder, setManualOrder] = useState<string[]>(teams.map((t) => t.id));
@@ -29,7 +31,10 @@ export function DraftSetupEditForm({
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="text-xs text-muted">Rounds</span>
-            <input name="roundCount" type="number" min={1} defaultValue={currentRoundCount} className={inputClass} />
+            <input name="roundCount" type="number" min={1} max={maxRounds} defaultValue={currentRoundCount} className={inputClass} />
+            <span className="mt-1 block text-[11px] text-muted">
+              Max {maxRounds} rounds — active roster + farm, minus players already rostered.
+            </span>
           </label>
           <label className="block">
             <span className="text-xs text-muted">Pick timer (seconds)</span>

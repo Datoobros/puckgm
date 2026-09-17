@@ -1,6 +1,6 @@
 // Trade-lock check (plans/trades-batch.md Task 1, issues #4/#5). A leaf
-// module on purpose: trades/mutations.ts imports from rosters/mutations.ts
-// (activeRosterCap), and the lock check has to run *inside*
+// module on purpose: trades/mutations.ts imports activeRosterCap (from
+// rosters/ownership.ts), and the lock check has to run *inside*
 // rosters/mutations.ts (drop/farm/IR/callup) and waivers/mutations.ts
 // (submitWaiverClaim) — if this lived in trades/mutations.ts instead, those
 // two files importing it would create a circular import with

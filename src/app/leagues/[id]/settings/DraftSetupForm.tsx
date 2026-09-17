@@ -8,10 +8,12 @@ export function DraftSetupForm({
   leagueId,
   teams,
   defaultSeason,
+  maxRounds,
 }: {
   leagueId: string;
   teams: { id: string; name: string }[];
   defaultSeason: number;
+  maxRounds: number;
 }) {
   const [type, setType] = useState<"STARTUP" | "ROOKIE">("STARTUP");
   const [orderMode, setOrderMode] = useState<"RANDOM" | "MANUAL">("RANDOM");
@@ -44,7 +46,17 @@ export function DraftSetupForm({
         </label>
         <label className="block">
           <span className="text-xs text-muted">Rounds</span>
-          <input name="roundCount" type="number" min={1} defaultValue={type === "STARTUP" ? 20 : 1} className={inputClass} />
+          <input
+            name="roundCount"
+            type="number"
+            min={1}
+            max={maxRounds}
+            defaultValue={type === "STARTUP" ? Math.min(20, maxRounds) : Math.min(1, maxRounds)}
+            className={inputClass}
+          />
+          <span className="mt-1 block text-[11px] text-muted">
+            Max {maxRounds} rounds — active roster + farm, minus players already rostered.
+          </span>
         </label>
       </div>
 

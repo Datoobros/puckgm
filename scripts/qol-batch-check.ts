@@ -18,7 +18,7 @@ import {
 import { startNewSeason } from "@/lib/leagues/season";
 import { setUpDraft, startDraft, getDraftPool, makeDraftPick } from "@/lib/draft/mutations";
 import { proposeTrade, getTradeableAssets } from "@/lib/trades/mutations";
-import { activeRosterCap } from "@/lib/rosters/mutations";
+import { activeRosterCap } from "@/lib/rosters/ownership";
 import { capFor, eligibleSlotsForPosition } from "@/lib/lineups/mutations";
 
 function assert(cond: boolean, msg: string) {

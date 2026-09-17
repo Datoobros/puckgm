@@ -21,8 +21,21 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { isLeagueCommissioner, isTeamManager, type LeagueSettings } from "@/lib/leagues/mutations";
-import { getLeagueOwnershipMap } from "@/lib/rosters/ownership";
+import { getLeagueOwnershipMap, activeRosterCap } from "@/lib/rosters/ownership";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
+
+// Resolver lease (draft-fix-batch Task 1) — how long resolveDraftState holds
+// exclusive rights to autopick for a draft before another caller is allowed
+// to try. Comfortably longer than MAX_AUTOPICKS_PER_CALL picks should ever
+// take, short enough that a crashed resolver doesn't wedge the draft for long.
+const LEASE_MS = 15_000;
+// Bounded catch-up (draft-fix-batch Task 1) — replaces the old unbounded
+// "loop until settled" (which is what let a single request resolve 58
+// overdue picks — and their N-way-raced duplicates — in one call the first
+// time this went wrong for real). Each autopick costs a pool computation, so
+// this keeps a single request comfortably inside serverless time limits; the
+// client keeps polling and the next call picks up where this one left off.
+const MAX_AUTOPICKS_PER_CALL = 8;
 
 export interface SetUpDraftInput {
   leagueId: string;
@@ -52,6 +65,12 @@ export async function setUpDraft(input: SetUpDraftInput): Promise<{ draftId: str
   }
   if (!Number.isInteger(input.pickTimerSeconds) || input.pickTimerSeconds < 10) {
     throw new Error("Pick timer must be at least 10 seconds.");
+  }
+  const maxRounds = await getMaxDraftRounds(input.leagueId);
+  if (input.roundCount > maxRounds) {
+    throw new Error(
+      `This league's rosters have room for at most ${maxRounds} more players per team — reduce the round count.`,
+    );
   }
 
   let order: string[];
@@ -152,6 +171,12 @@ export async function updateDraftSetup(input: UpdateDraftSetupInput): Promise<vo
   if (!Number.isInteger(roundCount) || roundCount < 1) throw new Error("Round count must be at least 1.");
   const pickTimerSeconds = input.pickTimerSeconds ?? draft.pickTimerSeconds;
   if (!Number.isInteger(pickTimerSeconds) || pickTimerSeconds < 10) throw new Error("Pick timer must be at least 10 seconds.");
+  const maxRounds = await getMaxDraftRounds(draft.leagueId);
+  if (roundCount > maxRounds) {
+    throw new Error(
+      `This league's rosters have room for at most ${maxRounds} more players per team — reduce the round count.`,
+    );
+  }
 
   let order: string[];
   if (input.orderMode === undefined) {
@@ -254,6 +279,56 @@ export async function startDraft(input: { draftId: string; callerUserId: string 
   });
 }
 
+/** How many more rounds this league's rosters can actually absorb, per team
+ * — a draft creates one pick per team per round, and every pick lands
+ * somewhere (ACTIVE first, then FARM, or the reverse for ROOKIE), so no
+ * team can be given more rounds than its combined ACTIVE+FARM capacity has
+ * room for once its *currently* rostered players (any tier — a player on
+ * IR still occupies a roster spot the draft can't also fill) are accounted
+ * for. The team with the fullest roster today sets the league-wide ceiling,
+ * since every team gets the same number of rounds. Exposed for the setup
+ * form's helper text as well as setUpDraft/updateDraftSetup's own validation. */
+export async function getMaxDraftRounds(leagueId: string): Promise<number> {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = league.settingsJson as unknown as LeagueSettings;
+  const capacity = activeRosterCap(settings) + settings.farmSlots;
+
+  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true } });
+  if (teams.length === 0) return capacity;
+
+  const openCounts = await Promise.all(
+    teams.map((t) => prisma.rosterSlot.count({ where: { teamId: t.id, effectiveTo: null } })),
+  );
+  return Math.max(0, capacity - Math.max(...openCounts));
+}
+
+/** Which tier a freshly-drafted player lands on. STARTUP fills ACTIVE
+ * first, spilling to FARM once ACTIVE is full (a new dynasty league is
+ * building its whole active roster from scratch); ROOKIE fills FARM first
+ * (prospects develop there), spilling to ACTIVE only once FARM is full.
+ * Throws if neither tier has room — getMaxDraftRounds is what's supposed to
+ * stop a draft from ever reaching that state, this is the defensive
+ * backstop actually enforcing the cap at pick-recording time. */
+function slotTypeForDraftPick({
+  activeCount,
+  farmCount,
+  settings,
+  draftType,
+}: {
+  activeCount: number;
+  farmCount: number;
+  settings: LeagueSettings;
+  draftType: "STARTUP" | "ROOKIE";
+}): "ACTIVE" | "FARM" {
+  const cap = activeRosterCap(settings);
+  const tiers: ("ACTIVE" | "FARM")[] = draftType === "STARTUP" ? ["ACTIVE", "FARM"] : ["FARM", "ACTIVE"];
+  for (const tier of tiers) {
+    if (tier === "ACTIVE" && activeCount < cap) return "ACTIVE";
+    if (tier === "FARM" && farmCount < settings.farmSlots) return "FARM";
+  }
+  throw new Error("Roster is full — the draft has more rounds than roster spots.");
+}
+
 /** Every league has at most one draft in flight at a time in practice — this
  * prefers a SETUP/IN_PROGRESS draft over a COMPLETE one, else the most
  * recently created draft of any status, else null. */
@@ -273,24 +348,47 @@ export interface DraftPoolPlayer {
   currentNhlOrg: string | null;
 }
 
-/** Already sorted by autopick priority — pool[0] is what autopick takes. */
-export async function getDraftPool(draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number }): Promise<DraftPoolPlayer[]> {
-  if (draft.type === "STARTUP") {
-    const rows = await getPlayerStatsAggregate(); // full pool, pre-sorted desc by career points
-    const ownership = await getLeagueOwnershipMap(draft.leagueId, rows.map((r) => r.id));
-    return rows
-      .filter((r) => !ownership.has(r.id))
-      .map((r) => ({ id: r.id, fullName: r.fullName, primaryPosition: r.primaryPosition, currentNhlOrg: r.currentNhlOrg }));
-  }
+// Pool cost (draft-fix-batch Task 1) — buildView calls getDraftPool on
+// every 3s poll from every open client, and the STARTUP ranking underneath
+// (getPlayerStatsAggregate over the whole player pool) costs ~1.5s on its
+// own. The ranked *base* list (everyone, regardless of ownership) is
+// memoized per (leagueId, season, type) for 60s in this module-level Map —
+// fine per serverless instance, since a stale minute only ever affects
+// *ordering* among available players. Ownership filtering always reads
+// live below, so a player someone just drafted never lingers as available.
+const POOL_CACHE_TTL_MS = 60_000;
+const draftPoolBaseCache = new Map<string, { base: DraftPoolPlayer[]; expiresAt: number }>();
 
-  const prospects = await prisma.player.findMany({
-    where: { draftYear: draft.season },
-    orderBy: { draftOverallPick: "asc" },
-  });
-  const ownership = await getLeagueOwnershipMap(draft.leagueId, prospects.map((p) => p.id));
-  return prospects
-    .filter((p) => !ownership.has(p.id))
-    .map((p) => ({ id: p.id, fullName: p.fullName, primaryPosition: p.primaryPosition, currentNhlOrg: p.currentNhlOrg }));
+async function getRankedDraftPoolBase(draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number }): Promise<DraftPoolPlayer[]> {
+  const cacheKey = `${draft.leagueId}:${draft.season}:${draft.type}`;
+  const cached = draftPoolBaseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.base;
+
+  const base: DraftPoolPlayer[] =
+    draft.type === "STARTUP"
+      ? (await getPlayerStatsAggregate()) // full pool, pre-sorted desc by career points
+          .map((r) => ({ id: r.id, fullName: r.fullName, primaryPosition: r.primaryPosition, currentNhlOrg: r.currentNhlOrg }))
+      : (
+          await prisma.player.findMany({
+            where: { draftYear: draft.season },
+            orderBy: { draftOverallPick: "asc" },
+          })
+        ).map((p) => ({ id: p.id, fullName: p.fullName, primaryPosition: p.primaryPosition, currentNhlOrg: p.currentNhlOrg }));
+
+  draftPoolBaseCache.set(cacheKey, { base, expiresAt: Date.now() + POOL_CACHE_TTL_MS });
+  return base;
+}
+
+/** Already sorted by autopick priority — pool[0] is what autopick takes.
+ * teamId is accepted but unused for now; Task 2's needs-aware ranking will
+ * use it to reorder the pool by that specific team's positional needs. */
+export async function getDraftPool(
+  draft: { leagueId: string; type: "STARTUP" | "ROOKIE"; season: number },
+  teamId?: string,
+): Promise<DraftPoolPlayer[]> {
+  const base = await getRankedDraftPoolBase(draft);
+  const ownership = await getLeagueOwnershipMap(draft.leagueId, base.map((p) => p.id));
+  return base.filter((p) => !ownership.has(p.id));
 }
 
 async function getCurrentPick(draftId: string) {
@@ -304,19 +402,66 @@ async function getCurrentPick(draftId: string) {
 type PendingPick = NonNullable<Awaited<ReturnType<typeof getCurrentPick>>>;
 type DraftRow = Awaited<ReturnType<typeof prisma.draft.findUniqueOrThrow>>;
 
+/** Thrown by recordPick when another caller (a concurrent autopick, or a
+ * manual pick that landed first) already claimed this exact pick — never a
+ * corruption, always a race the caller is expected to recover from by
+ * simply re-reading the current state. This is what the botched draft
+ * needed and didn't have: nothing before this made "claim this pick" atomic,
+ * so two callers could both see the same unused pick and both record it. */
+class PickAlreadyTakenError extends Error {
+  constructor() {
+    super("This pick was already recorded by another caller.");
+    this.name = "PickAlreadyTakenError";
+  }
+}
+
+/** Atomic pick claim (draft-fix-batch Task 1). Everything happens in one
+ * transaction: the updateMany's WHERE usedOnPlayerId: null is what makes
+ * the claim itself atomic under Postgres row locking — a second concurrent
+ * transaction targeting the same pick blocks until the first commits, then
+ * re-evaluates the WHERE clause, sees usedOnPlayerId already set, and
+ * updates zero rows. slotType is decided from counts read inside this same
+ * transaction, immediately before the roster slot is created, so two
+ * concurrent picks for the *same team* can't both see "room in ACTIVE" and
+ * both land there. ensureLineupMaterialized is deliberately not called here
+ * — unchanged from the team-page batch's decision that the first team-page
+ * view after the draft auto-fills the whole roster at once. */
 async function recordPick(draft: DraftRow, pick: PendingPick, playerId: string, autopicked: boolean): Promise<void> {
-  await prisma.$transaction([
-    prisma.rosterSlot.create({ data: { teamId: pick.currentOwnerId, playerId, slotType: "ACTIVE" } }),
-    prisma.draftPick.update({ where: { id: pick.id }, data: { usedOnPlayerId: playerId } }),
-    prisma.transactionLog.create({
+  await prisma.$transaction(async (tx) => {
+    const claim = await tx.draftPick.updateMany({
+      where: { id: pick.id, usedOnPlayerId: null },
+      data: { usedOnPlayerId: playerId },
+    });
+    if (claim.count !== 1) throw new PickAlreadyTakenError();
+
+    // Defensive: this should be unreachable (the pool this player came from
+    // already excludes anyone rostered) — but if it ever isn't, roll the
+    // claim back rather than double-roster someone.
+    const alreadyRostered = await tx.rosterSlot.count({
+      where: { playerId, effectiveTo: null, team: { leagueId: draft.leagueId } },
+    });
+    if (alreadyRostered > 0) {
+      throw new Error("That player is already rostered in this league — the draft pool was stale.");
+    }
+
+    const league = await tx.league.findUniqueOrThrow({ where: { id: draft.leagueId } });
+    const settings = league.settingsJson as unknown as LeagueSettings;
+    const [activeCount, farmCount] = await Promise.all([
+      tx.rosterSlot.count({ where: { teamId: pick.currentOwnerId, slotType: "ACTIVE", effectiveTo: null } }),
+      tx.rosterSlot.count({ where: { teamId: pick.currentOwnerId, slotType: "FARM", effectiveTo: null } }),
+    ]);
+    const slotType = slotTypeForDraftPick({ activeCount, farmCount, settings, draftType: draft.type });
+
+    await tx.rosterSlot.create({ data: { teamId: pick.currentOwnerId, playerId, slotType } });
+    await tx.transactionLog.create({
       data: {
         leagueId: draft.leagueId,
         type: "DRAFT_PICK",
         actorTeamId: pick.currentOwnerId,
-        payload: { playerId, round: pick.round, overallPick: pick.overallPick, autopicked },
+        payload: { playerId, round: pick.round, overallPick: pick.overallPick, autopicked, slotType },
       },
-    }),
-  ]);
+    });
+  });
 }
 
 /** Moves the clock to the next unused pick, or completes the draft if none
@@ -406,29 +551,68 @@ async function buildView(draft: DraftRow): Promise<DraftStateView> {
 }
 
 /** The read-time resolver — every poll and every pick attempt calls this
- * first. Loops so a stretch nobody was watching (or a slow network) still
- * catches all the way up to the true current state in one call. */
+ * first. This is the piece the botched draft exposed as unsafe: every
+ * caller used to loop autopicking on its own, unbounded and unsynchronized,
+ * so a stretch nobody was watching (the clock only advances on read) turned
+ * into every poller racing to catch up through the same overdue picks at
+ * once, each one duplicating what the others had already recorded. Now:
+ * only one caller at a time is allowed to actually autopick for a given
+ * draft (the resolvingUntil lease below), and it does at most
+ * MAX_AUTOPICKS_PER_CALL picks before returning — the client keeps polling
+ * and the next call (by this caller or another) continues where it left
+ * off, instead of one request trying to resolve an unbounded backlog. */
 export async function resolveDraftState(draftId: string): Promise<DraftStateView> {
-  for (let i = 0; i < 1000; i++) {
-    const draft = await prisma.draft.findUniqueOrThrow({ where: { id: draftId } });
-    if (draft.status !== "IN_PROGRESS") return buildView(draft);
+  const initial = await prisma.draft.findUniqueOrThrow({ where: { id: draftId } });
+  if (initial.status !== "IN_PROGRESS") return buildView(initial);
 
-    const current = await getCurrentPick(draftId);
-    if (!current) {
-      await prisma.draft.update({ where: { id: draftId }, data: { status: "COMPLETE", currentPickDeadline: null } });
-      continue;
-    }
-    if (!draft.currentPickDeadline || draft.currentPickDeadline > new Date()) {
-      return buildView(draft);
-    }
+  const currentPick = await getCurrentPick(draftId);
+  const overdue = !currentPick || (initial.currentPickDeadline !== null && initial.currentPickDeadline <= new Date());
+  if (!overdue) return buildView(initial);
 
-    const pool = await getDraftPool(draft);
-    const top = pool[0];
-    if (!top) throw new Error("No players left in the draft pool to autopick.");
-    await recordPick(draft, current, top.id, true);
-    await advanceDeadline(draft, draft.currentPickDeadline);
+  // Try to become the sole resolver for this draft for the next LEASE_MS.
+  // If another caller already holds the lease, just return the current
+  // view — the polling client will see that caller's progress on its next
+  // tick, rather than this call also racing to autopick the same picks.
+  const now = new Date();
+  const claimed = await prisma.draft.updateMany({
+    where: { id: draftId, status: "IN_PROGRESS", OR: [{ resolvingUntil: null }, { resolvingUntil: { lt: now } }] },
+    data: { resolvingUntil: new Date(now.getTime() + LEASE_MS) },
+  });
+  if (claimed.count === 0) {
+    return buildView(await prisma.draft.findUniqueOrThrow({ where: { id: draftId } }));
   }
-  throw new Error("Draft state failed to settle — this points to a real bug, not normal load.");
+
+  try {
+    for (let i = 0; i < MAX_AUTOPICKS_PER_CALL; i++) {
+      const draft = await prisma.draft.findUniqueOrThrow({ where: { id: draftId } });
+      if (draft.status !== "IN_PROGRESS") break;
+
+      const current = await getCurrentPick(draftId);
+      if (!current) {
+        await prisma.draft.update({ where: { id: draftId }, data: { status: "COMPLETE", currentPickDeadline: null } });
+        break;
+      }
+      if (!draft.currentPickDeadline || draft.currentPickDeadline > new Date()) break;
+
+      const pool = await getDraftPool(draft);
+      const top = pool[0];
+      if (!top) throw new Error("No players left in the draft pool to autopick.");
+      try {
+        await recordPick(draft, current, top.id, true);
+      } catch (err) {
+        // Someone else (a manual pick that isn't lease-gated) recorded this
+        // exact pick between our read and our write — re-read and continue
+        // rather than treat a normal race as a failure.
+        if (err instanceof PickAlreadyTakenError) continue;
+        throw err;
+      }
+      await advanceDeadline(draft, draft.currentPickDeadline);
+    }
+  } finally {
+    await prisma.draft.updateMany({ where: { id: draftId }, data: { resolvingUntil: null } });
+  }
+
+  return buildView(await prisma.draft.findUniqueOrThrow({ where: { id: draftId } }));
 }
 
 export interface MakeDraftPickInput {
@@ -457,7 +641,14 @@ export async function makeDraftPick(input: MakeDraftPickInput): Promise<void> {
     throw new Error("That player isn't available.");
   }
 
-  await recordPick(draft, current, input.playerId, false);
+  try {
+    await recordPick(draft, current, input.playerId, false);
+  } catch (err) {
+    if (err instanceof PickAlreadyTakenError) {
+      throw new Error("That pick was just made — the board has moved on.");
+    }
+    throw err;
+  }
   await advanceDeadline(draft);
 }
 
