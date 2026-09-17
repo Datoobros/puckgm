@@ -214,3 +214,105 @@ completed.
      exercises the real code path end to end rather than a function in isolation.
 
 ---
+
+## Task 6 — Named divisions
+
+- **Status**: done
+- **Commit**: `0872185` — "LM Tools batch Task 6: named divisions"
+- **Verification**: `npx tsc --noEmit` clean; `npm run build` clean; new
+  `npx tsx scripts/lm-divisions-check.ts` — ALL CHECKS PASSED (add, assign, reject-unknown,
+  rename-follows-teams, reject-duplicate-rename-target, remove-clears-teams,
+  reject-duplicate-in-submission, non-commissioner refused for both mutations);
+  `commissioner-tools-check.ts` passes again after fixing its now-outdated divisions
+  section (see decision below). Real browser check (`// TEMP:` bypass; reverted,
+  `grep -rn "TEMP:" src/` clean) on a disposable 4-team league with a generated schedule:
+  added East/West, assigned two teams each, Save round-tripped, and Standings' East tab
+  correctly filtered to exactly those two teams.
+- **Screenshot**: same no-file-export note as prior tasks; visually confirmed inline (the
+  Standings page filtered to the East division, showing Alpha and Bravo only).
+- **Decisions/findings not covered by the plan**:
+  1. **Real regression, fixed**: `commissioner-tools-check.ts`'s pre-existing divisions
+     section assigned `"East"`/`"West"` directly via `setTeamDivision` without ever
+     registering them — legal before this task (free text was allowed), illegal the moment
+     `setTeamDivision` started requiring list membership, exactly as the plan's own item 2
+     specifies. Fixed by registering both divisions via `setLeagueDivisions` first. This is
+     a direct consequence of Task 6's own contract change, not a pre-existing unrelated
+     gap (contrast with Task 1's free-agency-gate finding) — fixing it here was clearly
+     in-scope.
+  2. **Infrastructure snag, not a code issue**: `npx prisma migrate dev` failed twice with
+     `P1002` (advisory-lock timeout). Diagnosed with a read-only `pg_locks`/
+     `pg_stat_activity` query — a single idle Postgres backend (pid 5431) left over from
+     Task 4's interrupted migration (the EPERM dev-server-DLL-lock incident) was holding
+     the lock without doing anything. Terminated that one specific idle PID with
+     `pg_terminate_backend`; migration succeeded immediately after. No user data touched —
+     this was purely Prisma's own migration-lock bookkeeping. Worth remembering for any
+     future session on this project: an interrupted `prisma migrate dev` on Windows can
+     leave a stale advisory-lock holder behind.
+
+---
+
+## Run summary
+
+**Tasks completed (6 of 6 assigned):** 1 (hub/layout/membership), 2 (settings pages split),
+3 (LM Roster Moves), 4 (LM Make Trade), 5 (Trade Review + Waiver Order), 6 (named
+divisions). Task 7 was explicitly out of scope for this run (needs a human to receive a
+real invite email) and was not attempted.
+
+**Tasks failed:** none. Every task built, verified (`tsc`, `build`, its named check
+script, and a real browser pass), and committed in order, with the working tree left on a
+passing `npm run build` after every single commit — the "never leave a failing build
+between tasks" rule was never actually tested against a real failure tonight, since
+nothing failed badly enough to need a revert-and-skip.
+
+**Commits made (12, all local, none pushed — chronological):**
+- `ca68f2e` Task 1 — hub, layout gate, membership/teams pages
+- `132a45c` Run log: Task 1 entry
+- `f8833e2` Task 2 — settings pages split
+- `70ab30b` Run log: Task 2 entry
+- `f7bb57e` Task 3 — LM Roster Moves + remove team-page controls
+- `dc120e6` Run log: Task 3 entry
+- `2f5504e` Task 4 — LM Make Trade
+- `473c1b2` Run log: Task 4 entry
+- `56f7663` Task 5 — Trade Review + Edit Waiver Order
+- `99c1eff` Run log: Task 5 entry
+- `0872185` Task 6 — named divisions
+- (this file's own Task 6 entry, committed right after this summary)
+
+**Three things to look at first:**
+
+1. **The gap between Task 4 and Task 5 was a real plan/reality mismatch, not a mistake on
+   my part — but check it landed the way you'd want.** The plan expected `/trades` to
+   still have a resolved-trade history section to put the "LM trade" badge on; it doesn't
+   (removed the day before this plan was written). I put the badge on Task 5's new Trade
+   Review page instead, where the plan *also* independently asks for a "last 10 resolved
+   trades" list. Net effect: the badge exists and is visible, just not on `/trades` itself.
+   If you actually want `/trades` to regain a history section someday, that's new scope
+   this run didn't add.
+
+2. **Two schema migrations landed tonight** (`add_trade_commissioner_executed`,
+   `add_league_divisions`), both applied directly to the shared dev/prod Neon database via
+   `prisma migrate dev` (not just written to disk) — both are pure additive columns with
+   safe defaults, but worth knowing before you run anything else against that database.
+   Also: an interrupted migration attempt can leave a stale Postgres advisory-lock holder
+   behind (see Task 6's log entry) — if a future `prisma migrate dev` hangs on
+   `pg_advisory_lock`, that's almost certainly why, and the fix is a targeted
+   `pg_terminate_backend` on the specific idle pid, not a blind reset of anything.
+
+3. **A handful of small, deliberate scope decisions were made without you in the room** —
+   most consequentially, `commissionerExecuteTrade`'s guard surface (Task 4, decision #3:
+   it bypasses the trade deadline, draft-in-progress freeze, and already-locked-in-
+   another-trade checks that a normal trade enforces, keeping only ownership/waivers/
+   frozen-team). This matches the plan's explicit text and verification section, and fits
+   the "full administrative override" pattern every other LM tool in this batch uses, but
+   it's the single judgment call in this run most likely to be worth a second look. Every
+   other decision of this kind is logged inline above, task by task, with the reasoning
+   that led to it.
+
+Also worth knowing: `waiver-claim-check.ts` and `faab-check.ts` almost certainly have the
+same latent free-agency-gate gap `commissioner-tools-check.ts` had (Task 1's finding) —
+neither sets up a completed startup draft before calling `addPlayerToRoster`. Not touched
+tonight (out of scope for this batch), flagged here so it doesn't surprise you later if you
+run either script directly.
+
+Nothing was pushed. `git log --oneline -20` on `master` shows the full sequence above on
+top of `16ae5de` ("Add implementation plan for the League Manager Tools batch").
