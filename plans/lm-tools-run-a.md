@@ -178,3 +178,39 @@ completed.
      in this task, in case the user wants any of those checks added later.
 
 ---
+
+## Task 5 — Trade Review page + Edit Waiver Order
+
+- **Status**: done
+- **Commit**: `56f7663` — "LM Tools batch Task 5: Trade Review page + Edit Waiver Order"
+- **Verification**: `npx tsc --noEmit` clean; `npm run build` clean; new
+  `npx tsx scripts/lm-waiver-order-check.ts` — ALL CHECKS PASSED (order set/persisted,
+  missing-team rejected, duplicate-team rejected, non-commissioner rejected, and a real
+  awarded claim rotating the winner to the back of a manually-set order, not the seeded
+  one); `commissioner-tools-check.ts` still passes. Real browser check (`// TEMP:` bypass;
+  reverted, `grep -rn "TEMP:" src/` clean) on a disposable league with one PROPOSED trade
+  and one resolved LM trade: Trade Review showed the pending trade with full stat lines
+  both sides, only Cancel available (viewer is a party via Alpha), Cancel moved it into the
+  resolved list with a CANCELLED badge, and the resolved LM trade showed the gold "LM
+  trade" badge — **closing the loop Task 4 flagged**. Waiver Order: ▲-reorder then Save
+  round-tripped across a fresh page load.
+- **Screenshot**: same no-file-export note as prior tasks; visually confirmed inline (the
+  Trade Review page with the gold LM-trade badge visible on the resolved list).
+- **Decisions/findings not covered by the plan**:
+  1. Closed the Task-4-flagged gap: the gold "LM trade" badge now lives on this page's
+     resolved-trades list, per the run log entry written during Task 4 explicitly calling
+     this out as something Task 5 needed to include.
+  2. `Button.tsx` exported `ButtonVariant`/`ButtonSize` but not `BadgeTone` — needed it for
+     the trade-review page's state→tone lookup table, so exported it too (purely additive,
+     no behavior change).
+  3. `setWaiverPriorityAction` was added to the existing (still-live)
+     `leagues/[id]/waivers/actions.ts` rather than a new file under `settings/waiver-order/`
+     — matches where its sibling waiver actions (`submitWaiverClaimAction`,
+     `cancelWaiverClaimAction`) already live, even though the page that calls it now lives
+     under `settings/`.
+  4. Tested `rotatePriorityToBack` (private, un-exported) indirectly via a real awarded
+     claim rather than exporting it — the plan explicitly offered this as the preferred
+     option ("via an awarded claim in the existing waiver-claim-check.ts shape"), and it
+     exercises the real code path end to end rather than a function in isolation.
+
+---
