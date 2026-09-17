@@ -89,3 +89,44 @@ completed.
      `resetDraftPickOwnershipAction` needed the absolute-path fix the plan describes.
 
 ---
+
+## Task 3 — LM Roster Moves (Add / Drop / Manage IR / Manage Farm) + remove team-page controls
+
+- **Status**: done
+- **Commit**: `f7bb57e` — "LM Tools batch Task 3: LM Roster Moves + remove team-page commissioner controls"
+- **Verification**: `npx tsc --noEmit` clean; `npm run build` clean; new
+  `npx tsx scripts/lm-roster-moves-check.ts` — ALL CHECKS PASSED (LM-add-to-Farm, TM
+  free-agency-gate vs LM bypass, TM-waiver-exposure vs LM-no-exposure, non-commissioner
+  refusal, ORPHAN_FROZEN refusal in both modes); `npx tsx scripts/commissioner-tools-check.ts`
+  still passes; real browser check on a fresh disposable "LM Tools Test League (delete
+  me)" (`// TEMP:` bypass — see decision #2 below — reverted, `grep -rn "TEMP:" src/`
+  clean): full Add/Manage Farm/Manage IR step-1-to-step-2 flows, the TM-mode inline-error
+  path, the team-page pointer line, and confirming the commissioner's own team page is
+  byte-for-byte unchanged.
+- **Screenshot**: same no-file-export note as Tasks 1–2; visually confirmed inline (step 1
+  form layout, the TM-mode inline error + hint after the AddPlayerStep fix below).
+- **Decisions/findings not covered by the plan**:
+  1. **Real pre-existing gap, fixed**: `commissionerDropPlayer`/`commissionerMovePlayer`
+     never checked `ORPHAN_FROZEN` — only `commissionerAddPlayer` did. Every other roster
+     mutation in this app (the six manager-facing ones plus `commissionerAddPlayer`) gates
+     on it; this was just missed when Drop/Move were written. Fixed by adding the same
+     check both functions already share the shape for. This is squarely inside Task 3's own
+     surface (I'm already touching these three functions for `targetSlotType`) and directly
+     required by Task 3's own verification line ("every action refused on an ORPHAN_FROZEN
+     team in both modes") — not a tangential pre-existing-script issue like Task 1's, so I
+     fixed the product code itself here rather than working around it in a test.
+  2. The browser check needed a `// TEMP:` bypass in `teams/[teamId]/page.tsx` itself, not
+     just the settings-tree layouts — this page calls its own `auth.protect()`. Worth
+     noting for later tasks: there's an actual pre-existing Clerk session live in this dev
+     browser (a real signed-in account, not "lmtools-A"), so any page whose behavior
+     depends on *which* identity is calling — not just whether *someone* is signed in —
+     needs its own explicit bypass to actually exercise commissioner-specific branches.
+  3. **Real bug found and fixed via the browser check**: `AddPlayerStep`'s search-result
+     dropdown (absolutely positioned) stayed open after a failed add, visually covering the
+     inline error message rendered right below it. Fixed by closing the dropdown on both
+     success and failure, not just success.
+  4. Confirm()-gated buttons (Drop Player's Drop, same harness limitation as Tasks 1–2)
+     weren't clicked through in the browser — covered by `lm-roster-moves-check.ts` at the
+     mutation level instead.
+
+---
