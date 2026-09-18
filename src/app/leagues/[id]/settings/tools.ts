@@ -46,6 +46,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Reset Draft",
         description: "Roll back a draft and start over.",
+        href: (leagueId) => `/leagues/${leagueId}/settings/reset-draft`,
       },
     ],
   },

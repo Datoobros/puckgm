@@ -564,9 +564,9 @@ schedule cards, delete the legacy page.
 - Browser: the confirm page and a full reset on the disposable league.
 
 ### Checklist
-- [ ] `resetDraft` (STARTUP wipe / ROOKIE targeted), reusing season.ts helpers
-- [ ] reset page with typed confirmation
-- [ ] verified; PROGRESS.md; committed
+- [x] `resetDraft` (STARTUP wipe / ROOKIE targeted), reusing season.ts helpers
+- [x] reset page with typed confirmation
+- [x] verified; PROGRESS.md; committed
 
 ---
 

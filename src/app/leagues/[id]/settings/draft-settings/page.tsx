@@ -57,9 +57,14 @@ export default async function DraftSettingsPage(props: PageProps<"/leagues/[id]/
                       </form>
                     )}
                     {d.status !== "SETUP" && (
-                      <LinkButton href={`/leagues/${leagueId}/draft`} variant="ghost">
-                        Open room
-                      </LinkButton>
+                      <div className="flex items-center gap-3">
+                        <LinkButton href={`/leagues/${leagueId}/draft`} variant="ghost">
+                          Open room
+                        </LinkButton>
+                        <LinkButton href={`/leagues/${leagueId}/settings/reset-draft`} variant="ghost">
+                          Reset draft
+                        </LinkButton>
+                      </div>
                     )}
                   </div>
                   {d.status === "SETUP" && (

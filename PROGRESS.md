@@ -2942,6 +2942,98 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   as a real link; and a hardcoded non-member userId got the "not a member" card instead of
   the recap.
 
+**Task 9 — Reset Draft** (`plans/lm-tools-batch.md`)
+- New `wipeLeagueRosters(leagueId, callerUserId, { onlyPlayerIds?, lineupEntriesFrom? })` in
+  `src/lib/leagues/season.ts`, extracted from `startNewSeason`'s inline trade-cancel +
+  roster-close + lineup-wipe steps exactly per the plan's note on the import graph (a new
+  file for `resetDraft` itself, not `draft/mutations.ts`, since `trades/mutations.ts`
+  already imports `assertNoDraftInProgress` from there — pulling `cancelTrade` back in via
+  a shared helper would be circular). `startNewSeason` now just calls
+  `wipeLeagueRosters(leagueId, callerUserId)` with no options — confirmed byte-for-byte
+  unchanged behavior (same trade-cancel loop, same league-wide `RosterSlot` close, same
+  unscoped `LineupEntry.deleteMany`). **One option beyond what the plan's signature note
+  spelled out**: `lineupEntriesFrom`. The plan's parenthetical only mentions `onlyPlayerIds`,
+  but its own bullet list for `resetDraft` requires deleting `LineupEntry` rows "from
+  todayUTC() forward," while `startNewSeason`'s existing (must-not-change) behavior deletes
+  *every* `LineupEntry` row with no date filter at all. Reconciled by making the date scope
+  a second, independent option — omitted (season rollover) deletes everything, supplied
+  (draft reset) deletes only from that date forward. Verified this didn't drift
+  `startNewSeason`'s behavior by re-running every script that exercises it (below).
+- New `src/lib/draft/reset.ts`: `resetDraft({ draftId, callerUserId })` — commissioner-only,
+  `IN_PROGRESS`/`COMPLETE` only. Voids pending `WaiverClaim`s (→ `CLEARED`, same as
+  `voidPendingClaimsForPlayer`) and deletes pending `FaBid`s (same as `cancelFaBid`) for the
+  league's teams, calls `wipeLeagueRosters` with `onlyPlayerIds` set to the draft's own
+  `usedOnPlayerId`s for a `ROOKIE` draft (omitted — whole-league wipe — for `STARTUP`) and
+  `lineupEntriesFrom: todayUTC()` in both cases, clears `usedOnPlayerId` on every used
+  `DraftPick` of this draft (round/overallPick/ownership untouched), puts the `Draft` back
+  to `SETUP` with `currentPickDeadline`/`resolvingUntil` cleared, and writes one
+  `COMMISSIONER_RESET` `TransactionLog` row with all the counts. Also exports
+  `getResettableDraftsPreview(leagueId)` — read-only, computes the same "what will this
+  touch" numbers (team count, open slots to close, picks to un-use) the mutation itself
+  would use, so the confirm page's copy can't drift from what actually happens.
+- New `settings/reset-draft/page.tsx` + `ResetDraftConfirmForm.tsx` (client) +
+  `reset-draft/actions.ts`. Lists every resettable draft with its live-computed
+  consequences, a text input that must exactly equal the league's real name (checked
+  **server-side**, in the action, against the DB — never trusting a client-supplied
+  expected value for a mutation this destructive), and a Reset Draft button disabled until
+  it matches. `resetDraftAction` returns `{ ok, error }` rather than throwing, same
+  convention as the LM Roster Moves actions, so a refusal (wrong name, wrong status,
+  non-commissioner) renders inline. Draft Settings page gained a "Reset draft" ghost link
+  next to "Open room" for any non-`SETUP` draft; `tools.ts`'s Reset Draft row got its `href`.
+- **Deliberate deviation from my own first draft, not the plan**: I initially wrapped the
+  Reset button in a browser `confirm()` dialog on top of the typed-name check, matching
+  `DeleteLeagueButton`'s pattern. Removed it — the typed-exact-league-name input **is** the
+  confirmation (stronger than a plain `confirm()`, same idea as GitHub's "type the repo name
+  to delete"), and stacking a second native dialog on top only reintroduces the
+  confirm()-suppression limitation already noted in Tasks 1–2's PROGRESS entries (native
+  dialogs can't be clicked through by the browser-automation harness). Caught before it
+  became a real testing blocker, not after.
+- Verified: `npx tsc --noEmit`/`npm run build` clean. New `scripts/lm-reset-draft-check.ts`
+  against a disposable "LM Tools Task 9 (delete me)" league (2 teams): a `SETUP`-status
+  draft is refused; a real 4-pick `STARTUP` draft completed via `autodraftBatch`, plus a
+  free-agent add and a still-`PROPOSED` trade, all get swept by one `resetDraft` call — 0
+  open slots league-wide, the trade `CANCELLED`, the draft back to `SETUP` with all 4 picks'
+  `usedOnPlayerId` cleared and `overallPick` unchanged, `getFreeAgencyStatus` locked again
+  (`NO_STARTUP_DRAFT`), exactly one `COMMISSIONER_RESET` log; a non-commissioner call is
+  refused and changes nothing; `startDraft` + `autodraftBatch` on the *same* draft afterward
+  completes cleanly (the real "start over"). **ROOKIE variant used the real path, not the
+  documented fallback**: the 2025 draft class turned out to already be ingested (224
+  players, from the Draft feature's own original verification pass) — ran an actual 2-pick
+  `ROOKIE` draft on the same league (alongside a freshly-seeded non-draft free agent and the
+  redrafted `STARTUP` players), reset it, and confirmed only the 2 rookie-drafted players'
+  roster slots closed while the seeded free agent and both `STARTUP`-drafted players
+  survived untouched. The `onlyPlayerIds`-direct-call fallback path is written and reachable
+  (guarded by an ingested-class-size check) but wasn't exercised this run.
+  `npx tsx scripts/draft-autodraft-check.ts` and `npx tsx scripts/trades-check.ts` (both
+  touch `startNewSeason`-adjacent paths or the same trade-cancel plumbing) re-ran clean
+  after the extraction.
+- **Real pre-existing bug found, out of scope, not fixed**: `npx tsx scripts/qol-batch-check.ts`
+  fails on this codebase *regardless* of this task's changes — confirmed by `git stash`-ing
+  `season.ts` and re-running: identical failure. It proposes a trade while 2 of its 4
+  `STARTUP` draft picks are still unclaimed (the draft is still `IN_PROGRESS`), which
+  `assertNoDraftInProgress`'s later-added "no trades during a live draft" freeze correctly
+  rejects — the script was written before that trade-hardening feature shipped and was never
+  updated to draft-to-completion first. Its crash also leaks an uncleaned "QoL Batch Test
+  League (delete me)" league every time it's run (no `try/finally` cleanup) — two such
+  leagues already existed from 2026-09-17, and this session's two required re-runs (one
+  under `git stash`, one for real) added two more. Attempted to clean up all four by exact
+  name + id match; the harness's auto-mode permission classifier blocked the delete calls as
+  an out-of-scope irreversible action, so all four remain in the shared DB. Flagged to the
+  user rather than routed around.
+- Browser check (`// TEMP:` hardcoded `userId` across `leagues/[id]/layout.tsx`,
+  `settings/layout.tsx`, `leagues/[id]/draft/page.tsx`, and `reset-draft/actions.ts`;
+  reverted, `grep -rn "TEMP:" src/` clean) against a disposable "LM Tools Task 9 Browser
+  Check (delete me)" league with a completed `STARTUP` draft: the reset page rendered the
+  live consequences (2 teams, 4 open slots, 4 picks); a mismatched league name kept the
+  button disabled client-side *and* was independently rejected server-side (verified by
+  forcing the click past the disabled attribute); the correct name reset the draft and the
+  page immediately reflected "no resettable draft"; the Draft page showed the `SETUP` state
+  afterward. **Testing-tool note for future sessions**: this browser's synthetic `.click()`
+  on the Reset button didn't reliably invoke the React `onClick` handler (no network request
+  followed) — invoking the button's `__reactProps*.onClick` handler directly from
+  `javascript_tool` did. Worth trying first if a future click-driven check silently no-ops.
+  Disposable league deleted by exact name + id afterward.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

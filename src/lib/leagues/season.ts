@@ -11,17 +11,36 @@ import { prisma } from "@/lib/db";
 import { isLeagueCommissioner, type LeagueSettings } from "@/lib/leagues/mutations";
 import { cancelTrade } from "@/lib/trades/mutations";
 
-export async function startNewSeason(leagueId: string, callerUserId: string): Promise<{ newSeason: number }> {
-  if (!(await isLeagueCommissioner(leagueId, callerUserId))) {
-    throw new Error("Only the league commissioner can start a new season.");
-  }
+export interface WipeLeagueRostersOptions {
+  // Scopes the roster-slot close and the LineupEntry delete to just these
+  // players (LM Tools batch Task 9's ROOKIE reset — only the drafted
+  // players come off rosters, everyone else on the team is untouched).
+  // Omitted = every open slot/entry in the league, the original
+  // startNewSeason behavior.
+  onlyPlayerIds?: string[];
+  // "YYYY-MM-DD" (todayUTC() shape) — when set, only LineupEntry rows on or
+  // after this date are deleted. Omitted deletes every LineupEntry row for
+  // the affected teams, matching startNewSeason's original behavior (a
+  // redraft's rollover has no "history to preserve" concept the way a
+  // mid-season draft reset does).
+  lineupEntriesFrom?: string;
+}
 
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const settings = league.settingsJson as unknown as LeagueSettings;
-  if (settings.leagueType !== "REDRAFT") {
-    throw new Error("Only a REDRAFT league resets between seasons — a DYNASTY league's rosters carry over.");
-  }
+export interface WipeLeagueRostersResult {
+  cancelledTrades: number;
+  closedSlots: number;
+  deletedLineupEntries: number;
+}
 
+/** Cancels every trade still in flight, closes open RosterSlot rows, and
+ * deletes now-stale LineupEntry rows. Shared by startNewSeason (a full,
+ * league-wide wipe) and resetDraft (src/lib/draft/reset.ts — sometimes
+ * scoped to just the drafted players via onlyPlayerIds). */
+export async function wipeLeagueRosters(
+  leagueId: string,
+  callerUserId: string,
+  opts: WipeLeagueRostersOptions = {},
+): Promise<WipeLeagueRostersResult> {
   // Cancel every trade still in flight first. executeTradeTransfers silently
   // skips a missing RosterSlot, but still marks the whole Trade PROCESSED —
   // wiping rosters out from under a pending trade would leave a corrupted
@@ -33,19 +52,39 @@ export async function startNewSeason(leagueId: string, callerUserId: string): Pr
     await cancelTrade({ tradeId: trade.id, callerUserId, allowUnderReview: true });
   }
 
-  // Release every rostered player back to free agency. No pending-WaiverClaim
-  // cleanup needed: demotion waivers only ever fire via sendToFarm, which is
-  // unreachable at farmSlots: 0 — a REDRAFT league can never have a
-  // farm-bound waiver claim in flight in the first place.
-  await prisma.rosterSlot.updateMany({
-    where: { team: { leagueId }, effectiveTo: null },
+  const playerFilter = opts.onlyPlayerIds ? { playerId: { in: opts.onlyPlayerIds } } : {};
+
+  const { count: closedSlots } = await prisma.rosterSlot.updateMany({
+    where: { team: { leagueId }, effectiveTo: null, ...playerFilter },
     data: { effectiveTo: new Date() },
   });
 
-  // Every LineupEntry in the league is now stale — same reasoning as
-  // deleteLeague's own teardown (src/lib/leagues/mutations.ts): a wiped
-  // roster has no business still having players "started" anywhere.
-  await prisma.lineupEntry.deleteMany({ where: { team: { leagueId } } });
+  const { count: deletedLineupEntries } = await prisma.lineupEntry.deleteMany({
+    where: {
+      team: { leagueId },
+      ...playerFilter,
+      ...(opts.lineupEntriesFrom ? { gameDate: { gte: new Date(`${opts.lineupEntriesFrom}T00:00:00.000Z`) } } : {}),
+    },
+  });
+
+  return { cancelledTrades: pendingTrades.length, closedSlots, deletedLineupEntries };
+}
+
+export async function startNewSeason(leagueId: string, callerUserId: string): Promise<{ newSeason: number }> {
+  if (!(await isLeagueCommissioner(leagueId, callerUserId))) {
+    throw new Error("Only the league commissioner can start a new season.");
+  }
+
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = league.settingsJson as unknown as LeagueSettings;
+  if (settings.leagueType !== "REDRAFT") {
+    throw new Error("Only a REDRAFT league resets between seasons — a DYNASTY league's rosters carry over.");
+  }
+
+  // No pending-WaiverClaim cleanup needed: demotion waivers only ever fire
+  // via sendToFarm, which is unreachable at farmSlots: 0 — a REDRAFT league
+  // can never have a farm-bound waiver claim in flight in the first place.
+  await wipeLeagueRosters(leagueId, callerUserId);
 
   const newSeason = league.currentSeason + 1;
   await prisma.league.update({ where: { id: leagueId }, data: { currentSeason: newSeason } });
