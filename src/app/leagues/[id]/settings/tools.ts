@@ -36,6 +36,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Draft Recap",
         description: "View a summary of all draft picks.",
+        href: (leagueId) => `/leagues/${leagueId}/draft/recap`,
       },
       {
         title: "Draft Settings",

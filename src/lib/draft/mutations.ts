@@ -817,6 +817,101 @@ export async function getTeamDraftPicks(teamId: string): Promise<TeamDraftPickRo
   }));
 }
 
+export interface DraftRecapPick {
+  id: string;
+  round: number;
+  pickInRound: number;
+  overallPick: number;
+  teamId: string;
+  teamName: string;
+  originalTeamId: string;
+  originalTeamName: string;
+  wasTraded: boolean;
+  playerId: string;
+  playerName: string;
+  playerPosition: string | null;
+  playerNhlOrg: string | null;
+  playerHeadshotUrl: string | null;
+  autopicked: boolean;
+}
+
+export interface DraftRecapView {
+  draftId: string;
+  leagueId: string;
+  season: number;
+  type: "STARTUP" | "ROOKIE";
+  status: "SETUP" | "IN_PROGRESS" | "COMPLETE";
+  totalRounds: number;
+  picks: DraftRecapPick[];
+}
+
+/** Read-only, any signed-in league member (gated on the recap page itself,
+ * not here — every other function in this file is commissioner- or
+ * manager-only, this one isn't). autopicked isn't stored on DraftPick (see
+ * buildView above for why) — same join against the DRAFT_PICK
+ * TransactionLog, keyed by playerId rather than overallPick: overallPick
+ * only disambiguates picks *within* a single draft, but this file's
+ * TransactionLog rows carry no draftId, only leagueId — a league that has
+ * run more than one draft (a startup plus a later rookie draft, say) would
+ * have overallPick collide across them. playerId doesn't collide: a player
+ * is only ever ROSTER_SLOT-drafted once in a league's whole history. */
+export async function getDraftRecap(draftId: string): Promise<DraftRecapView> {
+  const draft = await prisma.draft.findUniqueOrThrow({ where: { id: draftId } });
+  const picks = await prisma.draftPick.findMany({
+    where: { draftId, usedOnPlayerId: { not: null } },
+    include: { originalTeam: true, currentOwner: true, usedOnPlayer: true },
+    orderBy: { overallPick: "asc" },
+  });
+
+  const teamIds = [...new Set(picks.map((p) => p.currentOwnerId))];
+  const logs =
+    teamIds.length > 0
+      ? await prisma.transactionLog.findMany({
+          where: { leagueId: draft.leagueId, type: "DRAFT_PICK", actorTeamId: { in: teamIds } },
+        })
+      : [];
+  const autopickedByPlayerId = new Map<string, boolean>();
+  for (const log of logs) {
+    const payload = log.payload as { playerId?: string; autopicked?: boolean };
+    if (payload.playerId) autopickedByPlayerId.set(payload.playerId, !!payload.autopicked);
+  }
+
+  const pickInRoundCounter = new Map<number, number>();
+  const recapPicks: DraftRecapPick[] = picks.map((p) => {
+    const pickInRound = (pickInRoundCounter.get(p.round) ?? 0) + 1;
+    pickInRoundCounter.set(p.round, pickInRound);
+    return {
+      id: p.id,
+      round: p.round,
+      pickInRound,
+      overallPick: p.overallPick!,
+      teamId: p.currentOwnerId,
+      teamName: p.currentOwner.name,
+      originalTeamId: p.originalTeamId,
+      originalTeamName: p.originalTeam.name,
+      wasTraded: p.originalTeamId !== p.currentOwnerId,
+      playerId: p.usedOnPlayerId!,
+      playerName: p.usedOnPlayer!.fullName,
+      playerPosition: p.usedOnPlayer!.primaryPosition,
+      playerNhlOrg: p.usedOnPlayer!.currentNhlOrg,
+      playerHeadshotUrl: p.usedOnPlayer!.headshotUrl,
+      autopicked: autopickedByPlayerId.get(p.usedOnPlayerId!) ?? false,
+    };
+  });
+
+  const roundAgg = await prisma.draftPick.aggregate({ where: { draftId }, _max: { round: true } });
+
+  return {
+    draftId: draft.id,
+    leagueId: draft.leagueId,
+    season: draft.season,
+    type: draft.type,
+    status: draft.status,
+    totalRounds: roundAgg._max.round ?? 0,
+    picks: recapPicks,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Free agency gate (issue #5, plans/team-page-batch.md Task 3). Lives here,
 // not in src/lib/rosters/mutations.ts, because it's draft-state-derived and

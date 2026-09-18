@@ -517,8 +517,8 @@ schedule cards, delete the legacy page.
 - Browser: both views render; the AUTO badge appears on autopicked rows.
 
 ### Checklist
-- [ ] `getDraftRecap`; recap page; links
-- [ ] verified; PROGRESS.md; committed
+- [x] `getDraftRecap`; recap page; links
+- [x] verified; PROGRESS.md; committed
 
 ---
 

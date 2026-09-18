@@ -2892,6 +2892,56 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   `cmu72l7gk0000rut8uc0kxlwu`) afterward; the new Clerk user was left alone — that account
   belongs to the user now.
 
+**Task 8 — Draft Recap (public)**
+- `getDraftRecap(draftId)` (`src/lib/draft/mutations.ts`): took the plan's preferred route —
+  join the `DRAFT_PICK` `TransactionLog` payload by `playerId` rather than adding
+  `DraftPick.autopicked`. Keyed by `playerId` specifically, not `overallPick` (which is what
+  `buildView`'s existing recent-picks join uses) — `overallPick` only disambiguates picks
+  *within* one draft, but `TransactionLog` carries no `draftId`, only `leagueId`, so a league
+  that's run more than one draft would have colliding `overallPick` values across them.
+  `playerId` doesn't collide: a player is only ever drafted once in a league's whole history.
+  No migration needed. Returns every used `DraftPick` row for the draft (team, original team
+  if traded, player incl. headshot, round/pick-in-round/overall, autopicked) plus the draft's
+  configured round count (via a separate `_max: { round: true }` aggregate over *all* picks,
+  not just used ones, so an in-progress draft's recap doesn't undercount its own round total).
+- New `/leagues/[id]/draft/recap`: any signed-in league member — same membership computation
+  the Draft page already uses (`league.teams.find(isTeamManager)`), but this page actually
+  renders the "You're not a member of this league" card for a non-member (copied verbatim
+  from `leagues/[id]/page.tsx`) rather than silently continuing, since a recap has real
+  content to gate and the Draft page's live room doesn't. `?draft=<id>` selector
+  (`DraftRecapSelect.tsx`, client) only rendered when the league has more than one non-SETUP
+  draft; defaults to the most recent non-SETUP draft, falling back to the most recent draft
+  of any status (including SETUP, for the empty state) if the league has never finished one,
+  and to a "no draft set up yet" message if it has none at all. `DraftRecapBoard.tsx`
+  (client): **By round** (one table per round, `Pick | Team | Player | Pos | NHL`, pick-in-
+  round number with the overall number alongside) and **By team** (one card per team in
+  first-round draft-order, picks listed in draft order) toggle, `PlayerHeadshot` per player,
+  `Badge tone="muted">Auto</Badge>` on autopicked picks (same badge component/copy `DraftRoom`
+  already uses for its Recent Picks list), a "(from `<original team>`)" note when a pick was
+  traded before being used.
+- "View draft recap" link added under the Draft page's `<h1>` (shown once the current draft
+  is `IN_PROGRESS`/`COMPLETE`) and inside `DraftRoom.tsx`'s "Draft complete" card. `tools.ts`'s
+  Draft Recap row now has an `href`.
+- Verified: `npx tsc --noEmit` (needed `npx next typegen` first — the new route's `PageProps`
+  type doesn't exist until Next's route-type generation runs, same as any new page) and
+  `npm run build` clean. New `scripts/draft-recap-check.ts`, two parts: (1) **read-only**
+  against the real "Experimenting" league's completed 75-pick startup draft — recap pick
+  count matches `DraftPick` rows with `usedOnPlayerId` set exactly, every pick's team/player/
+  round/overall matches the underlying row, and every pick's `autopicked` flag matches its
+  `DRAFT_PICK` log (this particular draft was fully autodrafted during earlier testing, so
+  all 75 came back `autopicked: true` — a real, non-trivial signal that the join is actually
+  keying correctly rather than defaulting everything to one value); (2) a disposable "LM
+  Tools Task 8 (delete me)" league with a `SETUP`-only draft — recap is empty — deleted by
+  exact name+id afterward. Real browser check (`// TEMP:` bypass across
+  `leagues/[id]/layout.tsx`, `leagues/[id]/draft/page.tsx`, `leagues/[id]/draft/recap/page.tsx`,
+  and `leagues/[id]/settings/layout.tsx`; reverted, `grep -rn "TEMP:" src/` clean) against the
+  real Experimenting league: By round showed all 25 rounds with correct teams/players/AUTO
+  badges and working headshots; By team correctly grouped all 75 picks into three columns in
+  first-round draft order; both "View draft recap" links (Draft page heading, DraftRoom's
+  complete-state card) resolved to the right URL; the LM Tools hub's Draft Recap row rendered
+  as a real link; and a hardcoded non-member userId got the "not a member" card instead of
+  the recap.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

@@ -147,6 +147,11 @@ export function DraftRoom({
               — your drafted roster fills into lineup slots automatically the first time you view it.
             </p>
           )}
+          <p className="mt-2 text-sm text-success">
+            <Link href={`/leagues/${leagueId}/draft/recap`} className="underline">
+              View draft recap
+            </Link>
+          </p>
         </Card>
         <RecentPicks recentPicks={view.recentPicks} />
       </div>

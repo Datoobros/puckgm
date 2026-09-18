@@ -21,6 +21,13 @@ export default async function DraftPage(props: PageProps<"/leagues/[id]/draft">)
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Draft</h1>
+      {draft && draft.status !== "SETUP" && (
+        <p className="mt-1">
+          <Link href={`/leagues/${leagueId}/draft/recap`} className="text-sm text-blue hover:underline">
+            View draft recap →
+          </Link>
+        </p>
+      )}
 
       {!draft ? (
         <Card className="mt-4">
