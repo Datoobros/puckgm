@@ -485,9 +485,9 @@ schedule cards, delete the legacy page.
   (it should; if it's throttled, say so).
 
 ### Checklist
-- [ ] schema; directory + invitations modules
-- [ ] managers page picker + invite controls
-- [ ] verified (including a real email round-trip); PROGRESS.md; committed
+- [x] schema; directory + invitations modules
+- [x] managers page picker + invite controls
+- [x] verified (including a real email round-trip); PROGRESS.md; committed
 
 ---
 

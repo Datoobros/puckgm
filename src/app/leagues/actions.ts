@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import {
@@ -27,6 +28,7 @@ import {
   type UpdateLeagueSettingsInput,
 } from "@/lib/leagues/mutations";
 import { startNewSeason } from "@/lib/leagues/season";
+import { inviteManagerByEmail, inviteToLeagueByEmail } from "@/lib/leagues/invitations";
 import { generateSchedule, resetSchedule } from "@/lib/matchups/mutations";
 import { EDITABLE_SCORING_FIELDS, type ScoringConfig } from "@/lib/scoring/engine";
 import { cancelTrade } from "@/lib/trades/mutations";
@@ -299,6 +301,28 @@ export async function regenerateTeamClaimCodeAction(leagueId: string, teamId: st
   const { userId } = await auth.protect();
   await regenerateTeamClaimCode({ leagueId, teamId, callerUserId: userId });
   revalidatePath(`/leagues/${leagueId}/settings`);
+}
+
+// Read server-side rather than trusting a client-supplied origin — this
+// value goes straight into an email's redirect link, matching how the
+// Managers page itself already computes the invite-link origin.
+async function currentOrigin(): Promise<string> {
+  const h = await headers();
+  return `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
+}
+
+export async function inviteManagerByEmailAction(leagueId: string, teamId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const email = String(formData.get("email") ?? "");
+  await inviteManagerByEmail({ leagueId, teamId, email, origin: await currentOrigin(), callerUserId: userId });
+  revalidatePath(`/leagues/${leagueId}/settings/managers`);
+}
+
+export async function inviteToLeagueByEmailAction(leagueId: string, formData: FormData) {
+  const { userId } = await auth.protect();
+  const email = String(formData.get("email") ?? "");
+  await inviteToLeagueByEmail({ leagueId, email, origin: await currentOrigin(), callerUserId: userId });
+  redirect(`/leagues/${leagueId}/settings/managers?invited=1`);
 }
 
 export async function deleteTeamAction(leagueId: string, teamId: string) {

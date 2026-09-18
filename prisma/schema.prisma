@@ -169,6 +169,12 @@ model Team {
   // Used for a commissioner-added placeholder team or a freshly orphaned
   // one. Nullable/lazy same pattern as League.inviteCode.
   claimCode String? @unique
+  // Set by inviteManagerByEmail (src/lib/leagues/invitations.ts) when the
+  // invited address has no Clerk account yet, so the Managers table can show
+  // "Invited: x@y.com (pending)". Cleared by claimTeam once the invite is
+  // actually accepted — never set at all when the address already has an
+  // account (that path assigns the team directly instead of inviting).
+  invitedEmail String?
   // Co-manager — NOT the same as isCoCommissioner above. This shares full
   // operational control of THIS one team (roster/lineup/waivers/FAAB/
   // trades/draft picks) with a second real person; isCoCommissioner grants

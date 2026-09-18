@@ -2822,6 +2822,76 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   — it already grouped by `Team.division`) correctly filtered to exactly the right two
   teams per division.
 
+**Task 7 — Email invitations and assign-by-picker**
+- Migration `add_team_invited_email`: `Team.invitedEmail String?` — set while an emailed
+  invite is pending, cleared by `claimTeam` once accepted. A plain column, not a separate
+  model, so it needed no `deleteLeague` teardown-order addition (unlike every prior
+  FK-teardown bug this batch kept finding).
+- New `src/lib/users/directory.ts`: `listKnownUsers()` (`clerkClient().users.getUserList({
+  limit: 100, orderBy: "-created_at" })`, same name-fallback chain as `display.ts`,
+  best-effort empty-list-on-failure) and `findUserByEmail(email)` (`getUserList({
+  emailAddress: [email] })`, filtered to an exact case-insensitive match client-side since
+  Clerk's own filter is a partial match — confirmed by reading the installed
+  `@clerk/backend` v3.16.1 type defs directly rather than assuming).
+- New `src/lib/leagues/invitations.ts`: `inviteManagerByEmail` — commissioner check, team-
+  in-league check, then `findUserByEmail`; a hit calls the existing `setTeamManager` and
+  clears `invitedEmail` (no email ever sent); a miss reuses or generates the team's
+  `claimCode` and calls `clerkClient().invitations.createInvitation({ redirectUrl:
+  ".../invite/team/<claimCode>", ignoreExisting: true })`, then stashes the address on
+  `invitedEmail`. `inviteToLeagueByEmail` does the league-wide equivalent against
+  `League.inviteCode`, no team to mark. `claimTeam` (`leagues/mutations.ts`) now also
+  clears `invitedEmail` on accept.
+- `settings/managers/page.tsx`: Reassign is now a `<select>` of `listKnownUsers()`
+  (name + email), excluding anyone already managing (primary or co-) a team in this
+  league — verified in the browser that a user managing two of the disposable league's
+  three teams correctly disappeared from all three rows' dropdowns. Each row also gets a
+  new `InviteByEmailForm` (`src/components/InviteByEmailForm.tsx`, same onSubmit-confirm
+  shape as `ConfirmActionButton`/`DeleteTeamButton` but with an email field alongside the
+  button): labelled "Invite by email" with no confirm for a commissioner-owned or orphaned
+  team, "Replace manager by email" with a confirm otherwise. Status cell shows "Invited:
+  x@y.com (pending)" when `invitedEmail` is set (falls back to the pre-existing generic
+  "Invited: pending claim" badge for a claim link generated without an email). Bottom card
+  gained "Invite to league by email" alongside the existing shareable link, with a
+  `?invited=1` "Invitation sent." banner (redirect-based, same pattern as every other
+  `?saved=1` banner in this batch) since that path has no team row to reflect state onto.
+- **Real gap found and fixed, not part of the original plan**: `clerkClient()` reads
+  `CLERK_SECRET_KEY` straight off `process.env`, unlike Prisma (which loads `.env` itself
+  internally regardless of what's actually in `process.env`) — a bare `npx tsx` script
+  calling anything in `directory.ts`/`invitations.ts` threw "Missing Clerk Secret Key"
+  even with `.env`/`.env.local` present, since no script had ever needed Clerk before this
+  task. Fixed by calling `loadEnvConfig(process.cwd())` from `@next/env` (the same loader
+  `next dev`/`next build` use internally, already a transitive dependency of `next` itself
+  — not the unrelated `dotenv` package) at the top of `lm-invitations-check.ts`, before any
+  Clerk-touching import runs.
+- Verified: `npx tsc --noEmit`/`npm run build` clean; new `scripts/lm-invitations-check.ts`
+  covers every validation path (malformed email, non-commissioner caller, team belonging to
+  a different league) — all designed to fail *before* reaching `createInvitation`, so the
+  script can never actually send an email; the already-has-account branch reads a real
+  second Clerk user from `TEST_SECOND_USER_EMAIL` and is skipped with a printed notice since
+  the user didn't set it this run. `commissioner-tools-check.ts` still passes (touched
+  `claimTeam`). Real browser check (`// TEMP:` bypass across both `leagues/[id]/layout.tsx`
+  and the settings layout/managers page **and**, newly, `inviteManagerByEmailAction`
+  itself — a Server Action's own `auth.protect()` call redirects independently of whatever
+  the rendering page bypassed, confirmed the hard way when a first click landed on Clerk's
+  hosted sign-in page instead of sending anything; nothing had run yet at that point, so no
+  side effect occurred — reverted, `grep -rn "TEMP:" src/` clean) against a disposable "LM
+  Tools Task 7 (delete me)" league (3 teams: the commissioner's own, one with a distinct
+  fake manager, and a commissioner-added placeholder): Managers page rendered real display
+  names, the Reassign dropdown correctly excluded the commissioner (already managing two of
+  the three teams) from every row, and both invite-by-email labels/confirm behavior matched
+  each team's actual state.
+- **Real email round-trip, with the user at the keyboard**: invited the user's own
+  `buttpoop9091@gmail.com` onto the commissioner-owned placeholder team. Clerk's
+  Development instance delivered the invitation — **landed in spam, took 1–2 minutes**. The
+  user clicked through, signed up as a new identity, and claimed the team via the existing
+  `/invite/team/[code]` flow (untouched by this task). Reloading the Managers page
+  afterward confirmed the team's manager display name updated to the new account,
+  `invitedEmail` was cleared (no "Invited: ... (pending)" status), and the claim-link
+  button reverted to "Generate claim link" (fresh, since `claimCode` clears on accept).
+  Disposable league deleted by exact name + id (`LM Tools Task 7 (delete me)`,
+  `cmu72l7gk0000rut8uc0kxlwu`) afterward; the new Clerk user was left alone — that account
+  belongs to the user now.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

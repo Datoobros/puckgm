@@ -233,10 +233,19 @@ export async function claimTeam(input: { claimCode: string; newManagerUserId: st
   const existing = await prisma.team.findFirst({ where: { leagueId: team.leagueId, ...managerOrCoManagerWhere(input.newManagerUserId) } });
   if (existing) throw new Error("You already manage a team in this league.");
   // Clears any co-manager too — the new primary manager shouldn't inherit a
-  // stranger with full control of the team they just claimed.
+  // stranger with full control of the team they just claimed. invitedEmail
+  // also clears here — this is the accept side of inviteManagerByEmail
+  // (src/lib/leagues/invitations.ts), so the pending state it stashed is over.
   await prisma.team.update({
     where: { id: team.id },
-    data: { managerUserId: input.newManagerUserId, state: "ACTIVE", claimCode: null, secondManagerUserId: null, secondManagerClaimCode: null },
+    data: {
+      managerUserId: input.newManagerUserId,
+      state: "ACTIVE",
+      claimCode: null,
+      secondManagerUserId: null,
+      secondManagerClaimCode: null,
+      invitedEmail: null,
+    },
   });
   return { leagueId: team.leagueId, teamId: team.id };
 }

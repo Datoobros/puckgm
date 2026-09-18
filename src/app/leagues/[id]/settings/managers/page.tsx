@@ -1,22 +1,30 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { auth } from "@clerk/nextjs/server";
 import { getLeague, teamHasHistory } from "@/lib/leagues/mutations";
 import { getUserDisplayName } from "@/lib/users/display";
+import { listKnownUsers } from "@/lib/users/directory";
 import {
   reassignTeamManagerAction,
   orphanTeamAction,
   regenerateTeamClaimCodeAction,
   addTeamAsCommissionerAction,
   regenerateInviteCodeAction,
+  inviteManagerByEmailAction,
+  inviteToLeagueByEmailAction,
 } from "@/app/leagues/actions";
 import { Card, SectionLabel } from "@/components/Card";
 import { Button, Badge } from "@/components/Button";
 import { ConfirmActionButton } from "@/components/ConfirmActionButton";
 import { DeleteTeamButton } from "@/components/DeleteTeamButton";
+import { InviteByEmailForm } from "@/components/InviteByEmailForm";
 
 export default async function ManagersPage(props: PageProps<"/leagues/[id]/settings/managers">) {
+  const { userId } = await auth.protect();
   const { id: leagueId } = await props.params;
+  const sp = await props.searchParams;
+  const justInvited = (Array.isArray(sp.invited) ? sp.invited[0] : sp.invited) === "1";
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -24,6 +32,12 @@ export default async function ManagersPage(props: PageProps<"/leagues/[id]/setti
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
   const inviteUrl = league.inviteCode ? `${origin}/invite/${league.inviteCode}` : null;
+
+  // Excludes anyone already managing (primary or co-) a team in this
+  // league from the Reassign picker — reassigning to someone who already
+  // has a team here would just fail setTeamManager's own check anyway.
+  const takenUserIds = new Set(league.teams.flatMap((t) => [t.managerUserId, t.secondManagerUserId].filter((id): id is string => !!id)));
+  const knownUsers = (await listKnownUsers()).filter((u) => !takenUserIds.has(u.id));
 
   const teams = await Promise.all(
     league.teams.map(async (t) => ({
@@ -34,6 +48,11 @@ export default async function ManagersPage(props: PageProps<"/leagues/[id]/setti
       state: t.state,
       isCoCommissioner: t.isCoCommissioner,
       claimCode: t.claimCode,
+      invitedEmail: t.invitedEmail,
+      // A commissioner-owned placeholder (added via "Add a team", never
+      // claimed) or an orphaned team has no real manager to displace, so
+      // inviting needs no confirm — anything else is replacing a live person.
+      isPlaceholderOrOrphaned: t.managerUserId === userId || t.state === "ORPHAN_FROZEN",
       hasHistory: await teamHasHistory(t.id),
     })),
   );
@@ -48,6 +67,16 @@ export default async function ManagersPage(props: PageProps<"/leagues/[id]/setti
         Reassign a team to a new manager, freeze an abandoned team, hand off a team via claim link, or
         remove a team with no real history yet.
       </p>
+      <p className="mt-1 max-w-2xl text-xs text-muted">
+        ⓘ Invitations are sent by our sign-in provider (Clerk). Someone who already has an account is
+        assigned immediately instead of being emailed.
+      </p>
+
+      {justInvited && (
+        <Card className="mt-4 !border-success/20 !bg-success-tint">
+          <p className="text-sm font-medium text-success">Invitation sent.</p>
+        </Card>
+      )}
 
       <div className="mt-6 overflow-x-auto">
         <Card className="!p-0">
@@ -69,19 +98,44 @@ export default async function ManagersPage(props: PageProps<"/leagues/[id]/setti
                     <div className="flex flex-wrap gap-1">
                       {team.state === "ORPHAN_FROZEN" && <Badge tone="warning">Orphaned — frozen</Badge>}
                       {team.isCoCommissioner && <Badge tone="gold">Co-commissioner</Badge>}
-                      {team.claimCode && <Badge tone="muted">Invited: pending claim</Badge>}
+                      {team.invitedEmail ? (
+                        <Badge tone="muted">Invited: {team.invitedEmail} (pending)</Badge>
+                      ) : (
+                        team.claimCode && <Badge tone="muted">Invited: pending claim</Badge>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-2">
                       <form action={reassignTeamManagerAction.bind(null, leagueId, team.id)} className="flex items-center gap-1">
-                        <input
+                        <select
                           name="newManagerUserId"
-                          placeholder="New manager's user ID"
-                          className="rounded border border-border bg-transparent px-2 py-1 text-xs outline-none focus:border-blue"
-                        />
+                          required
+                          defaultValue=""
+                          className="rounded border border-border bg-surface px-2 py-1 text-xs text-foreground"
+                        >
+                          <option value="" disabled>
+                            Select a user…
+                          </option>
+                          {knownUsers.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name}
+                              {u.email ? ` (${u.email})` : ""}
+                            </option>
+                          ))}
+                        </select>
                         <Button type="submit" size="sm">Reassign</Button>
                       </form>
+
+                      {team.isPlaceholderOrOrphaned ? (
+                        <InviteByEmailForm action={inviteManagerByEmailAction.bind(null, leagueId, team.id)} label="Invite by email" />
+                      ) : (
+                        <InviteByEmailForm
+                          action={inviteManagerByEmailAction.bind(null, leagueId, team.id)}
+                          label="Replace manager by email"
+                          confirmText={`Replace ${team.managerName}'s access to "${team.name}" with whoever accepts this invite? Someone with an existing account is assigned immediately instead of being emailed.`}
+                        />
+                      )}
 
                       {team.state !== "ORPHAN_FROZEN" && (
                         <ConfirmActionButton
@@ -163,6 +217,15 @@ export default async function ManagersPage(props: PageProps<"/leagues/[id]/setti
               {inviteUrl ? "Regenerate link" : "Generate invite link"}
             </Button>
           </form>
+          <div className="mt-4 border-t border-border pt-4">
+            <p className="text-xs text-muted">
+              Or invite someone by email — they get their own new team on sign-up, same as clicking the
+              link above.
+            </p>
+            <div className="mt-2">
+              <InviteByEmailForm action={inviteToLeagueByEmailAction.bind(null, leagueId)} label="Invite to league by email" />
+            </div>
+          </div>
         </Card>
       </div>
 
