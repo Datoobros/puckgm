@@ -116,6 +116,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Edit Head-to-Head Schedule",
         description: "Edit any upcoming matchup pairing in the league schedule.",
+        href: (leagueId) => `/leagues/${leagueId}/schedule`,
       },
     ],
   },

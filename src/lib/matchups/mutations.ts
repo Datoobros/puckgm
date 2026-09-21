@@ -150,3 +150,60 @@ export async function generateSchedule(input: GenerateScheduleInput): Promise<Ge
 
   return { periodsCreated: periods.length, matchupsCreated: matchupRows.length, playoffPeriodsCreated: playoffRoundCount };
 }
+
+export interface UpdatePeriodMatchupsInput {
+  leagueId: string;
+  periodId: string;
+  pairs: { homeTeamId: string; awayTeamId: string }[];
+  callerUserId: string;
+}
+
+/** LM Tools Task 11 — commissioner override for one regular-season week's
+ * pairings (e.g. fixing a lopsided round-robin draw before it locks). A
+ * playoff period's Matchup rows are filled from actual standings by
+ * processDuePlayoffs(), not chosen by hand, and a week already underway has
+ * real lineups/locks riding on the existing pairing — both refused outright.
+ * A team left out of `pairs` simply has a bye that week, same shape
+ * generateSchedule already produces for odd team counts. */
+export async function updatePeriodMatchups(input: UpdatePeriodMatchupsInput): Promise<void> {
+  if (!(await isLeagueCommissioner(input.leagueId, input.callerUserId))) {
+    throw new Error("Only the league commissioner can edit the schedule.");
+  }
+  const period = await prisma.matchupPeriod.findUnique({ where: { id: input.periodId } });
+  if (!period || period.leagueId !== input.leagueId) {
+    throw new Error("Matchup period not found in this league.");
+  }
+  if (period.isPlayoffs) {
+    throw new Error("Bracket rounds are filled from standings.");
+  }
+  if (period.startDate <= new Date()) {
+    throw new Error("This week has started.");
+  }
+
+  const teams = await prisma.team.findMany({ where: { leagueId: input.leagueId }, select: { id: true } });
+  const teamIds = new Set(teams.map((t) => t.id));
+  const seen = new Set<string>();
+  for (const pair of input.pairs) {
+    if (!teamIds.has(pair.homeTeamId) || !teamIds.has(pair.awayTeamId)) {
+      throw new Error("Every team in a matchup must belong to this league.");
+    }
+    if (pair.homeTeamId === pair.awayTeamId) {
+      throw new Error("A team can't be matched up against itself.");
+    }
+    if (seen.has(pair.homeTeamId) || seen.has(pair.awayTeamId)) {
+      throw new Error("A team can't appear in more than one matchup this week.");
+    }
+    seen.add(pair.homeTeamId);
+    seen.add(pair.awayTeamId);
+  }
+
+  const ops = [prisma.matchup.deleteMany({ where: { matchupPeriodId: input.periodId } })];
+  if (input.pairs.length > 0) {
+    ops.push(
+      prisma.matchup.createMany({
+        data: input.pairs.map((p) => ({ matchupPeriodId: input.periodId, homeTeamId: p.homeTeamId, awayTeamId: p.awayTeamId })),
+      }),
+    );
+  }
+  await prisma.$transaction(ops);
+}

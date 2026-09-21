@@ -31,7 +31,13 @@ export default async function ScheduleSettingsPage(props: PageProps<"/leagues/[i
         Generate or reset the regular-season (and optional playoff) schedule for the current
         season.
       </p>
-      {/* TODO(Task 11): link to /leagues/[id]/schedule once the League Schedule page ships. */}
+      {hasSchedule && (
+        <p className="mt-2 text-sm">
+          <Link href={`/leagues/${leagueId}/schedule`} className="text-blue hover:underline">
+            View or edit the head-to-head schedule →
+          </Link>
+        </p>
+      )}
 
       <div className="mt-8">
         <SectionLabel>Schedule</SectionLabel>

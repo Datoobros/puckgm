@@ -71,9 +71,14 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
           <h1 className="text-2xl font-semibold tracking-tight">Scoreboard</h1>
           <Badge tone="muted">{settings.leagueType === "REDRAFT" ? "REDRAFT LEAGUE" : "DYNASTY LEAGUE"}</Badge>
         </div>
-        <LinkButton variant="ghost" href={`/leagues/${leagueId}/standings/bracket`}>
-          Projected Playoff Bracket
-        </LinkButton>
+        <div className="flex items-center gap-4">
+          <LinkButton variant="ghost" href={`/leagues/${leagueId}/schedule`}>
+            Full schedule
+          </LinkButton>
+          <LinkButton variant="ghost" href={`/leagues/${leagueId}/standings/bracket`}>
+            Projected Playoff Bracket
+          </LinkButton>
+        </div>
       </div>
 
       {!scoreboard ? (

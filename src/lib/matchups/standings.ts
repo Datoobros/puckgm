@@ -13,6 +13,7 @@
 import { prisma } from "@/lib/db";
 import { computeFantasyPoints, type ScoringConfig } from "@/lib/scoring/engine";
 import { getPlayerStatsAggregate } from "@/lib/players/rankings";
+import { getUserDisplayName } from "@/lib/users/display";
 
 /** "Championship" / "Semifinal" / "Quarterfinal" for the last three rounds
  * of a bracket, else a plain "Round N" (unreachable in practice — brackets
@@ -688,4 +689,163 @@ export async function getMatchupDetail(matchupId: string, scoringConfig: Scoring
       adjustments: periodAdjustments.filter((a) => a.teamId === matchup.awayTeamId),
     },
   };
+}
+
+export interface LeagueScheduleTeamSide {
+  teamId: string;
+  teamName: string;
+  logoUrl: string | null;
+  /** "A" for a single manager, "A, B" for a co-managed team. */
+  managerNames: string;
+  /** "W-L-T" through the previous COMPLETED regular-season period — frozen
+   * once playoffs start, same scope getStandings uses (playoff results
+   * never count toward it). */
+  record: string;
+  score: number;
+  seed: number | null;
+}
+
+export interface LeagueScheduleMatchup {
+  matchupId: string;
+  home: LeagueScheduleTeamSide;
+  away: LeagueScheduleTeamSide;
+  final: boolean;
+}
+
+export interface LeagueSchedulePeriod {
+  periodId: string;
+  periodNo: number;
+  startDate: Date;
+  endDate: Date;
+  isPlayoffs: boolean;
+  roundLabel: string | null;
+  /** Only a regular-season period that hasn't started yet — matches
+   * updatePeriodMatchups' own refusal rules exactly, so the page's Edit
+   * pill is never shown for something the mutation would reject anyway. */
+  editable: boolean;
+  matchups: LeagueScheduleMatchup[];
+}
+
+/** Every period (regular season + playoffs) for the League Schedule page
+ * (LM Tools Task 11) — both teams' identity, cumulative record, and score.
+ * Manager display-name lookups are batched once (one Clerk call per
+ * distinct user id across the whole league, not per row). */
+export async function getLeagueSchedule(
+  leagueId: string,
+  season: number,
+  scoringConfig: ScoringConfig,
+): Promise<LeagueSchedulePeriod[]> {
+  const [periods, teams] = await Promise.all([
+    prisma.matchupPeriod.findMany({
+      where: { leagueId, season },
+      include: { matchups: true },
+      orderBy: { periodNo: "asc" },
+    }),
+    prisma.team.findMany({ where: { leagueId } }),
+  ]);
+
+  const distinctUserIds = new Set<string>();
+  for (const t of teams) {
+    distinctUserIds.add(t.managerUserId);
+    if (t.secondManagerUserId) distinctUserIds.add(t.secondManagerUserId);
+  }
+  const nameEntries = await Promise.all(
+    [...distinctUserIds].map(async (id) => [id, await getUserDisplayName(id)] as const),
+  );
+  const nameByUserId = new Map(nameEntries);
+
+  const teamById = new Map(teams.map((t) => [t.id, t]));
+  function managerNames(teamId: string): string {
+    const team = teamById.get(teamId);
+    if (!team) return "Unknown";
+    const primary = nameByUserId.get(team.managerUserId) ?? team.managerUserId;
+    if (!team.secondManagerUserId) return primary;
+    return `${primary}, ${nameByUserId.get(team.secondManagerUserId) ?? team.secondManagerUserId}`;
+  }
+
+  const record = new Map<string, { w: number; l: number; t: number }>(teams.map((t) => [t.id, { w: 0, l: 0, t: 0 }]));
+  function recordLabel(teamId: string): string {
+    const r = record.get(teamId);
+    return r ? `${r.w}-${r.l}-${r.t}` : "0-0-0";
+  }
+
+  const playoffPeriods = periods.filter((p) => p.isPlayoffs);
+  const now = new Date();
+  const result: LeagueSchedulePeriod[] = [];
+
+  for (const period of periods) {
+    const final = period.endDate <= now;
+    const roundIndex = playoffPeriods.findIndex((p) => p.id === period.id);
+    const roundLabel = roundIndex === -1 ? null : playoffRoundLabel(playoffPeriods.length, roundIndex);
+
+    const matchups: LeagueScheduleMatchup[] = [];
+    for (const m of period.matchups) {
+      const homeTeam = teamById.get(m.homeTeamId);
+      const awayTeam = teamById.get(m.awayTeamId);
+      if (!homeTeam || !awayTeam) continue;
+
+      const homeRecordBefore = recordLabel(m.homeTeamId);
+      const awayRecordBefore = recordLabel(m.awayTeamId);
+
+      const [homeScore, awayScore] = final
+        ? await Promise.all([
+            getTeamScoreForPeriod(m.homeTeamId, period, scoringConfig),
+            getTeamScoreForPeriod(m.awayTeamId, period, scoringConfig),
+          ])
+        : [0, 0];
+
+      matchups.push({
+        matchupId: m.id,
+        home: {
+          teamId: homeTeam.id,
+          teamName: homeTeam.name,
+          logoUrl: homeTeam.logoUrl,
+          managerNames: managerNames(homeTeam.id),
+          record: homeRecordBefore,
+          score: homeScore,
+          seed: m.homeSeed,
+        },
+        away: {
+          teamId: awayTeam.id,
+          teamName: awayTeam.name,
+          logoUrl: awayTeam.logoUrl,
+          managerNames: managerNames(awayTeam.id),
+          record: awayRecordBefore,
+          score: awayScore,
+          seed: m.awaySeed,
+        },
+        final,
+      });
+
+      if (final && !period.isPlayoffs) {
+        const homeRow = record.get(m.homeTeamId);
+        const awayRow = record.get(m.awayTeamId);
+        if (homeRow && awayRow) {
+          if (homeScore > awayScore) {
+            homeRow.w++;
+            awayRow.l++;
+          } else if (awayScore > homeScore) {
+            awayRow.w++;
+            homeRow.l++;
+          } else {
+            homeRow.t++;
+            awayRow.t++;
+          }
+        }
+      }
+    }
+
+    result.push({
+      periodId: period.id,
+      periodNo: period.periodNo,
+      startDate: period.startDate,
+      endDate: period.endDate,
+      isPlayoffs: period.isPlayoffs,
+      roundLabel,
+      editable: !period.isPlayoffs && period.startDate > now,
+      matchups,
+    });
+  }
+
+  return result;
 }

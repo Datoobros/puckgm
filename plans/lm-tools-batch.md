@@ -652,9 +652,9 @@ schedule cards, delete the legacy page.
   table and Scoreboard show the new pairing; non-commissioner sees no Edit buttons.
 
 ### Checklist
-- [ ] `getLeagueSchedule`, `updatePeriodMatchups`
-- [ ] schedule page + period editor; links from scoreboard/settings
-- [ ] verified; PROGRESS.md; committed
+- [x] `getLeagueSchedule`, `updatePeriodMatchups`
+- [x] schedule page + period editor; links from scoreboard/settings
+- [x] verified; PROGRESS.md; committed
 
 ---
 

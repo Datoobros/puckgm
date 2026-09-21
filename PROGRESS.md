@@ -3114,6 +3114,83 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   "Adjustments: +3.5" line with the total reconciling; Remove reverted the card to 4.0 with no
   marker. Disposable league deleted by exact name + id afterward.
 
+**Task 11 — League Schedule page + Edit Head-to-Head Schedule** (`plans/lm-tools-batch.md`)
+- `getLeagueSchedule(leagueId, season, scoringConfig)` (`src/lib/matchups/standings.ts`):
+  every period (regular + playoff) with both teams' identity, cumulative regular-season
+  W-L-T record **through the previous completed period** (frozen once playoffs start —
+  same scope `getStandings` already uses, since playoff results never count toward it),
+  score (via the Task 10 period-object signature), and manager display name(s)
+  (`"A, B"` for a co-managed team). Manager name lookups are batched: one
+  `getUserDisplayName` call per **distinct** user id across the whole league first, into a
+  `Map`, rather than per row — the plan's own explicit requirement, verified by the browser
+  check rendering four distinct fallback names with no duplicate Clerk calls needed.
+- `updatePeriodMatchups({ leagueId, periodId, pairs, callerUserId })`
+  (`src/lib/matchups/mutations.ts`): commissioner-only; refuses a playoff period
+  ("Bracket rounds are filled from standings.") or one whose `startDate` has already
+  passed ("This week has started.") — the exact two guard messages the plan specified,
+  verified word-for-word in the regression script; validates every team id belongs to the
+  league and appears in at most one pair; delete + `createMany` in one transaction (empty
+  `pairs` is allowed — every team on bye that week — since nothing in the plan requires at
+  least one matchup). A team left out of `pairs` simply has no `Matchup` row that period,
+  same shape `generateRoundRobinRounds` already produces for odd team counts.
+- New `/leagues/[id]/schedule` (members-only — same not-a-member gate as
+  `/leagues/[id]/draft/recap`, since this page has real content to protect, unlike
+  Scoreboard/Standings which stay open to any signed-in user): title + league-type badge,
+  Projected Playoff Bracket link, `ScheduleFilters.tsx` (Season select + Team `?team=`
+  filter, combined since ESPN renders them side by side), then per period the "Matchup N
+  (date range)" heading (playoff rounds via `playoffRoundLabel`) and the six-column
+  AWAY TEAM | TEAM MANAGER(S) | SCORE | SCORE | TEAM MANAGER(S) | HOME TEAM table, team
+  names linking to team pages. Commissioner-only **Edit** pill beside a period whose
+  `getLeagueSchedule`-computed `editable` flag is true (`!isPlayoffs && startDate > now`
+  — exactly `updatePeriodMatchups`' own refusal rule, so the pill is never shown for
+  something the mutation would reject anyway) → `?edit=<periodId>` renders
+  `PeriodEditor.tsx` (client): Away/Home `<select>` per row, Remove/Add matchup, live
+  duplicate-team and self-match messages that disable Save, Save → new
+  `schedule/actions.ts`'s `updatePeriodMatchupsAction` (`{ ok, error }` convention, same
+  as every other LM Tools action this batch), Cancel. The editor is gated server-side by
+  `isCommissioner` independent of whether the Edit link was ever rendered — verified in
+  the browser that a direct `?edit=<periodId>` URL as a non-commissioner still shows the
+  plain table, not the editor.
+- **One UI bug caught and fixed during the browser check, not in the plan's own spec**: an
+  empty playoff period (0 matchups, not yet seeded by `processDuePlayoffs`) rendered "Bye
+  week for every team." — technically true but misleading, since nobody's actually on a
+  bye, the bracket just hasn't been seeded yet. Fixed to reuse the exact copy the Standings
+  page's own empty-playoff-round state already uses ("Waiting on the previous round to
+  finish."), conditioned on `period.isPlayoffs`.
+- Scoreboard page header gained a "Full schedule" ghost link next to "Projected Playoff
+  Bracket". Schedule Settings page's Task 2 `TODO` replaced with a real "View or edit the
+  head-to-head schedule →" link, shown once a schedule exists. `tools.ts`'s Edit
+  Head-to-Head Schedule row now has its `href`.
+- Verified: `npx next typegen` (new route, same as Task 8's Draft Recap) → `npx tsc
+  --noEmit` → `npm run build`, all clean. New `scripts/lm-schedule-edit-check.ts` against a
+  disposable 4-team "LM Tools Task 11 (delete me)" league (schedule generated for next
+  Monday): swapping week 2's pairings replaces the `Matchup` rows (new ids, not updated in
+  place) while every team still has real history via other weeks; a submission with the
+  same team in two pairs is rejected and leaves the week untouched; backdating week 1's
+  `startDate` into the past and then trying to edit it is rejected with the exact "This
+  week has started." message; editing the championship (playoff) period is rejected with
+  the exact "Bracket rounds are filled from standings." message; `getStandings` shows every
+  team still at 0-0-0 after all the edits, since every touched period is still in the
+  future; `getLeagueSchedule`'s `editable` flag agrees exactly (true for week 2, false for
+  backdated week 1 and the championship). A second, distinctly-named 3-team league
+  ("LM Tools Task 11 Bye (delete me)") confirmed a team left out of a submitted pairs array
+  ends up in zero matchups that week — a real bye, not an error. Both leagues deleted by
+  exact name + id. Re-ran `scripts/playoffs-check.ts` and `scripts/scoreboard-check.ts`
+  unmodified — both still pass, confirming the new `getUserDisplayName` import into
+  `standings.ts` and the reused `getTeamScoreForPeriod` signature introduced no regression.
+  Real browser check (`// TEMP:` bypass across `leagues/[id]/layout.tsx`,
+  `leagues/[id]/schedule/page.tsx`, `leagues/[id]/schedule/actions.ts`, and, to confirm the
+  Scoreboard cross-check, `leagues/[id]/scoreboard/page.tsx`; reverted, `grep -rn "TEMP:"
+  src/` clean) against a disposable "LM Tools Task 11 Browser Check (delete me)" league (4
+  teams, one week backdated to yesterday to get a real past week to test against): all
+  weeks rendered with real (fallback) manager names; the backdated week and the
+  not-yet-seeded championship both correctly showed no Edit button while the two untouched
+  future weeks did; Edit → swap → Save on week 2 replaced the table's pairing immediately,
+  and the Scoreboard page for the same week showed the identical new pairing; switching the
+  `// TEMP:` userId to a non-commissioner teammate showed no Edit buttons anywhere (and no
+  "LM Tools" nav link) while the read-only table still rendered normally. Disposable league
+  deleted by exact name + id afterward.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to
