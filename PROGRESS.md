@@ -697,6 +697,14 @@ private, and PuckPedia isn't an API — same reason Contracts generally stays un
 
 ## Commissioner tools: co-commissioners, team management, roster overrides, draft/schedule editing, divisions
 
+**Superseded UI, as of the League Manager Tools batch (`plans/lm-tools-batch.md`, see
+below):** the single "Commissioner Settings" page this section describes no longer exists —
+it's been rebuilt into an ESPN-style **League Manager Tools** hub at
+`/leagues/[id]/settings` (one card per topic, one page per tool). The mutations, schema,
+decisions, and bugs documented in this section are still accurate and still the underlying
+implementation; only the UI they're reached through changed. See the LM Tools batch section
+further down for the current page map.
+
 Modeled on a generic fantasy platform's Commissioner Tools admin panel (~20 tools the user
 screenshotted across League Membership, Draft, League & Scoring, Roster, Schedule & Standings,
 Misc). Confirmed with the user up front: roster composition and schedule generation — both
@@ -2505,6 +2513,14 @@ commissioner can run a correct draft through the fixed code.
   excludes the commissioner from deciding their own trade, it doesn't hand veto power to
   anyone else. Flagged here (Task 1b audit) so the user remembers to set up a co-commissioner
   before this actually matters in the real league.
+- **Transaction Counter** (LM Tools batch, `plans/lm-tools-batch.md`) — ESPN's Miscellaneous
+  Tools card has one; puckgm has no acquisition-limit rule at all, so a counter would have
+  nothing to count against. Building the counter means inventing the limit first — not done.
+- **League Manager Poll** (LM Tools batch) — explicitly out of scope since the original
+  Commissioner Tools pass (no voting system exists anywhere in the app; every governance
+  action in this project is direct commissioner/co-commissioner authority, not a vote). The
+  Miscellaneous Tools card exists so the hub's layout matches ESPN's, with "Nothing here
+  yet." in place of both rows.
 
 ## League Manager Tools batch (`plans/lm-tools-batch.md`)
 
