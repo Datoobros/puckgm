@@ -20,7 +20,7 @@ detail to plan and build. When an item ships, move it off this list and document
   over completely untouched, only the schedule/standings/bracket archive and a new season
   starts — same shape as REDRAFT's rollover minus the roster wipe.
 
-- **Player profile modal.** Clicking a player anywhere (Players page, roster page) should open
-  a modal with season stats, avg points, position rank, and a transaction-history list at the
-  bottom (ESPN-style). User wants to design the exact contents/layout together rather than
-  have it built to a guess — revisit and get details before building.
+- **Player profile modal.** Designed with the user on 2026-09-20 and planned in full — see
+  `plans/player-modal-batch.md` (five tasks: game-context backfill, profile data layer,
+  ESPN-style modal with prev/next, action card, wiring at every name site). Remove this
+  entry when the batch ships.
