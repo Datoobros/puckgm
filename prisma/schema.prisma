@@ -77,6 +77,16 @@ model GameStatLine {
   statsJson Json
   createdAt DateTime @default(now())
 
+  // Game context, added after the initial season backfill — rows from before
+  // this migration are null until scripts/backfill-game-context.ts fills them
+  // in; the game log UI renders "—" for any row still missing them.
+  teamAbbrev     String?
+  opponentAbbrev String?
+  isHome         Boolean?
+  teamScore      Int?
+  opponentScore  Int?
+  lastPeriodType String? // "REG" | "OT" | "SO" — gameOutcome.lastPeriodType
+
   @@unique([playerId, gameId])
   @@index([gameDate])
 }

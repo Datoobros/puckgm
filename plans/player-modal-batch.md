@@ -321,9 +321,9 @@ against the production database), so it goes first.
 - `SELECT COUNT(*) FROM "GameStatLine"` is the same before and after (upsert, not insert).
 
 ### Checklist
-- [ ] schema + migration; `NhlBoxscore` fields; `ingestGame` writes context on create and update
-- [ ] `scripts/backfill-game-context.ts` written and **run to completion** against the real DB
-- [ ] verified (assertions, score check, row count unchanged); PROGRESS.md; committed
+- [x] schema + migration; `NhlBoxscore` fields; `ingestGame` writes context on create and update
+- [x] `scripts/backfill-game-context.ts` written and **run to completion** against the real DB
+- [x] verified (assertions, score check, row count unchanged); PROGRESS.md; committed
 
 ---
 

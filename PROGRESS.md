@@ -3269,6 +3269,61 @@ board isn't worth extracting for a rarely used commissioner path.
   players under Bench, confirming the edit is the same real `LineupEntry` data the team page
   itself reads, not a separate copy. Disposable league deleted by exact name + id afterward.
 
+## Player profile modal batch (`plans/player-modal-batch.md`)
+
+### Task 1: Game context on `GameStatLine` + backfill
+
+`GameStatLine` now carries six nullable columns — `teamAbbrev`, `opponentAbbrev`,
+`isHome`, `teamScore`, `opponentScore`, `lastPeriodType` — sourced from
+`NhlBoxscore.awayTeam/homeTeam/gameOutcome` (all present on the live API,
+`NhlBoxscore` just didn't declare them). `ingestGame` now iterates
+`["awayTeam", "homeTeam"]` with side knowledge instead of an anonymous
+two-element array, and spreads the resulting `context` object into both the
+`create` and `update` branches of the upsert — `statsJson` itself is untouched.
+This is a real re-ingest of every already-stored game (idempotent upsert on
+`(playerId, gameId)`), not a new data source.
+
+`scripts/backfill-game-context.ts` (new) re-ingests every game with a null
+`opponentAbbrev`, `runWithConcurrency`'d at 10, and ends with assertions that
+exit non-zero on failure (deliberately **not** calling `syncAllRosters` — this
+backfill only touches game context). Run for real against production:
+
+```
+Rows missing game context before backfill: 52478
+1312 unique games to re-ingest.
+  100/1312 games processed (49s elapsed)
+  ...
+  1312/1312 games processed (613s elapsed)
+
+Games ingested: 1312, errors: 0
+Rows missing game context after backfill: 0
+Spot check OK: game 2025020500 — 20 MTL lines (away, 4-5) and 20 NYR lines (home, 5-4), all OT, mirror correctly.
+```
+
+**Plan correction, not a design re-open**: the plan's spot-check assumed
+`lastPeriodType = "REG"` for game `2025020500`. The first run failed that
+assertion — every MTL/NYR line came back `OT` instead, while `opponentAbbrev`,
+`isHome`, `teamScore`, and `opponentScore` all matched exactly (mirrored
+correctly on both sides). Checked directly against
+`api-web.nhle.com/v1/gamecenter/2025020500/boxscore` before touching
+anything: `gameOutcome: {"lastPeriodType":"OT","otPeriods":1}` — the real game
+went to overtime, the plan's assumed value was simply wrong. Fixed the
+script's expected value to `"OT"` (comment now cites the API response) and
+re-ran; second run touched 0 games (nothing left with a null
+`opponentAbbrev` — confirms idempotency/resumability) and the spot check
+passed.
+
+Verification: `npx tsc --noEmit` and `npm run build` both clean, before and
+after the backfill. `scripts/score-check.ts` re-run post-backfill: Connor
+McDavid still comes back 82 games ingested, 216.6 fantasy pts under
+`STARTER_SCORING` — proves the re-ingest changed no `statsJson` and therefore
+no points. `GameStatLine` row count unchanged at 52,478 before and after
+(upsert, not insert).
+
+No UI reads these columns yet (Task 2+ of this batch). The daily cron
+(`api/cron/daily-ingest` → `ingestGame`) writes them automatically from now on
+for every new game.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

@@ -36,8 +36,18 @@ export async function ingestGame(gameId: number): Promise<IngestResult> {
   const gameDate = new Date(box.gameDate);
   let written = 0;
 
-  for (const team of [box.playerByGameStats?.awayTeam, box.playerByGameStats?.homeTeam]) {
-    for (const p of teamPlayers(team)) {
+  for (const side of ["awayTeam", "homeTeam"] as const) {
+    const other = side === "awayTeam" ? "homeTeam" : "awayTeam";
+    const context = {
+      teamAbbrev: box[side].abbrev,
+      opponentAbbrev: box[other].abbrev,
+      isHome: side === "homeTeam",
+      teamScore: box[side].score ?? null,
+      opponentScore: box[other].score ?? null,
+      lastPeriodType: box.gameOutcome?.lastPeriodType ?? null,
+    };
+
+    for (const p of teamPlayers(box.playerByGameStats?.[side])) {
       const internalPlayerId = await ensurePlayerStub(p.playerId, p.name.default, p.position);
 
       // Strip identity fields out of the stored payload — they live on
@@ -51,10 +61,12 @@ export async function ingestGame(gameId: number): Promise<IngestResult> {
           gameId: String(gameId),
           gameDate,
           statsJson: rawStats as object,
+          ...context,
         },
         update: {
           gameDate,
           statsJson: rawStats as object,
+          ...context,
         },
       });
       written += 1;

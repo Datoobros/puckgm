@@ -117,10 +117,19 @@ export interface NhlBoxscoreTeam {
   goalies?: NhlBoxscorePlayer[];
 }
 
+export interface NhlBoxscoreTeamSide {
+  id: number;
+  abbrev: string;
+  score?: number;
+}
+
 export interface NhlBoxscore {
   id: number;
   gameDate: string;
   gameState: string;
+  awayTeam: NhlBoxscoreTeamSide;
+  homeTeam: NhlBoxscoreTeamSide;
+  gameOutcome?: { lastPeriodType?: string };
   playerByGameStats?: {
     awayTeam: NhlBoxscoreTeam;
     homeTeam: NhlBoxscoreTeam;
