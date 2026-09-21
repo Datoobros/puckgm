@@ -7,6 +7,7 @@ import { addPlayerToRoster } from "@/lib/rosters/mutations";
 import { submitFaBid, cancelFaBid } from "@/lib/faab/mutations";
 import { searchPlayersByName, type PlayerSearchResult } from "@/lib/players/rankings";
 import { toggleWatchlist } from "@/lib/players/watchlist";
+import { getPlayerProfile, type PlayerProfile } from "@/lib/players/profile";
 
 export async function addPlayerAction(leagueId: string, teamId: string, playerId: string, dropPlayerId?: string) {
   const { userId } = await auth.protect();
@@ -32,6 +33,13 @@ export async function cancelFaBidAction(leagueId: string, bidId: string) {
   const { userId } = await auth.protect();
   await cancelFaBid({ bidId, managerUserId: userId });
   revalidatePath(`/leagues/${leagueId}/players`);
+}
+
+/** Read-only — no revalidatePath. A team-less league member may still view
+ * a player's profile, same as the Players page itself allows. */
+export async function getPlayerProfileAction(leagueId: string, playerId: string): Promise<PlayerProfile> {
+  const { userId } = await auth.protect();
+  return getPlayerProfile({ leagueId, playerId, viewerUserId: userId });
 }
 
 export async function searchPlayersAction(query: string): Promise<{ results: PlayerSearchResult[]; total: number }> {

@@ -47,6 +47,10 @@ export interface PlayerStatsRow extends PlayerAggregateRow {
  */
 export async function getPlayerStatsAggregate(opts?: {
   playerIds?: string[];
+  /** Restricts the pool to these primaryPosition values (e.g. ["C","L","R"]
+   * for a COMBINED-mode forward group) — used for the player-profile
+   * modal's position-rank computation. Composes with playerIds via AND. */
+  positions?: string[];
   limit?: number;
   /** Restricts summed games to this range without dropping zero-game
    * players from the result — see the JOIN condition below. Used for
@@ -59,9 +63,12 @@ export async function getPlayerStatsAggregate(opts?: {
 }): Promise<PlayerStatsRow[]> {
   if (opts?.playerIds && opts.playerIds.length === 0) return [];
 
-  const whereClause = opts?.playerIds
-    ? Prisma.sql`WHERE p.id IN (${Prisma.join(opts.playerIds)})`
-    : Prisma.empty;
+  const conditions: Prisma.Sql[] = [];
+  if (opts?.playerIds) conditions.push(Prisma.sql`p.id IN (${Prisma.join(opts.playerIds)})`);
+  if (opts?.positions && opts.positions.length > 0) {
+    conditions.push(Prisma.sql`p."primaryPosition" IN (${Prisma.join(opts.positions)})`);
+  }
+  const whereClause = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}` : Prisma.empty;
 
   // The date filter belongs on the JOIN, not a WHERE clause — a WHERE here
   // would turn this into an inner join and drop every player with zero
@@ -128,6 +135,52 @@ export async function searchPlayersByName(query: string, limit = 8): Promise<Pla
   });
 }
 
+interface StatLinePlayerFields {
+  fullName: string;
+  primaryPosition: string | null;
+  currentNhlOrg: string | null;
+  careerNhlGp: number;
+  headshotUrl: string | null;
+  officialRosterStatus: string | null;
+}
+
+/** Maps one raw GameStatLine (+ its player) to a single-game PlayerStatsRow
+ * (gamesIngested always 1, points = that one game's FPTS). Shared by
+ * getPlayerDailyStats below and the player-profile modal's game log
+ * (src/lib/players/profile.ts), which needed the same per-line mapping
+ * without the date-scoped query this function runs. */
+export function statLineToRow(
+  line: { playerId: string; statsJson: unknown },
+  player: StatLinePlayerFields,
+  scoringConfig: ScoringConfig,
+): PlayerStatsRow {
+  const s = line.statsJson as Record<string, unknown>;
+  const num = (k: string) => Number(s[k] ?? 0);
+  const won = s.decision === "W";
+  return {
+    id: line.playerId,
+    fullName: player.fullName,
+    primaryPosition: player.primaryPosition,
+    currentNhlOrg: player.currentNhlOrg,
+    careerNhlGp: player.careerNhlGp,
+    headshotUrl: player.headshotUrl,
+    officialRosterStatus: player.officialRosterStatus,
+    gamesIngested: 1,
+    goals: num("goals"),
+    assists: num("assists"),
+    sog: num("sog"),
+    hits: num("hits"),
+    blockedShots: num("blockedShots"),
+    pim: num("pim"),
+    plusMinus: num("plusMinus"),
+    saves: num("saves"),
+    goalsAgainst: num("goalsAgainst"),
+    wins: won ? 1 : 0,
+    shutouts: won && num("goalsAgainst") === 0 ? 1 : 0,
+    points: computeFantasyPoints(line.statsJson, scoringConfig),
+  };
+}
+
 /** One row per player for a single calendar date — that day's raw box
  * score run through the scoring config, not a season sum. Players with no
  * completed game that date are simply absent from the map (same "missing
@@ -147,31 +200,7 @@ export async function getPlayerDailyStats(
 
   const map = new Map<string, PlayerStatsRow>();
   for (const line of lines) {
-    const s = line.statsJson as Record<string, unknown>;
-    const num = (k: string) => Number(s[k] ?? 0);
-    const won = s.decision === "W";
-    map.set(line.playerId, {
-      id: line.playerId,
-      fullName: line.player.fullName,
-      primaryPosition: line.player.primaryPosition,
-      currentNhlOrg: line.player.currentNhlOrg,
-      careerNhlGp: line.player.careerNhlGp,
-      headshotUrl: line.player.headshotUrl,
-      officialRosterStatus: line.player.officialRosterStatus,
-      gamesIngested: 1,
-      goals: num("goals"),
-      assists: num("assists"),
-      sog: num("sog"),
-      hits: num("hits"),
-      blockedShots: num("blockedShots"),
-      pim: num("pim"),
-      plusMinus: num("plusMinus"),
-      saves: num("saves"),
-      goalsAgainst: num("goalsAgainst"),
-      wins: won ? 1 : 0,
-      shutouts: won && num("goalsAgainst") === 0 ? 1 : 0,
-      points: computeFantasyPoints(line.statsJson, scoringConfig),
-    });
+    map.set(line.playerId, statLineToRow(line, line.player, scoringConfig));
   }
   return map;
 }

@@ -520,11 +520,11 @@ Everything the modal shows, in one server-side function, with a script proving i
 - `npx tsc --noEmit`, `npm run build` clean.
 
 ### Checklist
-- [ ] `currentAndLastSeason`; `NHL_TEAM_NAMES` + `nhlTeamLogoUrl`
-- [ ] `positions` filter + `statLineToRow` in rankings.ts (existing callers unchanged)
-- [ ] `src/lib/players/profile.ts` — header / rank+avg / two seasons with ATOI / game log / transactions with trade details / status / watching
-- [ ] `getPlayerProfileAction`
-- [ ] `scripts/player-profile-check.ts` passes; scoreboard-check + score-check still pass; PROGRESS.md; committed
+- [x] `currentAndLastSeason`; `NHL_TEAM_NAMES` + `nhlTeamLogoUrl`
+- [x] `positions` filter + `statLineToRow` in rankings.ts (existing callers unchanged)
+- [x] `src/lib/players/profile.ts` — header / rank+avg / two seasons with ATOI / game log / transactions with trade details / status / watching
+- [x] `getPlayerProfileAction`
+- [x] `scripts/player-profile-check.ts` passes; scoreboard-check + score-check still pass; PROGRESS.md; committed
 
 ---
 

@@ -36,3 +36,29 @@ export function resolveStatRange(
   const end = new Date(`${today}T23:59:59.999Z`);
   return { start, end, label: opt.label };
 }
+
+export interface SeasonRange {
+  value: string;
+  label: string;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * The player-profile modal's two Stats-card rows: the season containing
+ * `today` (falls back to the latest STAT_RANGES season entry if none
+ * contains it — e.g. STAT_RANGES hasn't been extended to cover today yet)
+ * and the season immediately before it, or null for the earliest season on
+ * record. `today` is injectable like resolveStatRange, for scripts/tests.
+ */
+export function currentAndLastSeason(
+  today: string = todayUTC(),
+): { thisSeason: SeasonRange; lastSeason: SeasonRange | null } {
+  const seasons = STAT_RANGES.filter(
+    (s): s is Extract<StatRangeOption, { kind: "season" }> => s.kind === "season",
+  );
+  const t = new Date(`${today}T00:00:00.000Z`);
+  let idx = seasons.findIndex((s) => t >= s.start && t <= s.end);
+  if (idx === -1) idx = seasons.length - 1;
+  return { thisSeason: seasons[idx], lastSeason: idx > 0 ? seasons[idx - 1] : null };
+}

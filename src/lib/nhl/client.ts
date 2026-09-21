@@ -173,3 +173,45 @@ export const NHL_TEAM_ABBREVS = [
   "NJD", "NYI", "NYR", "OTT", "PHI", "PIT", "SEA", "SJS",
   "STL", "TBL", "TOR", "UTA", "VAN", "VGK", "WSH", "WPG",
 ] as const;
+
+// Full team names for the player-profile modal's header card — every
+// abbrev in NHL_TEAM_ABBREVS has an entry (checked by
+// scripts/player-profile-check.ts).
+export const NHL_TEAM_NAMES: Record<string, string> = {
+  ANA: "Anaheim Ducks",
+  BOS: "Boston Bruins",
+  BUF: "Buffalo Sabres",
+  CGY: "Calgary Flames",
+  CAR: "Carolina Hurricanes",
+  CHI: "Chicago Blackhawks",
+  COL: "Colorado Avalanche",
+  CBJ: "Columbus Blue Jackets",
+  DAL: "Dallas Stars",
+  DET: "Detroit Red Wings",
+  EDM: "Edmonton Oilers",
+  FLA: "Florida Panthers",
+  LAK: "Los Angeles Kings",
+  MIN: "Minnesota Wild",
+  MTL: "Montreal Canadiens",
+  NSH: "Nashville Predators",
+  NJD: "New Jersey Devils",
+  NYI: "New York Islanders",
+  NYR: "New York Rangers",
+  OTT: "Ottawa Senators",
+  PHI: "Philadelphia Flyers",
+  PIT: "Pittsburgh Penguins",
+  SEA: "Seattle Kraken",
+  SJS: "San Jose Sharks",
+  STL: "St. Louis Blues",
+  TBL: "Tampa Bay Lightning",
+  TOR: "Toronto Maple Leafs",
+  UTA: "Utah Mammoth",
+  VAN: "Vancouver Canucks",
+  VGK: "Vegas Golden Knights",
+  WSH: "Washington Capitals",
+  WPG: "Winnipeg Jets",
+};
+
+export function nhlTeamLogoUrl(abbrev: string): string {
+  return `https://assets.nhle.com/logos/nhl/svg/${abbrev}_light.svg`;
+}

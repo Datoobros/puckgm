@@ -3324,6 +3324,69 @@ No UI reads these columns yet (Task 2+ of this batch). The daily cron
 (`api/cron/daily-ingest` → `ingestGame`) writes them automatically from now on
 for every new game.
 
+### Task 2: Profile data layer + Server Action
+
+`src/lib/players/profile.ts` (new) — `getPlayerProfile({ leagueId, playerId,
+viewerUserId })` assembles everything the modal will show in one call: the
+header (sweater number from the most recent stat line's `statsJson`, NHL team
+name/logo, health status, draft pedigree for prospects), this-season position
+rank + average points (honouring the league's `positionMode`), the two
+Stats-card rows (this/last season, via a new `currentAndLastSeason` helper in
+`seasons.ts`) with per-season ATOI parsed from `statsJson.toi`, a 25-game game
+log (opponent/result/TOI straight off Task 1's new `GameStatLine` columns),
+up to 50 league-transaction events (merged from `TransactionLog` rows keyed by
+`payload.playerId` plus every `PROCESSED` `Trade` the player was part of —
+`PROPOSED`/`UNDER_REVIEW`/declined/etc. trades never surface, so an offer stays
+confidential), and roster/waiver/FAAB/free-agency status for the action card
+Task 4 will build. Exposed read-only via `getPlayerProfileAction(leagueId,
+playerId)` in `players/actions.ts` — no `revalidatePath`, same as
+`searchPlayersAction`.
+
+Supporting additions, kept in their existing files rather than new ones:
+`currentAndLastSeason` (`players/seasons.ts`) resolves the season containing
+`today` plus the one before it, injectable for scripts; `NHL_TEAM_NAMES` (32
+entries) + `nhlTeamLogoUrl` (`nhl/client.ts`); `positions?: string[]` on
+`getPlayerStatsAggregate` (`players/rankings.ts`, composes with `playerIds`
+via AND — existing callers, which pass neither, get identical SQL) for the
+position-rank query; `statLineToRow` extracted from `getPlayerDailyStats`'s
+per-line mapping so the game log can reuse it for a single game's FPTS.
+
+**Plan-script correction, not a design re-open**: the plan's verification
+script opens free agency with a throwaway 1-round STARTUP draft resolved via
+`autodraftBatch`, copied from `lm-roster-moves-check.ts`. On the real player
+pool that autodraft picks the highest-ranked *available* players first —
+which on this production data meant it drafted the real Connor McDavid and
+Nikita Kucherov onto the disposable league's two teams the first time this
+ran, silently violating the script's "before any roster move" assumption
+(caught immediately: the "not yet owned by anyone" assertion failed).
+`getFreeAgencyStatus` only checks for a `COMPLETE` `STARTUP` `Draft` row, not
+that any picks were made, so `scripts/player-profile-check.ts` now sets the
+draft's status to `COMPLETE` directly via Prisma right after `setUpDraft`
+instead of running `startDraft`/`autodraftBatch` — no picks happen, no real
+player ends up rostered. (The stray league from the first run, with McDavid
+and Kucherov rostered on it, was cleaned up via `deleteLeague` before
+re-running — their real `Player` rows were never touched.)
+
+Verified: `npx tsc --noEmit` and `npm run build` both clean.
+`scripts/player-profile-check.ts` (new) passes end-to-end against a
+disposable `"Player Modal Check (delete me)"` league on real McDavid data —
+header fields, the 2026-27 all-zero row vs. the real 2025-26 row with ATOI
+`22:59`, rank/average null pre-season, 25 well-formed game-log rows, the
+Added → Sent down (waiver-exposed) → Claimed → Called up (voids the claim) →
+processed 2-for-1-plus-pick trade sequence and its transaction rendering
+(`"from Team A to Team B"`, 3 detail lines, pick asset `"2032 Rd 1 pick (orig.
+Team B)"`), a second still-`PROPOSED` trade confirmed **not** leaking into the
+same player's transaction list, per-user watchlist state, and a real
+draft-class prospect's honest empty stats/game-log. `scripts/scoreboard-check.ts`
+and `scripts/score-check.ts McDavid` re-run unmodified and still pass (216.6
+fantasy pts, 82 games — unchanged from Task 1's post-backfill number),
+confirming this task's `rankings.ts` changes left existing callers' SQL
+untouched. Disposable league + fixture player deleted by exact name
+afterward.
+
+No UI yet (Task 3+). `getPlayerProfileAction` isn't called from anywhere in
+the app until the modal exists.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to
