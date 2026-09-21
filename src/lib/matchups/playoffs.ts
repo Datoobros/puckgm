@@ -97,8 +97,8 @@ export async function advancePlayoffsForLeague(leagueId: string, season: number)
     const winners: Seeded[] = [];
     for (const m of prevMatchups) {
       const [homeScore, awayScore] = await Promise.all([
-        getTeamScoreForPeriod(m.homeTeamId, previous.startDate, previous.endDate, settings.scoringConfig),
-        getTeamScoreForPeriod(m.awayTeamId, previous.startDate, previous.endDate, settings.scoringConfig),
+        getTeamScoreForPeriod(m.homeTeamId, previous, settings.scoringConfig),
+        getTeamScoreForPeriod(m.awayTeamId, previous, settings.scoringConfig),
       ]);
       // homeScore >= awayScore rather than > — a tie goes to home, which is
       // always the better seed by construction (see orderBySeed above).

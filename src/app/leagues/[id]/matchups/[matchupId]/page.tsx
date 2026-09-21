@@ -79,6 +79,14 @@ function PlayerTable({ side }: { side: MatchupDetailSide }) {
         <span className="font-medium">{side.name}</span>
         <span className="ml-2 text-xs text-muted">{teamInitials(side.name)}</span>
       </div>
+      {side.adjustments.length > 0 && (
+        <div className="border-b border-border px-4 py-2 text-xs text-muted">
+          Adjustments:{" "}
+          {side.adjustments
+            .map((a) => `${a.points > 0 ? "+" : ""}${a.points.toFixed(1)}${a.reason ? ` (${a.reason})` : ""}`)
+            .join(", ")}
+        </div>
+      )}
       {side.players.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted">No lineup set for this week yet.</p>
       ) : (

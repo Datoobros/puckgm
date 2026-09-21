@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { getLeague } from "@/lib/leagues/mutations";
+import { getLeague, isLeagueCommissioner } from "@/lib/leagues/mutations";
 import type { LeagueSettings } from "@/lib/leagues/mutations";
 import { getScoreboardForPeriod, getTeamSchedule, playoffRoundLabel } from "@/lib/matchups/standings";
 import { Card } from "@/components/Card";
@@ -12,10 +12,11 @@ import { LinkButton, Badge } from "@/components/Button";
 import { teamInitials } from "@/lib/teams/initials";
 import { TeamScheduleSelect } from "./TeamScheduleSelect";
 import { MatchupWeekSelect, type WeekOption } from "./MatchupWeekSelect";
-import type { TopScorer } from "@/lib/matchups/standings";
+import { AdjustScoringModal } from "./AdjustScoringModal";
+import type { TopScorer, ScoreAdjustmentSummary } from "@/lib/matchups/standings";
 
 export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/scoreboard">) {
-  await auth.protect();
+  const { userId } = await auth.protect();
   const { id: leagueId } = await props.params;
   const sp = await props.searchParams;
   const rawWeek = Array.isArray(sp.week) ? sp.week[0] : sp.week;
@@ -25,6 +26,7 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
   const league = await getLeague(leagueId);
   if (!league) notFound();
   const settings = league.settingsJson as unknown as LeagueSettings;
+  const isCommissioner = await isLeagueCommissioner(leagueId, userId);
 
   const teams = await prisma.team.findMany({ where: { leagueId }, orderBy: { name: "asc" } });
   const selectedTeam = rawTeam ? teams.find((t) => t.id === rawTeam) : undefined;
@@ -100,9 +102,27 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
                   key={m.matchupId}
                   leagueId={leagueId}
                   matchupId={m.matchupId}
+                  matchupPeriodId={scoreboard.periodId}
                   final={m.final}
-                  home={{ name: m.homeTeamName, logoUrl: m.homeTeamLogoUrl, seed: m.homeSeed, score: m.homeScore, topScorers: m.homeTopScorers }}
-                  away={{ name: m.awayTeamName, logoUrl: m.awayTeamLogoUrl, seed: m.awaySeed, score: m.awayScore, topScorers: m.awayTopScorers }}
+                  isCommissioner={isCommissioner}
+                  home={{
+                    teamId: m.homeTeamId,
+                    name: m.homeTeamName,
+                    logoUrl: m.homeTeamLogoUrl,
+                    seed: m.homeSeed,
+                    score: m.homeScore,
+                    topScorers: m.homeTopScorers,
+                    adjustments: m.homeAdjustments,
+                  }}
+                  away={{
+                    teamId: m.awayTeamId,
+                    name: m.awayTeamName,
+                    logoUrl: m.awayTeamLogoUrl,
+                    seed: m.awaySeed,
+                    score: m.awayScore,
+                    topScorers: m.awayTopScorers,
+                    adjustments: m.awayAdjustments,
+                  }}
                 />
               ))
             )}
@@ -114,11 +134,13 @@ export default async function ScoreboardPage(props: PageProps<"/leagues/[id]/sco
 }
 
 interface MatchupSide {
+  teamId: string;
   name: string;
   logoUrl: string | null;
   seed: number | null;
   score: number;
   topScorers: TopScorer[];
+  adjustments: ScoreAdjustmentSummary[];
 }
 
 /** "Connor McDavid" -> "C. McDavid" — the top-scorer row's compact name
@@ -136,13 +158,17 @@ function shortPlayerName(fullName: string): string {
 function MatchupCard({
   leagueId,
   matchupId,
+  matchupPeriodId,
   final,
+  isCommissioner,
   home,
   away,
 }: {
   leagueId: string;
   matchupId: string;
+  matchupPeriodId: string;
   final: boolean;
+  isCommissioner: boolean;
   home: MatchupSide;
   away: MatchupSide;
 }) {
@@ -157,10 +183,13 @@ function MatchupCard({
           <TopScorersRow side={home} />
           <TopScorersRow side={away} />
         </div>
-        <div className="flex items-center justify-center p-4">
+        <div className="flex flex-col items-center justify-center gap-1.5 p-4">
           <LinkButton variant="secondary" className="rounded-full px-5" href={`/leagues/${leagueId}/matchups/${matchupId}`}>
             Matchup
           </LinkButton>
+          {isCommissioner && (
+            <AdjustScoringModal leagueId={leagueId} matchupPeriodId={matchupPeriodId} home={home} away={away} />
+          )}
         </div>
       </div>
     </Card>
@@ -176,7 +205,10 @@ function TeamRow({ side, final, otherScore }: { side: MatchupSide; final: boolea
         {side.seed !== null && <span className="text-muted">({side.seed}) </span>}
         {side.name}
       </div>
-      <div className="shrink-0 text-2xl font-bold tabular-nums">{side.score.toFixed(1)}</div>
+      <div className="shrink-0 text-right">
+        <div className="text-2xl font-bold tabular-nums">{side.score.toFixed(1)}</div>
+        {side.adjustments.length > 0 && <div className="text-[10px] text-muted">(adj.)</div>}
+      </div>
     </div>
   );
 }

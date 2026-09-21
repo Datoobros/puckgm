@@ -204,6 +204,7 @@ model Team {
   lineupEntries     LineupEntry[]
   homeMatchups      Matchup[]          @relation("MatchupHomeTeam")
   awayMatchups      Matchup[]          @relation("MatchupAwayTeam")
+  scoreAdjustments  ScoreAdjustment[]
 
   @@index([leagueId])
 }
@@ -466,7 +467,8 @@ model MatchupPeriod {
   // round by round by the daily cron.
   isPlayoffs Boolean  @default(false)
 
-  matchups Matchup[]
+  matchups         Matchup[]
+  scoreAdjustments ScoreAdjustment[]
 
   @@unique([leagueId, season, periodNo])
 }
@@ -493,6 +495,28 @@ model Matchup {
   bracketSlot     Int?
 
   @@index([matchupPeriodId])
+}
+
+// Commissioner scoring correction (LM Tools Task 10) — the one exception to
+// "a score is always computed live, never persisted" (see Matchup's comment
+// above): a real, manually-entered value that getTeamScoreForPeriod sums
+// into its result, so standings/scoreboard/matchup-detail/team-schedule/
+// playoff-advancement all agree on the adjusted total. leagueId is a plain
+// scalar (no relation), same pattern as TransactionLog.leagueId, since
+// deleteLeague only ever needs to filter by it directly.
+model ScoreAdjustment {
+  id              String        @id @default(cuid())
+  leagueId        String
+  matchupPeriodId String
+  matchupPeriod   MatchupPeriod @relation(fields: [matchupPeriodId], references: [id])
+  teamId          String
+  team            Team          @relation(fields: [teamId], references: [id])
+  points          Float
+  reason          String?
+  createdBy       String // user id
+  createdAt       DateTime      @default(now())
+
+  @@index([matchupPeriodId, teamId])
 }
 
 // Lineups are pre-set and freely editable, no weekly lock — only a per-game

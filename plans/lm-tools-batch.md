@@ -608,9 +608,9 @@ schedule cards, delete the legacy page.
 - Browser: modal add/remove; standings and matchup detail reflect it.
 
 ### Checklist
-- [ ] schema (+ deleteLeague/teamHasHistory); `getTeamScoreForPeriod` signature + all call sites
-- [ ] adjustments module; scoreboard modal; detail line
-- [ ] verified; PROGRESS.md; committed
+- [x] schema (+ deleteLeague/teamHasHistory); `getTeamScoreForPeriod` signature + all call sites
+- [x] adjustments module; scoreboard modal; detail line
+- [x] verified; PROGRESS.md; committed
 
 ---
 

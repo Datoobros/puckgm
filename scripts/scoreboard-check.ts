@@ -107,7 +107,7 @@ async function main() {
 
   console.log("\n-- sum(PeriodPlayerPoints.points) === getTeamScoreForPeriod --");
   const sumOfRows = rows.reduce((s, r) => s + r.points, 0);
-  const teamScore = await getTeamScoreForPeriod(teamA, period.startDate, period.endDate, SCORING);
+  const teamScore = await getTeamScoreForPeriod(teamA, period, SCORING);
   assert(sumOfRows === teamScore, `sum of per-player points (${sumOfRows}) equals the team's period score (${teamScore})`);
 
   console.log("\n-- getMatchupDetail --");
@@ -118,7 +118,7 @@ async function main() {
   const detailHome = detail!.home.teamId === teamA ? detail!.home : detail!.away;
   const detailAway = detail!.home.teamId === teamA ? detail!.away : detail!.home;
   assert(detailHome.score === teamScore, `detail's teamA score (${detailHome.score}) matches getTeamScoreForPeriod (${teamScore})`);
-  const otherScore = await getTeamScoreForPeriod(detailAway.teamId, period.startDate, period.endDate, SCORING);
+  const otherScore = await getTeamScoreForPeriod(detailAway.teamId, period, SCORING);
   assert(detailAway.score === otherScore, `detail's other-team score (${detailAway.score}) matches getTeamScoreForPeriod (${otherScore})`);
   assert(
     detailHome.players.reduce((s, p) => s + p.points, 0) === detailHome.score,

@@ -364,20 +364,41 @@ export async function setTeamLogo(input: { leagueId: string; teamId: string; cal
  * UI can show/disable the Delete control with a reason before the caller
  * even tries. */
 export async function teamHasHistory(teamId: string): Promise<boolean> {
-  const [rosterCount, draftPickCount, tradeItemCount, faBidCount, faabBudgetCount, waiverClaimCount, lineupCount, tradeVetoCount, matchupCount] =
-    await Promise.all([
-      prisma.rosterSlot.count({ where: { teamId } }),
-      prisma.draftPick.count({ where: { OR: [{ originalTeamId: teamId }, { currentOwnerId: teamId }] } }),
-      prisma.tradeItem.count({ where: { OR: [{ fromTeamId: teamId }, { toTeamId: teamId }] } }),
-      prisma.faBid.count({ where: { teamId } }),
-      prisma.faabBudget.count({ where: { teamId } }),
-      prisma.waiverClaim.count({ where: { teamId } }),
-      prisma.lineupEntry.count({ where: { teamId } }),
-      prisma.tradeVeto.count({ where: { teamId } }),
-      prisma.matchup.count({ where: { OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] } }),
-    ]);
+  const [
+    rosterCount,
+    draftPickCount,
+    tradeItemCount,
+    faBidCount,
+    faabBudgetCount,
+    waiverClaimCount,
+    lineupCount,
+    tradeVetoCount,
+    matchupCount,
+    scoreAdjustmentCount,
+  ] = await Promise.all([
+    prisma.rosterSlot.count({ where: { teamId } }),
+    prisma.draftPick.count({ where: { OR: [{ originalTeamId: teamId }, { currentOwnerId: teamId }] } }),
+    prisma.tradeItem.count({ where: { OR: [{ fromTeamId: teamId }, { toTeamId: teamId }] } }),
+    prisma.faBid.count({ where: { teamId } }),
+    prisma.faabBudget.count({ where: { teamId } }),
+    prisma.waiverClaim.count({ where: { teamId } }),
+    prisma.lineupEntry.count({ where: { teamId } }),
+    prisma.tradeVeto.count({ where: { teamId } }),
+    prisma.matchup.count({ where: { OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] } }),
+    prisma.scoreAdjustment.count({ where: { teamId } }),
+  ]);
   return (
-    rosterCount + draftPickCount + tradeItemCount + faBidCount + faabBudgetCount + waiverClaimCount + lineupCount + tradeVetoCount + matchupCount > 0
+    rosterCount +
+      draftPickCount +
+      tradeItemCount +
+      faBidCount +
+      faabBudgetCount +
+      waiverClaimCount +
+      lineupCount +
+      tradeVetoCount +
+      matchupCount +
+      scoreAdjustmentCount >
+    0
   );
 }
 
@@ -583,8 +604,12 @@ export async function deleteLeague(leagueId: string, callerUserId: string): Prom
   // exact bug shape — caught by Task 3's one-off reset script
   // (scripts/reset-experimenting-for-draft.ts) hitting the FK violation
   // while deleting the stale "Roster Action Test League (delete me)"
-  // artifact, not by inspection.
+  // artifact, not by inspection. ScoreAdjustment (added with LM Tools Task
+  // 10) is fixed proactively here instead of waiting to hit it, same shape
+  // again: it references both MatchupPeriod and Team with no cascade, so it
+  // has to go before both.
   await prisma.$transaction([
+    prisma.scoreAdjustment.deleteMany({ where: { leagueId } }),
     prisma.matchup.deleteMany({ where: { matchupPeriod: { leagueId } } }),
     prisma.matchupPeriod.deleteMany({ where: { leagueId } }),
     prisma.leagueSettingsLog.deleteMany({ where: { leagueId } }),

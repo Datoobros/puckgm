@@ -4,7 +4,11 @@
 // points from players who were actually STARTED (non-BE lineup slot) on
 // days within that period, not the whole roster — this is the first place
 // the Roster-vs-Lineup distinction (DESIGN.md §2.4) actually affects a
-// number instead of just gating a select's options.
+// number instead of just gating a select's options. The one stored
+// exception is ScoreAdjustment (LM Tools Task 10, src/lib/matchups/
+// adjustments.ts) — a real commissioner correction, summed into
+// getTeamScoreForPeriod's result so every consumer (standings, scoreboard,
+// matchup detail, team schedule, playoff advancement) agrees on it.
 
 import { prisma } from "@/lib/db";
 import { computeFantasyPoints, type ScoringConfig } from "@/lib/scoring/engine";
@@ -26,20 +30,27 @@ export function playoffRoundLabel(totalRounds: number, roundIndex: number): stri
 
 export async function getTeamScoreForPeriod(
   teamId: string,
-  start: Date,
-  end: Date,
+  period: { id: string; startDate: Date; endDate: Date },
   scoringConfig: ScoringConfig,
 ): Promise<number> {
   const entries = await prisma.lineupEntry.findMany({
-    where: { teamId, gameDate: { gte: start, lte: end }, lineupSlot: { not: "BE" } },
-  });
-  if (entries.length === 0) return 0;
-
-  const lines = await prisma.gameStatLine.findMany({
-    where: { OR: entries.map((e) => ({ playerId: e.playerId, gameDate: e.gameDate })) },
+    where: { teamId, gameDate: { gte: period.startDate, lte: period.endDate }, lineupSlot: { not: "BE" } },
   });
 
-  return lines.reduce((sum, l) => sum + computeFantasyPoints(l.statsJson, scoringConfig), 0);
+  let statPoints = 0;
+  if (entries.length > 0) {
+    const lines = await prisma.gameStatLine.findMany({
+      where: { OR: entries.map((e) => ({ playerId: e.playerId, gameDate: e.gameDate })) },
+    });
+    statPoints = lines.reduce((sum, l) => sum + computeFantasyPoints(l.statsJson, scoringConfig), 0);
+  }
+
+  const adjustment = await prisma.scoreAdjustment.aggregate({
+    where: { teamId, matchupPeriodId: period.id },
+    _sum: { points: true },
+  });
+
+  return statPoints + (adjustment._sum.points ?? 0);
 }
 
 export interface TopScorer {
@@ -215,8 +226,8 @@ export async function getStandings(
   for (const period of periods) {
     for (const m of period.matchups) {
       const [homeScore, awayScore] = await Promise.all([
-        getTeamScoreForPeriod(m.homeTeamId, period.startDate, period.endDate, scoringConfig),
-        getTeamScoreForPeriod(m.awayTeamId, period.startDate, period.endDate, scoringConfig),
+        getTeamScoreForPeriod(m.homeTeamId, period, scoringConfig),
+        getTeamScoreForPeriod(m.awayTeamId, period, scoringConfig),
       ]);
       const home = rows.get(m.homeTeamId);
       const away = rows.get(m.awayTeamId);
@@ -389,6 +400,13 @@ export function estimatePlayoffOdds(rank: number, totalTeams: number, bracketSiz
   return Math.round(45 - t * 40);
 }
 
+export interface ScoreAdjustmentSummary {
+  id: string;
+  points: number;
+  reason: string | null;
+  createdAt: Date;
+}
+
 export interface ScoreboardMatchup {
   matchupId: string;
   homeTeamId: string;
@@ -397,12 +415,14 @@ export interface ScoreboardMatchup {
   homeScore: number;
   homeSeed: number | null;
   homeTopScorers: TopScorer[];
+  homeAdjustments: ScoreAdjustmentSummary[];
   awayTeamId: string;
   awayTeamName: string;
   awayTeamLogoUrl: string | null;
   awayScore: number;
   awaySeed: number | null;
   awayTopScorers: TopScorer[];
+  awayAdjustments: ScoreAdjustmentSummary[];
   final: boolean;
 }
 
@@ -485,8 +505,8 @@ export async function getTeamSchedule(
     const opponentTeamId = isHome ? m.awayTeamId : m.homeTeamId;
     const [myScore, opponentScore] = final
       ? await Promise.all([
-          getTeamScoreForPeriod(teamId, period.startDate, period.endDate, scoringConfig),
-          getTeamScoreForPeriod(opponentTeamId, period.startDate, period.endDate, scoringConfig),
+          getTeamScoreForPeriod(teamId, period, scoringConfig),
+          getTeamScoreForPeriod(opponentTeamId, period, scoringConfig),
         ])
       : [0, 0];
     const roundIndex = playoffPeriods.findIndex((p) => p.id === period.id);
@@ -534,17 +554,20 @@ export async function getScoreboardForPeriod(
       periods[periods.length - 1];
   }
 
-  const matchups = await prisma.matchup.findMany({
-    where: { matchupPeriodId: target.id },
-    include: { homeTeam: true, awayTeam: true },
-  });
+  const [matchups, periodAdjustments] = await Promise.all([
+    prisma.matchup.findMany({
+      where: { matchupPeriodId: target.id },
+      include: { homeTeam: true, awayTeam: true },
+    }),
+    prisma.scoreAdjustment.findMany({ where: { matchupPeriodId: target.id }, orderBy: { createdAt: "asc" } }),
+  ]);
 
   const final = target.endDate <= new Date();
   const results = await Promise.all(
     matchups.map(async (m) => {
       const [homeScore, awayScore, homeTopScorers, awayTopScorers] = await Promise.all([
-        getTeamScoreForPeriod(m.homeTeamId, target.startDate, target.endDate, scoringConfig),
-        getTeamScoreForPeriod(m.awayTeamId, target.startDate, target.endDate, scoringConfig),
+        getTeamScoreForPeriod(m.homeTeamId, target, scoringConfig),
+        getTeamScoreForPeriod(m.awayTeamId, target, scoringConfig),
         getTeamTopScorersForPeriod(m.homeTeamId, target.startDate, target.endDate, scoringConfig),
         getTeamTopScorersForPeriod(m.awayTeamId, target.startDate, target.endDate, scoringConfig),
       ]);
@@ -556,12 +579,14 @@ export async function getScoreboardForPeriod(
         homeScore,
         homeSeed: m.homeSeed,
         homeTopScorers,
+        homeAdjustments: periodAdjustments.filter((a) => a.teamId === m.homeTeamId),
         awayTeamId: m.awayTeamId,
         awayTeamName: m.awayTeam.name,
         awayTeamLogoUrl: m.awayTeam.logoUrl,
         awayScore,
         awaySeed: m.awaySeed,
         awayTopScorers,
+        awayAdjustments: periodAdjustments.filter((a) => a.teamId === m.awayTeamId),
         final,
       };
     }),
@@ -588,6 +613,7 @@ export interface MatchupDetailSide {
   seed: number | null;
   score: number;
   players: PeriodPlayerPoints[];
+  adjustments: ScoreAdjustmentSummary[];
 }
 
 export interface MatchupDetail {
@@ -617,11 +643,12 @@ export async function getMatchupDetail(matchupId: string, scoringConfig: Scoring
   const period = matchup.matchupPeriod;
   const final = period.endDate <= new Date();
 
-  const [homeScore, awayScore, homePlayers, awayPlayers] = await Promise.all([
-    getTeamScoreForPeriod(matchup.homeTeamId, period.startDate, period.endDate, scoringConfig),
-    getTeamScoreForPeriod(matchup.awayTeamId, period.startDate, period.endDate, scoringConfig),
+  const [homeScore, awayScore, homePlayers, awayPlayers, periodAdjustments] = await Promise.all([
+    getTeamScoreForPeriod(matchup.homeTeamId, period, scoringConfig),
+    getTeamScoreForPeriod(matchup.awayTeamId, period, scoringConfig),
     getTeamPeriodPlayerPoints(matchup.homeTeamId, period.startDate, period.endDate, scoringConfig),
     getTeamPeriodPlayerPoints(matchup.awayTeamId, period.startDate, period.endDate, scoringConfig),
+    prisma.scoreAdjustment.findMany({ where: { matchupPeriodId: period.id }, orderBy: { createdAt: "asc" } }),
   ]);
 
   let roundLabel: string | null = null;
@@ -649,6 +676,7 @@ export async function getMatchupDetail(matchupId: string, scoringConfig: Scoring
       seed: matchup.homeSeed,
       score: homeScore,
       players: homePlayers,
+      adjustments: periodAdjustments.filter((a) => a.teamId === matchup.homeTeamId),
     },
     away: {
       teamId: matchup.awayTeamId,
@@ -657,6 +685,7 @@ export async function getMatchupDetail(matchupId: string, scoringConfig: Scoring
       seed: matchup.awaySeed,
       score: awayScore,
       players: awayPlayers,
+      adjustments: periodAdjustments.filter((a) => a.teamId === matchup.awayTeamId),
     },
   };
 }

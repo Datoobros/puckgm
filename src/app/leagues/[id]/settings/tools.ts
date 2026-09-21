@@ -76,6 +76,7 @@ export const LM_TOOL_CARDS: LmToolCard[] = [
       {
         title: "Adjust Scoring",
         description: "Manually adjust a team's score for a given matchup.",
+        href: (leagueId) => `/leagues/${leagueId}/scoreboard`,
       },
     ],
   },

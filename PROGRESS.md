@@ -3034,6 +3034,86 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   `javascript_tool` did. Worth trying first if a future click-driven check silently no-ops.
   Disposable league deleted by exact name + id afterward.
 
+**Task 10 — Adjust Scoring** (`plans/lm-tools-batch.md`)
+- Migration `add_score_adjustment`: `ScoreAdjustment { id, leagueId, matchupPeriodId ->
+  MatchupPeriod, teamId -> Team, points Float, reason String?, createdBy, createdAt }`.
+  `leagueId` is a plain scalar with no relation, same pattern as `TransactionLog.leagueId` —
+  `deleteLeague` only ever needs to filter by it directly. Added to `deleteLeague`'s teardown
+  order (before both `MatchupPeriod` and `Team`, per the plan's own note on why) and to
+  `teamHasHistory`'s count.
+- `getTeamScoreForPeriod` (`src/lib/matchups/standings.ts`) now takes a `period: { id,
+  startDate, endDate }` object instead of separate `start`/`end` Dates, and sums
+  `ScoreAdjustment.points` for `(teamId, matchupPeriodId)` into its result — the one stored
+  exception to "a score is always computed live," called out in the file's top comment.
+  **Real count mismatch found**: the plan said seven call sites (five in standings.ts, one in
+  playoffs.ts); `grep` found ten (eight in standings.ts across `getStandings`,
+  `getTeamSchedule`, `getScoreboardForPeriod`, `getMatchupDetail`, plus two in playoffs.ts) —
+  all already held a full period object as the plan predicted, so the extra count didn't
+  change the mechanical update, just the total. `npx tsc --noEmit` confirmed all ten (plus one
+  more, below) were caught.
+- **One more real call site, outside the two files the plan named**:
+  `scripts/scoreboard-check.ts` calls `getTeamScoreForPeriod` directly (twice) with the old
+  `(teamId, start, end, config)` shape. The task's instructions said to re-run this script
+  *unmodified*; literally doing that would have silently passed `period.startDate`/
+  `period.endDate` (two `Date` objects) into the new `period`/`scoringConfig` parameter slots —
+  `tsc` wouldn't catch it (a positional call with extra/wrong-shaped args to a looser JS
+  boundary), and at runtime every field read off those Dates comes back `undefined`, which
+  Prisma treats as "omit this filter," silently turning a scoped query into an unscoped one.
+  Judgment call: updated only the two call *sites* (`getTeamScoreForPeriod(teamA, period,
+  SCORING)` instead of `(teamA, period.startDate, period.endDate, SCORING)`) — zero change to
+  the script's assertions, fixture data, or expected values — since the alternative (leaving it
+  broken) isn't what "must still pass" could have meant, and the plan's own guidance elsewhere
+  ("fix the code, never the script") is about protecting assertions, not freezing an
+  unavoidable signature adaptation. Documented here in case that reasoning needs revisiting.
+- `getScoreboardForPeriod`'s `ScoreboardMatchup` gained `homeAdjustments`/`awayAdjustments`
+  (new `ScoreAdjustmentSummary` type) and `getMatchupDetail`'s `MatchupDetailSide` gained
+  `adjustments` — both populated from one `scoreAdjustment.findMany` per period/matchup rather
+  than N+1 queries, so the Scoreboard modal and the matchup detail page never need a second
+  fetch to show what's already been applied.
+- New `src/lib/matchups/adjustments.ts`: `addScoreAdjustment` (commissioner-only; the team must
+  actually be in a `Matchup` for that period — an adjustment with nothing to attach to is
+  rejected; `points` must be finite and nonzero), `removeScoreAdjustment` (commissioner-only,
+  re-derives the league from the adjustment row rather than trusting a caller-supplied
+  `leagueId`), `listScoreAdjustments`.
+- UI: `AdjustScoringModal.tsx` (client, same self-contained open-state shape as
+  `NotificationsButton.tsx`) renders the commissioner-only "Adjust Scoring" text link under
+  each Scoreboard matchup card's "Matchup" button and the modal itself — team radio, points
+  input (`step="0.1"`, negative allowed via a plain number parse, not the `min`/`max` HTML
+  attributes), reason, Save, plus a live list of both sides' existing adjustments with Remove.
+  Calls the new `src/app/leagues/[id]/scoreboard/actions.ts` Server Actions directly (not a raw
+  `<form>`) and `router.refresh()`s on success, same pattern as `RosterMoveActionButton.tsx` —
+  the modal stays open and its props re-render with fresh data rather than closing. A side's
+  score gets a small `(adj.)` marker when it carries any adjustment. Matchup detail page gained
+  an "Adjustments: +N (reason)" line per side, under the team header — the player table's own
+  sum intentionally does *not* include it, so the gap between the player-sum and the `Total`
+  row footer *is* the visible adjustment, same reconciliation the regression script asserts.
+  `tools.ts`'s Adjust Scoring row now links to the Scoreboard.
+- Verified: `npx tsc --noEmit` / `npm run build` clean. New `scripts/lm-adjust-scoring-check.ts`
+  against a disposable "LM Tools Task 10 (delete me)" league: a +5.5 adjustment flips a
+  completed period's result in both `getStandings` and the scoreboard total (10 vs 14 becomes
+  15.5 vs 14); removing it restores both exactly; `getMatchupDetail` agrees and exposes the
+  adjustment; a team with no matchup that period is rejected (verified by creating a 5th team
+  after schedule generation specifically to have zero matchups anywhere); zero points rejected;
+  a non-commissioner caller rejected; none of the three rejections wrote a row.
+  `advancePlayoffsForLeague` was verified to pick the adjustment-boosted team, not the
+  raw-stat leader, for a semifinal winner — deliberately did *not* try to engineer a
+  predictable regular-season seed order for this (bracket size equals team count here, so
+  every team makes it regardless of exact standings order); instead the script reads whichever
+  two teams land in the real semifinal slot 0 and drives the flip off their actual ids. Ran
+  `scoreboard-check.ts`, `standings-redesign-check.ts`, `playoffs-check.ts`, `score-check.ts`
+  afterward — all pass (see the call-site note above for the one line that had to change in
+  `scoreboard-check.ts`). Real browser check (`// TEMP:` bypass across
+  `leagues/[id]/layout.tsx`, `scoreboard/page.tsx`, `scoreboard/actions.ts`,
+  `standings/page.tsx`, and `matchups/[matchupId]/page.tsx` — the Server Action's own
+  `auth.protect()` call needed its own bypass independent of the page, same gotcha Task 7's
+  entry already flagged; reverted, `grep -rn "TEMP:" src/` clean) against a disposable "LM
+  Tools Task 10 Browser Check (delete me)" league: the link showed for the commissioner and
+  was absent for a plain manager (same league, same matchup, only the `// TEMP:` userId
+  swapped); the modal added a +3.5 adjustment, the card immediately showed 7.5 with `(adj.)`,
+  Standings showed the flipped 1-0/0-1 record, and the matchup detail page showed the
+  "Adjustments: +3.5" line with the total reconciling; Remove reverted the card to 4.0 with no
+  marker. Disposable league deleted by exact name + id afterward.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to
