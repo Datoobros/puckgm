@@ -685,8 +685,8 @@ worth extracting for a rarely used commissioner path.
 - Browser: change two slots, Save, the team page shows the new lineup.
 
 ### Checklist
-- [ ] Edit Lineup step 2; option enabled
-- [ ] verified; PROGRESS.md; committed
+- [x] Edit Lineup step 2; option enabled
+- [x] verified; PROGRESS.md; committed
 
 ---
 

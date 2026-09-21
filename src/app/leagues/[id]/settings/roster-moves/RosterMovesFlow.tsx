@@ -48,9 +48,7 @@ export function RosterMovesFlow({ leagueId, teams, hasFarm }: { leagueId: string
             <option value="IR">Manage IR</option>
             {hasFarm && <option value="FARM">Manage Farm Team</option>}
             <option value="TRADE">Make Trade</option>
-            <option value="LINEUP" disabled>
-              Edit Lineup (Task 12)
-            </option>
+            <option value="LINEUP">Edit Lineup</option>
           </select>
         </Row>
 
@@ -65,11 +63,12 @@ export function RosterMovesFlow({ leagueId, teams, hasFarm }: { leagueId: string
           </select>
         </Row>
 
-        {action === "TRADE" ? (
+        {action === "TRADE" || action === "LINEUP" ? (
           <Row label="Perform as">
             <p className="text-xs text-muted">
-              Not applicable — a Make Trade always executes immediately as the League Manager,
-              with no acceptance or review window.
+              {action === "TRADE"
+                ? "Not applicable — a Make Trade always executes immediately as the League Manager, with no acceptance or review window."
+                : "Not applicable — Edit Lineup always applies as that team's own manager. Game-time locks always apply."}
             </p>
           </Row>
         ) : (

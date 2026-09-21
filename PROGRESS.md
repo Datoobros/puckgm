@@ -3191,6 +3191,68 @@ email, so it's excluded from this run — see `plans/lm-tools-run-a.md`).
   "LM Tools" nav link) while the read-only table still rendered normally. Disposable league
   deleted by exact name + id afterward.
 
+**Task 12 — LM Roster Moves: Edit Lineup** (`plans/lm-tools-batch.md`) — deliberately last
+and deliberately simple, per the plan's own framing: the team page's drag-to-move lineup
+board isn't worth extracting for a rarely used commissioner path.
+- No new primitives in `src/lib/lineups/mutations.ts` — `setLineupSlot`/`swapLineupSlots`
+  already covered everything Edit Lineup needs. All new logic lives in
+  `settings/roster-moves/actions.ts`'s `lmEditLineupAction(leagueId, teamId, date, changes)`:
+  commissioner check via the existing `requireCommissionerTeam` helper, then applies each
+  changed row with `managerUserId = team.managerUserId` (Perform-as is genuinely ignored —
+  there's no League-Manager-bypass variant of a lineup edit, only "the manager did it,"
+  same as the plan's own wording). A plain two-player swap (each row's new slot is exactly
+  the other row's old slot) goes through `swapLineupSlots` so neither leg transiently trips
+  the other's slot capacity; anything else applies one `setLineupSlot` call at a time, BE-
+  bound moves first (freeing capacity never fails), stopping at and returning the first
+  refusal — verified this ordering doesn't spuriously fail a bench-then-promote pair in the
+  browser check below.
+- Step 2 (`EditLineupStep.tsx` + client `EditLineupForm.tsx`): a plain table of the Active
+  roster — Player | Pos | Today's Game | Slot select — using the exact same
+  `eligibleSlotsForPosition` helper (imported from `lineups/mutations.ts`, not copied) and
+  `getTeamGamesForDate`/`isLocked` lock logic the team page's own lineup board uses, so the
+  two surfaces can never disagree on what's legal. A locked player's cell shows "🔒 <slot>"
+  instead of a select — disabled, not hidden, so the commissioner can see who's unavailable
+  and why. `ensureLineupMaterialized` runs before reading, same as every other lineup call
+  site, so a never-explicitly-set date still shows the real carried-forward/auto-filled
+  state rather than an all-bench table.
+- `DateStrip.tsx` turned out to be page-coupled (its `go()` hardcodes
+  `/leagues/${leagueId}/teams/${teamId}` as the push target) — per the plan's own fallback,
+  used a plain `<input type="date">` (`LineupDatePicker.tsx`) instead, preserving
+  `?action=LINEUP&team=&as=` on every date change.
+- Step 1 (`RosterMovesFlow.tsx`): "Edit Lineup" enabled (was `disabled` with a "(Task 12)"
+  placeholder label since Task 3). Perform-as radios hidden for it exactly like Make Trade
+  already hides them for trades, with its own explanatory note instead — the same
+  conditional block now branches on `action === "TRADE" || action === "LINEUP"`.
+  `roster-moves/page.tsx`'s "Team: X · Performing as: Y" summary line above step 2 also
+  skips the "Performing as" clause for `LINEUP`, same as it already did for `TRADE`.
+- Verified: `npx tsc --noEmit` / `npm run build` clean. New `scripts/lm-edit-lineup-check.ts`
+  — since `lmEditLineupAction` is a `"use server"` function that calls `auth.protect()` and
+  (like every other action this batch) can't run outside a real request, this tests the
+  underlying pieces with the exact call shape the action uses, same convention
+  `lm-roster-moves-check.ts` established: `isLeagueCommissioner` for the gate,
+  `setLineupSlot` for the write. Against a disposable "LM Tools Task 12 (delete me)" league:
+  a commissioner-driven `setLineupSlot` call on a team the caller doesn't manage is reflected
+  by `getLineupForDate`; an ineligible slot for the player's position is refused and leaves
+  the row unchanged; a player assigned to Edmonton is refused for the real, already-completed
+  2026-01-15 game (a genuine historical NHL date/team pair, not a mocked schedule — the same
+  date this project's matchups work already cross-checked against a real McDavid box score);
+  a non-commissioner caller fails the `isLeagueCommissioner` gate the action itself depends
+  on. Re-ran `scripts/persistent-lineup-check.ts` unmodified — still passes, confirming Task
+  12 changed no shared lineup behavior. Real browser check (`// TEMP:` bypass across
+  `leagues/[id]/layout.tsx`, `leagues/[id]/settings/layout.tsx`,
+  `settings/roster-moves/actions.ts`'s `lmEditLineupAction`, and, to confirm the cross-page
+  reflection, `leagues/[id]/teams/[teamId]/page.tsx`; reverted, `grep -rn "TEMP:" src/`
+  clean) against a disposable "LM Tools Task 12 Browser Check (delete me)" league seeded
+  with six real players on Team B's active roster: step 1's Edit Lineup option worked with
+  the Perform-as radios correctly replaced by the ignored-for-lineups note; step 2 rendered
+  the auto-filled table (persistent-lineup materialization ran for real, no games that
+  preseason date); benching two players (A.J. Greer, Aatu Räty) and saving showed "Lineup
+  saved." with both selects settling on BE and the Save button disabling itself (the
+  changed-row count correctly zeroed out after `router.refresh()` picked up the new
+  `currentSlot` values); Team B's own roster page, loaded fresh afterward, showed both
+  players under Bench, confirming the edit is the same real `LineupEntry` data the team page
+  itself reads, not a separate copy. Disposable league deleted by exact name + id afterward.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

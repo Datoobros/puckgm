@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLeague, type LeagueSettings } from "@/lib/leagues/mutations";
+import { todayUTC } from "@/lib/dates";
 import { Badge } from "@/components/Button";
 import { RosterMovesFlow, type RosterMovesTeamOption } from "./RosterMovesFlow";
 import { AddPlayerStep } from "./AddPlayerStep";
@@ -8,9 +9,10 @@ import { DropPlayerStep } from "./DropPlayerStep";
 import { ManageIrStep } from "./ManageIrStep";
 import { ManageFarmStep } from "./ManageFarmStep";
 import { MakeTradeStep } from "./MakeTradeStep";
+import { EditLineupStep } from "./EditLineupStep";
 import type { PerformAs } from "./actions";
 
-const VALID_ACTIONS = new Set(["ADD", "DROP", "IR", "FARM", "TRADE"]);
+const VALID_ACTIONS = new Set(["ADD", "DROP", "IR", "FARM", "TRADE", "LINEUP"]);
 
 export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/settings/roster-moves">) {
   const { id: leagueId } = await props.params;
@@ -19,6 +21,7 @@ export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/se
   const rawTeam = Array.isArray(sp.team) ? sp.team[0] : sp.team;
   const rawAs = Array.isArray(sp.as) ? sp.as[0] : sp.as;
   const rawWith = Array.isArray(sp.with) ? sp.with[0] : sp.with;
+  const rawDate = Array.isArray(sp.date) ? sp.date[0] : sp.date;
 
   const league = await getLeague(leagueId);
   if (!league) notFound();
@@ -62,7 +65,7 @@ export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/se
           <>
             <p className="mb-4 text-sm">
               Team: <strong>{selectedTeam!.name}</strong>
-              {rawAction !== "TRADE" && (
+              {rawAction !== "TRADE" && rawAction !== "LINEUP" && (
                 <>
                   {" "}
                   · Performing as: <strong>{performAs === "LM" ? "League Manager" : "Team Manager"}</strong>
@@ -81,6 +84,9 @@ export default async function RosterMovesPage(props: PageProps<"/leagues/[id]/se
             {rawAction === "FARM" && <ManageFarmStep leagueId={leagueId} teamId={selectedTeam!.id} performAs={performAs!} />}
             {rawAction === "TRADE" && (
               <MakeTradeStep leagueId={leagueId} teamId={selectedTeam!.id} withTeamId={rawWith && rawWith !== selectedTeam!.id ? rawWith : null} />
+            )}
+            {rawAction === "LINEUP" && (
+              <EditLineupStep leagueId={leagueId} teamId={selectedTeam!.id} performAs={performAs!} date={rawDate || todayUTC()} />
             )}
           </>
         )}

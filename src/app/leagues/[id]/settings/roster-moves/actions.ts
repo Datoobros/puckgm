@@ -15,6 +15,7 @@ import {
   placeOnIR,
   activateFromIR,
 } from "@/lib/rosters/mutations";
+import { setLineupSlot, swapLineupSlots, getLineupForDate } from "@/lib/lineups/mutations";
 
 export type PerformAs = "LM" | "TM";
 export type RosterSlotType = "ACTIVE" | "FARM" | "IR";
@@ -142,6 +143,75 @@ export async function lmMovePlayerAction(
     // is expected, not a bug — the inline error + "switch to League
     // Manager" hint is exactly the right answer for that case.
     await placeOnIR({ leagueId, teamId, playerId, managerUserId: team.managerUserId });
+    return { ok: true };
+  } catch (e) {
+    return errorResult(e);
+  }
+}
+
+export interface LineupSlotChange {
+  playerId: string;
+  slot: string;
+}
+
+/** Edit Lineup step 2's Save. Perform-as is ignored for lineups (the plan's
+ * own decision) — always runs as that team's manager via
+ * managerUserId = team.managerUserId, same as every normal lineup edit; the
+ * commissioner-gate above is what authorizes acting on someone else's team,
+ * not a bypass of the lineup rules themselves (capacity, eligibility, and
+ * game-time locks all still apply exactly as they would for the real
+ * manager). A plain two-player swap (each row's new slot is the other row's
+ * old slot) goes through swapLineupSlots so neither leg transiently trips
+ * the other's slot capacity; anything else applies one setLineupSlot call
+ * at a time — slots vacated to BE first, since freeing capacity never fails
+ * — stopping at (and returning) the first refusal. */
+export async function lmEditLineupAction(
+  leagueId: string,
+  teamId: string,
+  date: string,
+  changes: LineupSlotChange[],
+): Promise<RosterMoveResult> {
+  const { userId } = await auth.protect();
+  try {
+    const team = await requireCommissionerTeam(leagueId, teamId, userId);
+    if (changes.length === 0) return { ok: true };
+
+    if (changes.length === 2) {
+      const [a, b] = changes;
+      const current = await getLineupForDate(teamId, date);
+      const slotByPlayer = new Map(current.map((e) => [e.playerId, e.lineupSlot]));
+      const aCurrent = slotByPlayer.get(a.playerId) ?? "BE";
+      const bCurrent = slotByPlayer.get(b.playerId) ?? "BE";
+      if (a.slot !== b.slot && a.slot === bCurrent && b.slot === aCurrent) {
+        await swapLineupSlots({
+          leagueId,
+          teamId,
+          date,
+          managerUserId: team.managerUserId,
+          moverId: a.playerId,
+          moverDestinationSlot: a.slot,
+          displacedPlayerId: b.playerId,
+          displacedDestinationSlot: b.slot,
+        });
+        revalidatePath(`/leagues/${leagueId}/settings/roster-moves`);
+        revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
+        return { ok: true };
+      }
+    }
+
+    const ordered = [...changes].sort((x, y) => (x.slot === "BE" ? -1 : 0) - (y.slot === "BE" ? -1 : 0));
+    for (const change of ordered) {
+      await setLineupSlot({
+        leagueId,
+        teamId,
+        playerId: change.playerId,
+        date,
+        slot: change.slot,
+        managerUserId: team.managerUserId,
+      });
+    }
+    revalidatePath(`/leagues/${leagueId}/settings/roster-moves`);
+    revalidatePath(`/leagues/${leagueId}/teams/${teamId}`);
     return { ok: true };
   } catch (e) {
     return errorResult(e);
