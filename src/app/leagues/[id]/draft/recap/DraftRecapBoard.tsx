@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Button";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 import type { DraftRecapPick } from "@/lib/draft/mutations";
 
 type ViewMode = "round" | "team";
@@ -87,7 +88,7 @@ export function DraftRecapBoard({ picks }: { picks: DraftRecapPick[] }) {
                         <td className="py-2 pr-2">
                           <span className="flex items-center gap-2">
                             <PlayerHeadshot url={p.playerHeadshotUrl} alt={p.playerName} size={24} />
-                            {p.playerName}
+                            <PlayerName playerId={p.playerId} fullName={p.playerName} />
                             {p.autopicked && <Badge tone="muted">Auto</Badge>}
                           </span>
                         </td>
@@ -111,7 +112,7 @@ export function DraftRecapBoard({ picks }: { picks: DraftRecapPick[] }) {
                   <li key={p.id} className="flex items-center justify-between gap-2 px-4 py-2 text-sm">
                     <span className="flex min-w-0 items-center gap-2">
                       <PlayerHeadshot url={p.playerHeadshotUrl} alt={p.playerName} size={20} />
-                      <span className="truncate">{p.playerName}</span>
+                      <PlayerName playerId={p.playerId} fullName={p.playerName} className="truncate" />
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted">
                       R{p.round}·#{p.overallPick}

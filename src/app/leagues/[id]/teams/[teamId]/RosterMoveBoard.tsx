@@ -2,6 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
+import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
 import { Card, SectionLabel } from "@/components/Card";
 import { Button, Badge, LinkButton } from "@/components/Button";
 import { moveTeamPlayerAction, sendToFarmAction, dropPlayerAction } from "./actions";
@@ -191,7 +193,7 @@ export function RosterMoveBoard({
                   <td className="py-2 pl-4 pr-2 font-medium">
                     <span className="flex items-center gap-2">
                       <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
-                      {r.fullName}
+                      <PlayerName playerId={r.playerId} fullName={r.fullName} />
                       {r.badges.map((b) => (
                         <Badge key={b.label} tone={b.tone} title={b.title} className="normal-case">
                           {b.label}
@@ -272,7 +274,7 @@ export function RosterMoveBoard({
               <li key={r.rowKey} className="flex items-center justify-between px-4 py-2 text-sm">
                 <span className="flex items-center gap-2">
                   <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
-                  {r.fullName}
+                  <PlayerName playerId={r.playerId} fullName={r.fullName} />
                   <span className="text-xs text-muted">{r.currentNhlOrg ?? "—"}</span>
                   <Badge tone="muted">{r.officialRosterStatus ?? "IR"}</Badge>
                   {r.tradeLocked && (
@@ -296,6 +298,13 @@ export function RosterMoveBoard({
     );
   }
 
+  const boardNavPlayers = [...skaterRows, ...goalieRows]
+    .filter((r): r is MoveBoardOccupantRow => r.kind === "occupant")
+    .map((r) => ({ id: r.playerId, fullName: r.fullName }));
+  const irNavPlayers = irRows
+    .filter((r): r is MoveBoardIrOccupantRow => r.kind === "occupant")
+    .map((r) => ({ id: r.playerId, fullName: r.fullName }));
+
   return (
     <>
       <div key="action-bar" className="mt-6 flex flex-wrap items-center gap-2">
@@ -318,18 +327,20 @@ export function RosterMoveBoard({
         </Button>
         {dropMode && <span className="text-xs text-muted">Pick a player below to drop.</span>}
       </div>
-      <div key="skaters" className="mt-6">
-        <SectionLabel>Skaters</SectionLabel>
-        {renderTable(skaterRows, skaterColumnDefs, "No skaters rostered yet.")}
-      </div>
-      <div key="goalies" className="mt-6">
-        <SectionLabel>Goalies</SectionLabel>
-        {renderTable(goalieRows, goalieColumnDefs, "No goalies rostered yet.")}
-      </div>
+      <PlayerNavList players={boardNavPlayers}>
+        <div key="skaters" className="mt-6">
+          <SectionLabel>Skaters</SectionLabel>
+          {renderTable(skaterRows, skaterColumnDefs, "No skaters rostered yet.")}
+        </div>
+        <div key="goalies" className="mt-6">
+          <SectionLabel>Goalies</SectionLabel>
+          {renderTable(goalieRows, goalieColumnDefs, "No goalies rostered yet.")}
+        </div>
+      </PlayerNavList>
       {farmSection}
       <div key="ir" className="mt-6">
         <SectionLabel>{irLabel}</SectionLabel>
-        {renderIrList()}
+        <PlayerNavList players={irNavPlayers}>{renderIrList()}</PlayerNavList>
       </div>
       {error && (
         <p key="move-error" className="mt-2 text-xs text-danger">

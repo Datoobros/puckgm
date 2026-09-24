@@ -15,6 +15,7 @@ import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 import { TradeRosterTable } from "./TradeRosterTable";
 import { proposeTradeAction, checkTradeFitAction } from "./actions";
 import type { TradeableAssets, TradeAssetSelection, TradeFit } from "@/lib/trades/mutations";
@@ -208,7 +209,7 @@ export function TradeBuilder({
       nodes.push(
         <span key={`p:${id}`} className="inline-flex items-center gap-1.5 rounded-full bg-surface-tint px-2 py-0.5 text-xs">
           <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={24} />
-          {lastName(p.fullName)}
+          <PlayerName playerId={id} fullName={p.fullName}>{lastName(p.fullName)}</PlayerName>
         </span>,
       );
     }
@@ -240,7 +241,7 @@ export function TradeBuilder({
         <div key={`p:${id}`} className="flex items-center gap-2 py-1 text-sm">
           {arrow === "out" && <span className="text-blue">←</span>}
           <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={24} />
-          <span>{p.fullName}</span>
+          <PlayerName playerId={id} fullName={p.fullName} />
           <span className="text-xs text-muted">
             {p.currentNhlOrg ?? "—"} · {p.primaryPosition ?? "—"}
           </span>

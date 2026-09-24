@@ -4,6 +4,8 @@ import { auth } from "@clerk/nextjs/server";
 import { getLeague } from "@/lib/leagues/mutations";
 import { getTeamRosterView } from "@/lib/rosters/mutations";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
+import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
 import { TeamLogo } from "@/components/TeamLogo";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Button";
@@ -53,34 +55,40 @@ export default async function LeagueRostersPage(props: PageProps<"/leagues/[id]/
               <TeamLogo url={team.logoUrl} alt={team.name} size={28} />
               <span className="font-medium">{team.name}</span>
             </Link>
-            <div className="divide-y divide-border">
-              {(["ACTIVE", "FARM", "IR"] as const).map((tier) => {
-                const tierSlots = slots.filter((s) => s.slotType === tier);
-                return (
-                  <div key={tier} className="px-4 py-2">
-                    <p className="py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                      {TIER_LABELS[tier]} ({tierSlots.length})
-                    </p>
-                    {tierSlots.length === 0 ? (
-                      <p className="py-1 text-xs text-muted">Empty</p>
-                    ) : (
-                      <ul>
-                        {tierSlots.map((s) => (
-                          <li key={s.id} className="flex items-center gap-2 py-1 text-sm">
-                            <PlayerHeadshot url={s.player.headshotUrl} alt={s.player.fullName} size={22} />
-                            <span className="w-6 shrink-0 text-xs text-muted">{s.player.primaryPosition ?? "—"}</span>
-                            <span className="truncate">{s.player.fullName}</span>
-                            {s.player.officialRosterStatus === "IR" && tier !== "IR" && (
-                              <Badge tone="danger" className="ml-auto shrink-0">IR</Badge>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <PlayerNavList
+              players={(["ACTIVE", "FARM", "IR"] as const).flatMap((tier) =>
+                slots.filter((s) => s.slotType === tier).map((s) => ({ id: s.playerId, fullName: s.player.fullName })),
+              )}
+            >
+              <div className="divide-y divide-border">
+                {(["ACTIVE", "FARM", "IR"] as const).map((tier) => {
+                  const tierSlots = slots.filter((s) => s.slotType === tier);
+                  return (
+                    <div key={tier} className="px-4 py-2">
+                      <p className="py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                        {TIER_LABELS[tier]} ({tierSlots.length})
+                      </p>
+                      {tierSlots.length === 0 ? (
+                        <p className="py-1 text-xs text-muted">Empty</p>
+                      ) : (
+                        <ul>
+                          {tierSlots.map((s) => (
+                            <li key={s.id} className="flex items-center gap-2 py-1 text-sm">
+                              <PlayerHeadshot url={s.player.headshotUrl} alt={s.player.fullName} size={22} />
+                              <span className="w-6 shrink-0 text-xs text-muted">{s.player.primaryPosition ?? "—"}</span>
+                              <PlayerName playerId={s.playerId} fullName={s.player.fullName} className="truncate" />
+                              {s.player.officialRosterStatus === "IR" && tier !== "IR" && (
+                                <Badge tone="danger" className="ml-auto shrink-0">IR</Badge>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </PlayerNavList>
           </Card>
         ))}
       </div>

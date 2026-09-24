@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { searchPlayersAction } from "@/app/leagues/[id]/players/actions";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 import { lmAddPlayerAction, type PerformAs, type RosterSlotType } from "./actions";
 import type { PlayerSearchResult } from "@/lib/players/rankings";
 
@@ -96,17 +97,31 @@ export function AddPlayerStep({ leagueId, teamId, performAs }: { leagueId: strin
             <ul className="divide-y divide-border">
               {results.map((p) => (
                 <li key={p.id}>
-                  <button
-                    type="button"
-                    disabled={pending === p.id}
-                    onClick={() => add(p.id, p.fullName)}
-                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-surface-tint disabled:opacity-50"
+                  {/* A row-wide button can't contain PlayerName's own <button>, so this
+                      site — unlike a plain text name — needs a clickable div instead: the
+                      name opens the profile (via stopPropagation) and the rest of the row
+                      still adds the player, mirroring RosterMoveBoard's "name opens the
+                      modal, the row still selects" pattern. */}
+                  <div
+                    role="button"
+                    tabIndex={pending === p.id ? -1 : 0}
+                    aria-disabled={pending === p.id}
+                    onClick={() => {
+                      if (pending !== p.id) add(p.id, p.fullName);
+                    }}
+                    onKeyDown={(e) => {
+                      if ((e.key === "Enter" || e.key === " ") && pending !== p.id) {
+                        e.preventDefault();
+                        add(p.id, p.fullName);
+                      }
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-surface-tint aria-disabled:opacity-50"
                   >
-                    <span>{p.fullName}</span>
+                    <PlayerName playerId={p.id} fullName={p.fullName} />
                     <span className="text-xs text-muted">
                       {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
                     </span>
-                  </button>
+                  </div>
                 </li>
               ))}
             </ul>

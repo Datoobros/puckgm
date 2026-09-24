@@ -7,6 +7,7 @@ import { getScoreboardForPeriod, getTeamSchedule, playoffRoundLabel } from "@/li
 import { Card } from "@/components/Card";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 import { TeamScheduleList } from "@/components/TeamScheduleList";
 import { LinkButton, Badge } from "@/components/Button";
 import { teamInitials } from "@/lib/teams/initials";
@@ -233,7 +234,11 @@ function TopScorersRow({ side }: { side: MatchupSide }) {
             <div key={p.playerId} className="flex items-center gap-2" title={p.fullName}>
               <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={40} />
               <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{shortPlayerName(p.fullName)}</div>
+                <div className="text-sm font-medium">
+                  <PlayerName playerId={p.playerId} fullName={p.fullName} className="truncate">
+                    {shortPlayerName(p.fullName)}
+                  </PlayerName>
+                </div>
                 <div className="text-xs text-muted">{p.points.toFixed(1)} pts</div>
               </div>
             </div>

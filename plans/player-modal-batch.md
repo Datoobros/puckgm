@@ -759,9 +759,9 @@ the sites marked **(nav)** in `<PlayerNavList players={…}>` in rendered order:
   room it must not draft; on the roster board it must not select a mover.
 
 ### Checklist
-- [ ] every site wired; nav lists where marked; exceptions commented
-- [ ] grep sweep recorded in PROGRESS.md
-- [ ] verified (a)–(g), no click-through side effects; PROGRESS.md; committed
+- [x] every site wired; nav lists where marked; exceptions commented
+- [x] grep sweep recorded in PROGRESS.md
+- [x] verified (a)–(g), no click-through side effects; PROGRESS.md; committed
 
 ---
 

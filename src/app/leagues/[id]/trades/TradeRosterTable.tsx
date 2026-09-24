@@ -11,6 +11,8 @@
 // proposeTrade would just reject.
 
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
+import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
 import { Badge } from "@/components/Button";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import type { TradeableAssets, TradeAssetSelection } from "@/lib/trades/mutations";
@@ -50,48 +52,50 @@ function PositionTable({
           </tr>
         </thead>
         <tbody>
-          {players.map((p) => {
-            const stats = statsById[p.id];
-            const disabled = !!p.lockedInTradeId || !!p.onWaiversUntil;
-            const reason = p.lockedInTradeId
-              ? "Locked in a pending trade — it must process or be cancelled first."
-              : p.onWaiversUntil
-                ? `On waivers until ${p.onWaiversUntil.toLocaleString()} — can't be traded until it clears.`
-                : undefined;
-            return (
-              <tr key={p.id} className="border-b border-border last:border-0">
-                <td className="py-2 pl-2 align-top">
-                  <input
-                    type="checkbox"
-                    checked={selectedPlayerIds.includes(p.id)}
-                    disabled={disabled}
-                    onChange={() => onTogglePlayer(p.id)}
-                    title={reason}
-                  />
-                </td>
-                <td className="py-2 pr-2 font-medium">
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={28} />
-                    {p.fullName}
-                    <span className="text-xs text-muted">
-                      {p.currentNhlOrg ?? "—"} · {p.primaryPosition ?? "—"}
-                    </span>
-                    {TIER_BADGE[p.slotType] && <Badge tone="muted">{TIER_BADGE[p.slotType]}</Badge>}
-                    {disabled && (
-                      <Badge tone="warning" title={reason}>
-                        {p.lockedInTradeId ? "Pending trade" : "On waivers"}
-                      </Badge>
-                    )}
-                  </span>
-                </td>
-                {allColumns.map((col) => (
-                  <td key={col.key} className="py-2 pr-2 text-right tabular-nums">
-                    {stats ? (col.format ? col.format(col.get(stats)) : col.get(stats)) : "—"}
+          <PlayerNavList players={players.map((p) => ({ id: p.id, fullName: p.fullName }))}>
+            {players.map((p) => {
+              const stats = statsById[p.id];
+              const disabled = !!p.lockedInTradeId || !!p.onWaiversUntil;
+              const reason = p.lockedInTradeId
+                ? "Locked in a pending trade — it must process or be cancelled first."
+                : p.onWaiversUntil
+                  ? `On waivers until ${p.onWaiversUntil.toLocaleString()} — can't be traded until it clears.`
+                  : undefined;
+              return (
+                <tr key={p.id} className="border-b border-border last:border-0">
+                  <td className="py-2 pl-2 align-top">
+                    <input
+                      type="checkbox"
+                      checked={selectedPlayerIds.includes(p.id)}
+                      disabled={disabled}
+                      onChange={() => onTogglePlayer(p.id)}
+                      title={reason}
+                    />
                   </td>
-                ))}
-              </tr>
-            );
-          })}
+                  <td className="py-2 pr-2 font-medium">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={28} />
+                      <PlayerName playerId={p.id} fullName={p.fullName} />
+                      <span className="text-xs text-muted">
+                        {p.currentNhlOrg ?? "—"} · {p.primaryPosition ?? "—"}
+                      </span>
+                      {TIER_BADGE[p.slotType] && <Badge tone="muted">{TIER_BADGE[p.slotType]}</Badge>}
+                      {disabled && (
+                        <Badge tone="warning" title={reason}>
+                          {p.lockedInTradeId ? "Pending trade" : "On waivers"}
+                        </Badge>
+                      )}
+                    </span>
+                  </td>
+                  {allColumns.map((col) => (
+                    <td key={col.key} className="py-2 pr-2 text-right tabular-nums">
+                      {stats ? (col.format ? col.format(col.get(stats)) : col.get(stats)) : "—"}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </PlayerNavList>
         </tbody>
       </table>
     </div>

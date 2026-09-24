@@ -19,8 +19,3 @@ detail to plan and build. When an item ships, move it off this list and document
   anything real. Design sketch when this comes back up: commissioner-triggered, rosters carry
   over completely untouched, only the schedule/standings/bracket archive and a new season
   starts — same shape as REDRAFT's rollover minus the roster wipe.
-
-- **Player profile modal.** Designed with the user on 2026-09-20 and planned in full — see
-  `plans/player-modal-batch.md` (five tasks: game-context backfill, profile data layer,
-  ESPN-style modal with prev/next, action card, wiring at every name site). Remove this
-  entry when the batch ships.

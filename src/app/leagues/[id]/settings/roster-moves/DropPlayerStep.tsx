@@ -1,6 +1,7 @@
 import { getTeamRosterView } from "@/lib/rosters/mutations";
 import { Card, SectionLabel } from "@/components/Card";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 import { RosterMoveActionButton } from "./RosterMoveActionButton";
 import type { PerformAs } from "./actions";
 
@@ -28,7 +29,7 @@ export async function DropPlayerStep({ leagueId, teamId, performAs }: { leagueId
                   <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
                     <span className="flex items-center gap-2">
                       <PlayerHeadshot url={s.player.headshotUrl} alt={s.player.fullName} size={28} />
-                      {s.player.fullName}
+                      <PlayerName playerId={s.playerId} fullName={s.player.fullName} />
                       <span className="text-xs text-muted">
                         {s.player.primaryPosition ?? "—"} · {s.player.currentNhlOrg ?? "—"}
                       </span>

@@ -6,6 +6,7 @@ import { lmEditLineupAction } from "./actions";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 
 export interface LineupRow {
   playerId: string;
@@ -83,7 +84,7 @@ export function EditLineupForm({
                 <td className="px-4 py-2">
                   <span className="flex items-center gap-2">
                     <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
-                    {r.fullName}
+                    <PlayerName playerId={r.playerId} fullName={r.fullName} />
                   </span>
                 </td>
                 <td className="px-4 py-2 text-muted">{r.position}</td>

@@ -6,6 +6,7 @@
 
 import type { ReactNode } from "react";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS } from "@/lib/players/columns";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
 
@@ -39,7 +40,7 @@ export function PlayerStatLine({
       {control}
       <PlayerHeadshot url={player.headshotUrl} alt={player.fullName} size={24} />
       <span>
-        {player.fullName}
+        <PlayerName playerId={player.id} fullName={player.fullName} />
         <span className="ml-1 text-xs text-muted">
           {player.primaryPosition ?? "—"} · {player.currentNhlOrg ?? "—"}
         </span>

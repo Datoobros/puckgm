@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { Button, Badge } from "@/components/Button";
+import { PlayerName } from "@/components/player-profile/PlayerName";
+import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
 import { resolveDraftStateAction, makeDraftPickAction, autodraftBatchAction } from "./actions";
 import type { DraftStateView } from "@/lib/draft/mutations";
 
@@ -232,24 +234,26 @@ export function DraftRoom({
         />
         <Card className="mt-2 !p-0 max-h-96 overflow-y-auto">
           <ul className="divide-y divide-border">
-            {filteredPool.map((p) => (
-              <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-2">
-                <span className="text-sm">
-                  {p.fullName}{" "}
-                  <span className="text-xs text-muted">
-                    {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
+            <PlayerNavList players={filteredPool.map((p) => ({ id: p.id, fullName: p.fullName }))}>
+              {filteredPool.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-2">
+                  <span className="text-sm">
+                    <PlayerName playerId={p.id} fullName={p.fullName} />{" "}
+                    <span className="text-xs text-muted">
+                      {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
+                    </span>
                   </span>
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!isMyTurn || pending || autodrafting}
-                  onClick={() => handlePick(p.id)}
-                >
-                  Draft
-                </Button>
-              </li>
-            ))}
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!isMyTurn || pending || autodrafting}
+                    onClick={() => handlePick(p.id)}
+                  >
+                    Draft
+                  </Button>
+                </li>
+              ))}
+            </PlayerNavList>
             {filteredPool.length === 0 && <li className="px-4 py-3 text-sm text-muted">No players match.</li>}
           </ul>
         </Card>
@@ -277,7 +281,7 @@ function RecentPicks({ recentPicks }: { recentPicks: DraftStateView["recentPicks
                   <span className="text-xs text-muted">
                     R{p.round} · #{p.overallPick}
                   </span>{" "}
-                  {p.teamName} — {p.playerName}
+                  {p.teamName} — <PlayerName playerId={p.playerId} fullName={p.playerName} />
                 </span>
                 {p.autopicked && <Badge tone="muted">Auto</Badge>}
               </li>

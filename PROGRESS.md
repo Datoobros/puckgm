@@ -2521,6 +2521,23 @@ commissioner can run a correct draft through the fixed code.
   action in this project is direct commissioner/co-commissioner authority, not a vote). The
   Miscellaneous Tools card exists so the hub's layout matches ESPN's, with "Nothing here
   yet." in place of both rows.
+- **Player profile modal — ESPN things not mapped** (player-modal batch), because puckgm
+  has no data or feature for them: "% ROSTERED" (user said forget it), "Consider trade
+  offers?" (no such setting exists), stat projections, news/"Outlook", a career stats
+  table, "Complete Stats" link, height/weight. Dropping a player whose game already
+  started still forfeits that day's points (pre-existing gap, listed above, unchanged by
+  this batch). `GameStatLine` now carries real game context (`teamAbbrev`,
+  `opponentAbbrev`, `isHome`, `teamScore`, `opponentScore`, `lastPeriodType`, Task 1 of the
+  batch) — a future schedule/"next game" column has one of its inputs ready, but the
+  column itself isn't built. `seasons.ts`'s `STAT_RANGES` needs a `2027` season entry
+  added before 2027-08-01 or `currentAndLastSeason` silently falls back to the latest
+  entry instead of the correct one.
+- **Player profile modal — five un-wired name sites found by Task 5's grep sweep**, not
+  in the batch plan's original site list and not fixed by this task (see Task 5 above for
+  the full explanation): `teams/[teamId]/page.tsx`'s farm list, non-owner IR list, and
+  non-owner active-roster view (three sites); `players/page.tsx`'s FAAB pending-bids list;
+  `leagues/[id]/page.tsx`'s league-home Waivers card. All are plain "wire `PlayerName`
+  here too" follow-ups, no new data-layer work needed.
 
 ## League Manager Tools batch (`plans/lm-tools-batch.md`)
 
@@ -3522,6 +3539,140 @@ complete." with no button. Screenshots taken of flows 1, 3, 4, and 6.
 `scripts/player-profile-check.ts` re-run unmodified — still passes
 end-to-end. Disposable league deleted by exact name afterward (`--cleanup`);
 no fixture `Player` rows were created by this script, only real players.
+
+### Task 5: Wired `PlayerName` (+ nav lists) at every remaining site
+
+Mechanical wiring, per the plan's fixed list: `RosterMoveBoard.tsx` (active/farm
+board rows and the IR list, each its own `PlayerNavList` — board rows span
+skaters+goalies as one nav order, matching the board's own top-to-bottom
+render), `teams/rosters/page.tsx` (nav per team card, across ACTIVE→FARM→IR),
+`matchups/[matchupId]/page.tsx` (nav per side), `scoreboard/page.tsx` (short
+name as `children`, full name still in the `title` tooltip via `PlayerName`
+itself), `trades/TradeRosterTable.tsx` (nav per position table),
+`trades/TradeBuilder.tsx` (both chip sites), `trades/TradeAssetSummary.tsx`
+(confirmed by grep: both the trade review page and LM Trade Review render
+through it, so both got the modal for free), `draft/DraftRoom.tsx` (pool list
+with nav, **plus** `RecentPicks` — not spec'd with a playerId in
+`DraftStateView`, so added one: `recentPicks[].playerId` alongside the
+existing `playerName`, sourced from `p.usedOnPlayerId` which `buildView`
+already had in scope but didn't expose; the only construction site, so a
+non-breaking addition), `draft/recap/DraftRecapBoard.tsx` (both round/team
+views), and `settings/roster-moves/{DropPlayerStep,EditLineupForm,
+ManageFarmStep,ManageIrStep}.tsx`.
+
+**`AddPlayerStep.tsx` needed a real restructure, not just a swap**: its search
+result row was a single `<button>` wrapping the whole row (name + position +
+the add action), and `PlayerName` renders its own `<button>` — a button can't
+contain a button. Changed the row to a `div role="button"` with the same
+onClick/onKeyDown (Enter/Space) as the old button, `aria-disabled` while
+pending, and `PlayerName` for just the name — clicking the name opens the
+profile (via `stopPropagation`), clicking anywhere else in the row still adds,
+same pattern as `RosterMoveBoard`'s "name opens the modal, the row still
+selects." Not live-tested end-to-end against a real add (see Verification)
+to avoid mutating the real Experimenting roster; verified by re-reading the
+diff instead.
+
+**Grep sweep** (`grep -rn "fullName}" src/app --include=*.tsx` and `grep -rn
+"\.fullName)" src/app --include=*.tsx`, plus the same for `playerName` since
+`DraftRoom`/`DraftRecapBoard`/two other sites use that field name instead):
+- Deliberate, matching the plan: `players/PlayerSearchBox.tsx` (typeahead),
+  `settings/roster-moves/DropPlayerStep.tsx`'s `confirmText` prop string.
+- Deliberate, found during the sweep, not in the plan's original list:
+  `players/AddPlayerCell.tsx`'s two `<option>{p.fullName}</option>` rows (a
+  native `<select>` can't host a button — same constraint as any other
+  `<option>` in this app) and `RosterMoveBoard.tsx`'s inline `Drop
+  {r.fullName}?` confirm caption (a transient confirm line, same as
+  `DropPlayerStep`'s `confirmText` — not a persistent name render).
+- **Not deliberate — a real gap this task did not fix, because it's outside
+  Task 5's exact enumerated list and re-opening the site list wasn't this
+  task's call to make**: `teams/[teamId]/page.tsx` has three un-wired
+  `{s.player.fullName}` / `{player.fullName}` sites that Task 3's original
+  "All player-name render sites" audit (2026-09-20) missed entirely —
+  `farmSectionNode` (~564, shared between the manager's own view via
+  `RosterMoveBoard`'s `farmSection` prop **and** the read-only viewer path,
+  so managers already get this via the wiring above, but a teammate viewing
+  someone else's team does not), the non-owner IR list (~913), and
+  `RosterTable`'s non-owner active-skaters/goalies view (~1002). Also found:
+  `players/page.tsx`'s FAAB "My Pending Bids" list (~156, `bid.playerName`)
+  and `leagues/[id]/page.tsx`'s league-home Waivers card (~114,
+  `p.playerName`) — neither is a "prose feed" in the sense the plan meant
+  (that exception covers notifications/activity-feed sentences, not
+  structured lists like these). All five are legitimate follow-up wiring,
+  not fake/faked data — flagging here rather than silently expanding this
+  task's scope or leaving the gap undocumented.
+
+**Verification**: `npx tsc --noEmit` and `npm run build` both clean, before
+and after. Browser verification used a second `preview_start` config
+(`puckgm-attach`, `{"url": "http://localhost:3000"}` in the repo's *parent*
+folder's `.claude/launch.json`) to attach to another chat's already-running
+dev server rather than start a second one on the same project — port 3000
+was already bound and Next dev servers don't share `.next` state safely.
+`// TEMP:` hardcoded-userId bypasses (the real Experimenting commissioner,
+`user_3HiHqTBIXAJVnyXWE1lph6EIcXU`, who manages "Rebuild Squad") were added
+across `leagues/[id]/layout.tsx`, `settings/layout.tsx`,
+`teams/[teamId]/page.tsx`, `teams/rosters/page.tsx`,
+`matchups/[matchupId]/page.tsx`, `scoreboard/page.tsx`, `trades/new/page.tsx`,
+`draft/recap/page.tsx`, `players/actions.ts`'s `getPlayerProfileAction`, and
+`trades/actions.ts`'s `checkTradeFitAction` (the last one only discovered
+mid-verification: clicking "Continue" in the trade builder calls it, and its
+own `auth.protect()` redirected the whole tab to Clerk sign-in) — all
+reverted, `grep -rn "TEMP:" src/` clean before commit.
+
+Verified against the real "Experimenting" league, read-only (confirmed
+afterward via a direct DB read: most recent `Trade` row still dated
+2026-09-18, 0 `WatchlistEntry` rows — nothing this session touched wrote
+anything):
+- **(a) team roster board** (`teams/[teamId]`): clicking Kucherov opened his
+  profile with `› J. Robertson`; clicking `›` (and re-confirming via DOM) 
+  stepped to Robertson with `‹ N. Kucherov` / `K. Kaprizov ›`, matching the
+  skater rows' exact order; confirmed via `checkbox.checked`/a "Cancel"-button
+  search that the click never toggled a farm/IR move selection.
+- **(b) league rosters** (`teams/rosters`): clicking Connor McDavid on Dev's
+  card opened his profile with `M. Celebrini ›` and no `‹` — correct, since
+  nav is scoped per team card across ACTIVE→FARM→IR and McDavid is first.
+- **(c) matchup detail** and **(d) scoreboard top scorers**: both pages load
+  cleanly with `PlayerName` in place, but neither had a click target to test
+  against real data — the 2026-27 season starts 2026-09-29 (today is
+  2026-09-24) and no lineup has been set for any matchup yet, so every
+  matchup's player table and every week's Top Scorers card render their
+  empty states ("No lineup set for this week yet." / "Lineup not set"). Not
+  faked: this is an honest gap in *when* this task ran relative to the
+  season, not a code problem — the wiring is structurally identical to (a)
+  and (b) (same `PlayerName`/`PlayerNavList` components, same props), which
+  did click-test clean against real rows. Re-verify (c)/(d) against real
+  data once the season has games.
+- **(e) trade builder** (`trades/new?with=<teamId>`): clicking Connor
+  McDavid's name in Dev's roster table left his checkbox unchecked
+  (confirmed via `checkbox.checked === false` before/after) and opened his
+  profile instead of selecting him; selecting him plus Kucherov and
+  continuing surfaced the sticky-bar chip, and clicking the chip's name (the
+  `lastName` children form) also opened the profile without deselecting;
+  from inside the **Confirm Trade** modal, clicking McDavid's name opened his
+  profile stacked on top (`document.querySelectorAll('dialog[open]').length
+  === 2`), and closing the profile via its own ✕ left the Confirm Trade
+  dialog open underneath — stacking confirmed correct.
+- **(f) draft recap** (`draft/recap`): clicking Connor McDavid in both "By
+  round" and "By team" views opened his profile; no draft action exists on
+  this page to accidentally trigger.
+- **(g) LM Roster Moves**: `DropPlayerStep` (`?action=DROP`) — clicking
+  Nikita Kucherov's name opened his profile with no "Drop {name}?" confirm
+  triggered (confirmed no such text appeared). `AddPlayerStep` itself wasn't
+  live-tested (see above — its own `searchPlayersAction` also needs
+  `auth.protect()`, and a real add would mutate the live league), verified by
+  code review instead.
+- **Esc-to-close couldn't be verified live in this session**: even a single,
+  non-stacked dialog didn't close on a synthetic Escape key event from this
+  browser tool (confirmed via `document.querySelectorAll('dialog[open]')`
+  before/after) — an automation-environment limitation matching Task 3's own
+  note ("native-dialog Esc-to-close is standard `<dialog>` behavior,
+  unchanged from the existing `Modal`"), not a regression. Verified the
+  equivalent close-only-the-top-dialog behavior via the ✕ button instead
+  (see (e) above), which exercises the same stacking logic Esc would.
+- **No screenshots**: the Browser pane was hidden for this whole session
+  (`tabs_context` confirmed it), and `computer{action:"screenshot"}` timed
+  out every time it was tried. All verification above was done via
+  `get_page_text`/`find`/`read_page` and direct DOM inspection through
+  `javascript_tool`, which work fine against a hidden pane.
 
 ## Working conventions established this session
 

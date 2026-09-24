@@ -554,7 +554,7 @@ export interface DraftStateView {
   totalRounds: number;
   totalPicks: number;
   currentPick: { round: number; overallPick: number; teamId: string; teamName: string; msRemaining: number } | null;
-  recentPicks: { round: number; overallPick: number; teamName: string; playerName: string; autopicked: boolean }[];
+  recentPicks: { round: number; overallPick: number; teamName: string; playerId: string; playerName: string; autopicked: boolean }[];
   pool: DraftPoolPlayer[];
 }
 
@@ -606,6 +606,7 @@ async function buildView(draft: DraftRow): Promise<DraftStateView> {
       round: p.round,
       overallPick: p.overallPick!,
       teamName: p.currentOwner.name,
+      playerId: p.usedOnPlayerId!,
       playerName: p.usedOnPlayer!.fullName,
       autopicked: autopickedByOverall.get(p.overallPick!) ?? false,
     })),

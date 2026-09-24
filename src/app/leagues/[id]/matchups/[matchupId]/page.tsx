@@ -8,6 +8,8 @@ import { formatPeriodRange } from "@/lib/dates";
 import { Card } from "@/components/Card";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
+import { PlayerName } from "@/components/player-profile/PlayerName";
+import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
 import { teamInitials } from "@/lib/teams/initials";
 
 export default async function MatchupDetailPage(props: PageProps<"/leagues/[id]/matchups/[matchupId]">) {
@@ -99,23 +101,27 @@ function PlayerTable({ side }: { side: MatchupDetailSide }) {
             </tr>
           </thead>
           <tbody>
-            {side.players.map((p) => (
-              <tr key={p.playerId} className="border-b border-border last:border-0">
-                <td className="py-2 pl-4 pr-2">
-                  <div className="flex items-center gap-2">
-                    <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={28} />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{p.fullName}</div>
-                      <div className="text-xs text-muted">
-                        {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
+            <PlayerNavList players={side.players.map((p) => ({ id: p.playerId, fullName: p.fullName }))}>
+              {side.players.map((p) => (
+                <tr key={p.playerId} className="border-b border-border last:border-0">
+                  <td className="py-2 pl-4 pr-2">
+                    <div className="flex items-center gap-2">
+                      <PlayerHeadshot url={p.headshotUrl} alt={p.fullName} size={28} />
+                      <div className="min-w-0">
+                        <div className="font-medium">
+                          <PlayerName playerId={p.playerId} fullName={p.fullName} className="truncate" />
+                        </div>
+                        <div className="text-xs text-muted">
+                          {p.primaryPosition ?? "—"} · {p.currentNhlOrg ?? "—"}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </td>
-                <td className="py-2 pr-2 text-right tabular-nums">{p.gamesStarted}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{p.points.toFixed(1)}</td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{p.gamesStarted}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums">{p.points.toFixed(1)}</td>
+                </tr>
+              ))}
+            </PlayerNavList>
           </tbody>
           <tfoot>
             <tr>
