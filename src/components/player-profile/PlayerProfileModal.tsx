@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { SKATER_COLUMNS, GOALIE_COLUMNS } from "@/lib/players/columns";
 import { getPlayerProfileAction, toggleWatchlistAction } from "@/app/leagues/[id]/players/actions";
+import { PlayerProfileActions } from "@/components/player-profile/PlayerProfileActions";
 import type { PlayerProfile, PlayerLeagueStatus } from "@/lib/players/profile";
 
 // "Connor McDavid" -> "C. McDavid" — same compact-name rule as the
@@ -264,6 +265,20 @@ export function PlayerProfileModal({
                 </div>
               </div>
             </Card>
+
+            {profile.status.viewerTeamId && (
+              <PlayerProfileActions
+                key={playerId}
+                leagueId={leagueId}
+                playerId={playerId}
+                playerName={profile.player.fullName}
+                status={profile.status}
+                onChanged={async () => {
+                  await reload();
+                  router.refresh();
+                }}
+              />
+            )}
 
             <Card>
               <SectionLabel>Stats</SectionLabel>

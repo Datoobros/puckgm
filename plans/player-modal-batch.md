@@ -702,10 +702,10 @@ Read-only modal plus the watchlist star. No roster actions yet (Task 4).
   Screenshots of 1, 3, 4, 6. Delete the league by exact name afterwards.
 
 ### Checklist
-- [ ] `AddPlayerCell` extracted with `onDone` + `size`; Players page unchanged
-- [ ] `PlayerProfileActions` — all eight branches
-- [ ] modal reloads + `router.refresh()` after success
-- [ ] verified in browser (7 flows, screenshots); disposable league deleted; PROGRESS.md; committed
+- [x] `AddPlayerCell` extracted with `onDone` + `size`; Players page unchanged
+- [x] `PlayerProfileActions` — all eight branches
+- [x] modal reloads + `router.refresh()` after success
+- [x] verified in browser (7 flows, screenshots); disposable league deleted; PROGRESS.md; committed
 
 ---
 

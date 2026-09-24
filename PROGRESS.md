@@ -3469,6 +3469,60 @@ modal closed too — unrelated to this task, not investigated further here).
 Not built yet: the action card (Task 4) and every other click site besides
 the Players page (Task 5).
 
+### Task 4: Action card inside the modal
+
+`AddPlayerCell` extracted from `PlayerStatsTable.tsx` into
+`src/app/leagues/[id]/players/AddPlayerCell.tsx` (exported, unchanged default
+`size="cell"` markup, zero behaviour change at its one existing call site)
+with a new `onDone?: () => void | Promise<void>` fired after a successful add
+or drop-and-add, and `size?: "cell" | "pill"` — `"pill"` renders a full-width
+primary "ADD" button and a full-width roster-full picker for the modal.
+
+`src/components/player-profile/PlayerProfileActions.tsx` (new) renders the
+action card's eight branches in the plan's fixed priority order (no team →
+render nothing; frozen; DROP with an inline confirm — not `confirm()`, per
+PROGRESS.md's browser-harness note; CLAIM / Claim pending + CANCEL CLAIM;
+PROPOSE TRADE via `LinkButton` to `/trades/new?with=<teamId>`; free-agency-
+closed note; BID / Bid pending + CANCEL BID; ADD via the extracted
+`AddPlayerCell` in `size="pill"`). `PlayerProfileModal.tsx` renders it between
+the header and Stats cards when `status.viewerTeamId` is set, keyed by
+`playerId` so drop-confirm/pending state can't leak across an arrow
+navigation, with `onChanged={async () => { await reload(); router.refresh(); }}`
+so the modal's own data and the page behind it both stay current.
+
+Verified in a real browser (`preview_start {name: "puckgm-dev"}`, `// TEMP:`
+bypass across `leagues/[id]/layout.tsx`, `players/page.tsx`, and every
+`players/actions.ts` / `teams/[teamId]/actions.ts`'s `dropPlayerAction` /
+`waivers/actions.ts` function this task's flows touch, reverted, `grep -rn
+"TEMP:" src/` clean) against a disposable `"Player Modal Actions (delete
+me)"` league seeded by the new `scripts/player-modal-test-league.ts` (two
+teams, a throwaway completed draft, a >=80-GP veteran sent to Team B's farm
+so he's waiver-exposed), as Team A's manager, walking all seven flows: (1)
+ADD on a free agent — MANAGER flips to Team A, `**Added** by …` transaction,
+the Players page row behind the modal shows the team name after
+`router.refresh()`; (2) DROP → confirm → MANAGER back to Free Agent,
+`**Dropped** by …` on top; (3) filled Team A's 6-slot active roster live via
+the Players page's own `+` cells (including switching to the G tab — the
+default Skaters filter hides goalies, not a bug), then ADD a 7th from the
+modal → the roster-full picker appeared listing exactly the 6 active
+players, Drop & Add correctly dropped the chosen one and added the new
+player, transaction rendered `**Dropped** by Team A to make room`; (4) the
+waiver-exposed veteran → CLAIM → `Claim pending` + CANCEL CLAIM → cancel →
+CLAIM again; (5) a Team-B player not on waivers → PROPOSE TRADE's `href`
+resolved to `/trades/new?with=<teamB>` with the right team id (the trade
+builder page itself has its own pre-existing auth, out of scope here); (6)
+FAAB turned on directly via `updateLeagueSettings` (same mutation LM Tools'
+Edit League Settings calls — the settings page's own auth wasn't bypassed,
+since this task doesn't touch that page) → a free agent showed the bid form
+→ BID → `Bid pending: $1 → Active` + CANCEL BID, and the Players page's FAAB
+card listed the same `$1 on … → Active` bid after refresh; (7) draft reset
+directly via `resetDraft` (same mutation LM Tools' Reset Draft calls) closed
+free agency → a free agent showed "Free agency is closed until the draft is
+complete." with no button. Screenshots taken of flows 1, 3, 4, and 6.
+`scripts/player-profile-check.ts` re-run unmodified — still passes
+end-to-end. Disposable league deleted by exact name afterward (`--cleanup`);
+no fixture `Player` rows were created by this script, only real players.
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

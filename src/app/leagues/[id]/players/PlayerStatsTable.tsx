@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { NHL_TEAM_ABBREVS } from "@/lib/nhl/client";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
-import { addPlayerAction, submitFaBidAction, toggleWatchlistAction } from "./actions";
+import { submitFaBidAction, toggleWatchlistAction } from "./actions";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
 import { Button, Badge } from "@/components/Button";
 import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
 import { PlayerName } from "@/components/player-profile/PlayerName";
+import { AddPlayerCell } from "./AddPlayerCell";
 
 interface RosterContext {
   leagueId: string;
@@ -339,121 +340,6 @@ export function PlayerStatsTable({
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-/** Adding a free agent when the active roster is already at cap used to
- * throw an unhandled "Active roster is full" error straight out of the
- * Server Action. Now: clicking Add while full expands an inline picker for
- * which current active player to drop, and addPlayerAction does the drop +
- * add as one atomic transaction (src/lib/rosters/mutations.ts). */
-function AddPlayerCell({
-  leagueId,
-  teamId,
-  playerId,
-  activeCount,
-  activeCap,
-  activeRosterPlayers,
-}: {
-  leagueId: string;
-  teamId: string;
-  playerId: string;
-  activeCount: number;
-  activeCap: number;
-  activeRosterPlayers: { id: string; fullName: string }[];
-}) {
-  const [picking, setPicking] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [dropChoice, setDropChoice] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const isFull = activeCount >= activeCap;
-
-  async function handleAddClick() {
-    if (isFull) {
-      setError(null);
-      setPicking(true);
-      return;
-    }
-    setPending(true);
-    setError(null);
-    try {
-      await addPlayerAction(leagueId, teamId, playerId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't add player.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function handleConfirmDrop() {
-    if (!dropChoice) return;
-    setPending(true);
-    setError(null);
-    try {
-      await addPlayerAction(leagueId, teamId, playerId, dropChoice);
-      setPicking(false);
-      setDropChoice("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't drop & add.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  if (picking) {
-    return (
-      <div className="flex flex-col items-end gap-1">
-        <span className="text-[10px] text-muted">Roster full — drop who?</span>
-        <div className="flex items-center gap-1">
-          <select
-            value={dropChoice}
-            onChange={(e) => setDropChoice(e.target.value)}
-            className="rounded border border-border bg-surface px-1 py-0.5 text-xs text-foreground"
-          >
-            <option value="">Choose player…</option>
-            {activeRosterPlayers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.fullName}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={handleConfirmDrop}
-            disabled={!dropChoice || pending}
-            className="rounded-full bg-gold px-2 py-0.5 text-[10px] font-medium text-gold-foreground hover:opacity-90 disabled:opacity-50"
-          >
-            Drop &amp; Add
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPicking(false);
-              setError(null);
-            }}
-            className="text-[10px] text-muted hover:text-foreground"
-          >
-            Cancel
-          </button>
-        </div>
-        {error && <span className="text-[10px] text-danger">{error}</span>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-0.5">
-      <button
-        type="button"
-        onClick={handleAddClick}
-        disabled={pending}
-        title="Add to your roster"
-        className="flex h-6 w-6 items-center justify-center rounded-full bg-gold text-sm font-bold leading-none text-gold-foreground hover:opacity-90 disabled:opacity-50"
-      >
-        +
-      </button>
-      {error && <span className="text-[10px] text-danger">{error}</span>}
     </div>
   );
 }
