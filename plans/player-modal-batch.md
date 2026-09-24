@@ -633,10 +633,10 @@ Read-only modal plus the watchlist star. No roster actions yet (Task 4).
   `router.refresh()`), toggle back.
 
 ### Checklist
-- [ ] `Modal` `size` + `bare`
-- [ ] provider, `PlayerNavList`, `PlayerName`, `PlayerProfileModal` (header / stats / game log + Show More / transactions / star / arrows / keys / sticky ✕ / scroll)
-- [ ] layout wraps children; Players page wired with nav list
-- [ ] verified in browser (desktop + scrolled + mobile screenshots); PROGRESS.md; committed
+- [x] `Modal` `size` + `bare`
+- [x] provider, `PlayerNavList`, `PlayerName`, `PlayerProfileModal` (header / stats / game log + Show More / transactions / star / arrows / keys / sticky ✕ / scroll)
+- [x] layout wraps children; Players page wired with nav list
+- [x] verified in browser (desktop + scrolled + mobile screenshots); PROGRESS.md; committed
 
 ---
 

@@ -3387,6 +3387,88 @@ afterward.
 No UI yet (Task 3+). `getPlayerProfileAction` isn't called from anywhere in
 the app until the modal exists.
 
+### Task 3: Modal UI, provider, `PlayerName`, prev/next, first wiring (Players page)
+
+The read-only ESPN-style modal is live, wired from the Players page. `Modal`
+(`src/components/Modal.tsx`) gained `size` (`"md"` default / `"xl"`) and
+`bare` (no title bar, transparent dialog, children own scroll + cards).
+`PlayerProfileProvider` (mounted once in `leagues/[id]/layout.tsx`) holds
+`{ playerId, nav } | null` state and renders `PlayerProfileModal` only while
+open; `PlayerName` (drop-in for a bare `{fullName}` node) reads the provider
+via context and is a plain `<span>` when no provider is in scope; `PlayerNavList`
+wraps a list-rendering component so the players it wraps get ‹ › arrows over
+that list's own rendered order. `PlayerStatsTable`'s rows are the first (and
+so far only) site wired: `PlayerNavList` around `pageRows`, `PlayerName` in
+place of the bare name.
+
+`PlayerProfileModal.tsx` renders the header card (headshot + team logo
+overlay + sweater number, ELIG/MANAGER/STATUS rows, POSITION RANK/AVERAGE
+POINTS, watchlist star), Stats card (two season rows, GP-0 → all dashes,
+"No NHL games ingested." for a prospect with zero lines ever), Game Log card
+(5 rows + Show More to 25, OPP/TOI/FPTS), and All Transactions card (grouped
+per event with bold verb + headline + trade detail lines) — all straight off
+Task 2's `PlayerProfile` shape, no new data-layer work. ← → keys and the ‹ ›
+buttons call `onNavigate`; on navigation the old cards stay visible at
+`opacity-60` instead of flashing to a loading state.
+
+**Two real rendering bugs found and fixed during browser verification, not
+speculative — both stem from the same root cause**: a native `<dialog>` with
+`overflow-y: auto` forces `overflow-x` to compute as `auto` too (CSS Overflow
+spec — an axis can't stay `visible` once the other isn't), so anything
+positioned outside the dialog's own box is clipped/unreachable rather than
+actually visible, even though `getBoundingClientRect()` reports a plausible
+position. First symptom: the ‹ › nav arrows (spec'd at `-left-24`/`-right-24`
+outside a `max-w-3xl` column) were silently unclickable —
+`document.elementFromPoint()` at the arrow's own coordinates returned the
+`<dialog>` itself, not the button. Fixed by widening the **dialog's own box**
+for `bare` + `size="xl"` only (`max-w-[64rem]`, via a `Modal.tsx` comment
+explaining why) while keeping the visible card column at `max-w-3xl` inside
+via `PlayerProfileModal`'s own `mx-auto` wrapper — the extra width is just
+backdrop-click space that gives the arrows room to render in-bounds. Second
+symptom, same root cause in reverse: the sticky ✕ (plain white text, no
+background) is invisible once scrolled past the header card, because at that
+scroll position it sits directly over a scrolled-up white `Card` background
+instead of the dark backdrop it was designed against — fixed by giving it a
+solid `bg-black/70` circle so it reads regardless of what's scrolled beneath
+it. Both were caught by literally testing `elementFromPoint`/scrolling in the
+browser per PROGRESS.md's verification conventions, not by inspection.
+
+**Also fixed**: `PlayerStatsTable`'s watchlist star didn't pick up
+`router.refresh()` from the modal — `useState<Set>(watchlistedIds)` only
+reads its initial value once, and a soft refresh doesn't remount the
+component, so the Server Component's fresh prop never reached local state.
+Added a `useEffect` resyncing `watching` whenever `watchlistedIds` changes.
+Confirmed via DB query that toggling from the modal was already writing
+correctly — this was purely a stale-local-state display bug, not a data bug.
+
+Verified in a real browser (`preview_start {name: "puckgm-dev"}`, `// TEMP:`
+bypass across `leagues/[id]/layout.tsx`, `players/page.tsx`, and
+`players/actions.ts`'s `getPlayerProfileAction`/`toggleWatchlistAction`;
+reverted, `grep -rn "TEMP:" src/` clean) against the real "Experimenting"
+league, read-only except the watchlist star (toggled back, confirmed via a
+direct DB query that no stray `WatchlistEntry` rows were left): opened
+Connor McDavid from the Players page — header, Stats (2026-27 all-zero row
+above 2025-26 with ATOI), Game Log (5 rows, OPP/TOI, Show More → 25),
+Transactions (a real processed trade rendering all three assets, a draft
+pick, and FAAB, confirmed no PROPOSED trade leaks in) all matched spec.
+Arrows: clicking `›` and pressing `→` both step to the next player on the
+current table page without closing, keeping the old cards dimmed until the
+new profile loads; the first row has no ‹. ✕/Esc-adjacent close (verified
+via the ✕ click; native-dialog Esc-to-close is standard `<dialog>` behavior,
+unchanged from the existing `Modal`) and backdrop click both close. Scrolled
+to the bottom of All Transactions with the ✕ still pinned and legible.
+Watchlist star: toggled on in the modal, closed without navigating, and the
+Players page row showed ★ immediately (via `router.refresh()` + the
+`PlayerStatsTable` fix above) — then toggled back. Mobile
+(`resize_window` preset `mobile`): header/Stats/Game Log/Transactions cards
+stack, tables scroll inside their own cards, arrows collapse to a `‹ · ›`
+row; no new horizontal overflow introduced by the modal (a `scrollWidth` >
+`clientWidth` overflow on the Players page turned out to pre-exist with the
+modal closed too — unrelated to this task, not investigated further here).
+
+Not built yet: the action card (Task 4) and every other click site besides
+the Players page (Task 5).
+
 ## Working conventions established this session
 
 - Every commit message explains *why*, not just *what* — written for a future session to

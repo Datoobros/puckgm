@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NHL_TEAM_ABBREVS } from "@/lib/nhl/client";
 import { PlayerHeadshot } from "@/components/PlayerHeadshot";
 import { SKATER_COLUMNS, GOALIE_COLUMNS, POINTS_COLUMNS, type StatColumn } from "@/lib/players/columns";
 import { addPlayerAction, submitFaBidAction, toggleWatchlistAction } from "./actions";
 import type { PlayerStatsRow } from "@/lib/players/rankings";
 import { Button, Badge } from "@/components/Button";
+import { PlayerNavList } from "@/components/player-profile/PlayerNavList";
+import { PlayerName } from "@/components/player-profile/PlayerName";
 
 interface RosterContext {
   leagueId: string;
@@ -68,6 +70,15 @@ export function PlayerStatsTable({
   const [sortDesc, setSortDesc] = useState(true);
   const [page, setPage] = useState(0);
   const [watching, setWatching] = useState<Set<string>>(new Set(watchlistedIds));
+
+  // watchlistedIds only changes when the Server Component re-renders (a
+  // navigation, or router.refresh() — e.g. from the player-profile modal's
+  // own watchlist star) — useState's initial value alone won't pick that
+  // up, so this resyncs local state whenever the parent actually hands down
+  // a new list.
+  useEffect(() => {
+    setWatching(new Set(watchlistedIds));
+  }, [watchlistedIds]);
 
   const columns = position === "G" ? GOALIE_COLUMNS : SKATER_COLUMNS;
   const allColumns = [...columns, ...POINTS_COLUMNS];
@@ -211,12 +222,13 @@ export function PlayerStatsTable({
             </tr>
           </thead>
           <tbody>
+            <PlayerNavList players={pageRows.map((r) => ({ id: r.id, fullName: r.fullName }))}>
             {pageRows.map((r) => (
               <tr key={r.id} className="border-b border-border">
                 <td className="py-2 pr-2 font-medium">
                   <span className="flex items-center gap-2">
                     <PlayerHeadshot url={r.headshotUrl} alt={r.fullName} size={28} />
-                    {r.fullName}
+                    <PlayerName playerId={r.id} fullName={r.fullName} />
                     {r.officialRosterStatus === "IR" && (
                       <Badge tone="danger" title="Officially on Injured Reserve — eligible to be placed on your IR slot">
                         IR
@@ -294,6 +306,7 @@ export function PlayerStatsTable({
                 )}
               </tr>
             ))}
+            </PlayerNavList>
             {pageRows.length === 0 && (
               <tr>
                 <td colSpan={allColumns.length + 2} className="py-8 text-center text-sm text-muted">

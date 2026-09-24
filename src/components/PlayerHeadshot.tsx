@@ -10,12 +10,17 @@ export function PlayerHeadshot({
   url,
   alt,
   size = 32,
+  shape = "circle",
 }: {
   url: string | null;
   alt: string;
   size?: number;
+  /** "square" (rounded-lg) for the player-profile modal's ESPN-style header
+   * card; every other current caller keeps the original circle. */
+  shape?: "circle" | "square";
 }) {
   const [failed, setFailed] = useState(false);
+  const roundedClass = shape === "square" ? "rounded-lg" : "rounded-full";
 
   if (!url || failed) {
     return (
@@ -26,7 +31,7 @@ export function PlayerHeadshot({
         fill="currentColor"
         role="img"
         aria-label={alt}
-        className="shrink-0 rounded-full bg-surface-tint text-muted"
+        className={`shrink-0 ${roundedClass} bg-surface-tint text-muted`}
       >
         <circle cx="12" cy="8.5" r="4" />
         <path d="M4 20.5c0-4.14 3.58-7.5 8-7.5s8 3.36 8 7.5" />
@@ -40,7 +45,7 @@ export function PlayerHeadshot({
       alt={alt}
       width={size}
       height={size}
-      className="shrink-0 rounded-full bg-surface-tint object-cover"
+      className={`shrink-0 ${roundedClass} bg-surface-tint object-cover`}
       onError={() => setFailed(true)}
     />
   );
