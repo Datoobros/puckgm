@@ -644,10 +644,34 @@ not a migration.
 
 ## Explicitly out of scope
 
-- **Live / in-game stat tracking.** Needs (a) Vercel Pro — Hobby allows one cron trigger
-  per project per day, a hard platform cap; (b) a provisional store separate from
-  `GameStatLine`, which is final-only on purpose because NHL scorers reassign assists days
-  later (DESIGN.md §4.1); (c) a UI that distinguishes provisional from final. Its own plan.
+- **Live / in-game stat tracking.** Needs (a) a scheduler that can fire more than once a
+  day; (b) a provisional store separate from `GameStatLine`, which is final-only on purpose
+  because NHL scorers reassign assists days later (DESIGN.md §4.1); (c) a UI that
+  distinguishes provisional from final. Its own plan.
+
+  **Correction (2026-09-26), verified against Vercel's current docs — an earlier draft of
+  this plan said this "needs Vercel Pro." It does not.** Hobby's once-per-day cron limit
+  applies to *Vercel's scheduler*, not to the route, which is an ordinary HTTP GET behind a
+  `CRON_SECRET` bearer token. Any external scheduler (GitHub Actions, cron-job.org, Upstash
+  QStash) can call it as often as needed, free. Hobby's included usage — 1,000,000
+  invocations, 4 Active-CPU-hours, 360 GB-hrs provisioned memory — comfortably covers
+  ~1,800 polls/month, especially since Vercel's docs state Active CPU billing "pauses while
+  your function is waiting on I/O," which is nearly all of a poll. The real cost risk is
+  **Neon**, not Vercel: free tier is 100 CU-hours/month with auto-suspend after 5 min that
+  can't be disabled, so 5-minute polling would hold the DB awake ~150 hrs/month. Avoid it
+  by keeping provisional stats in a cache (they're discarded once the final boxscore lands)
+  rather than in Postgres. Storage is a non-issue: the DB is 49 MB against a 512 MB cap,
+  38 MB of it `GameStatLine`, so ~38 MB per season.
+
+- **`maxDuration = 60` is a stale self-imposed ceiling, not a platform limit.** Vercel's
+  current duration table gives **Hobby a 300s maximum and a 300s default** (the 60s figure
+  comes from an older changelog). This matters for reading Task 4: its 162.5s "FAIL" was
+  against the 60s budget this plan chose, **not** against anything that would actually have
+  killed the function. Task 4b is still correct and still worth doing — roster sync was
+  genuinely broken, with ~800 players never synced — but the "the cron will be killed
+  mid-run on opening night" framing in Task 4's write-up and in PROGRESS.md's known-gaps
+  entry overstates the risk. Raising `maxDuration` is a legitimate separate lever; don't
+  treat 60s as immovable.
 - **True PPP / SHP.** The boxscore has no power-play assists and no shorthanded goals.
   Needs a play-by-play feed. `powerPlayPoints`/`shorthandedPoints` stay no-op fields.
 - **Faceoff wins/losses as counts.** Only `faceoffWinningPctg` is published per game.
