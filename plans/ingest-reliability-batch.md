@@ -365,6 +365,146 @@ runnable-regression-check convention)
 
 ---
 
+## Task 4b — Roster sync stops making ~950 requests a night (added after Task 4 failed)
+
+Task 4 measured the full cron body at **162.5s against a 60s limit**, with `rosterSync`
+alone at **120.3s**. It escalated rather than improvising, which was right — but its
+diagnosis ("120s of work, move it to a weekly cron") is wrong, and the wrong diagnosis
+leads to the wrong fix. **Do not build a weekly roster cron. Do not upgrade the Vercel
+plan. Neither is needed.**
+
+### What is actually happening
+
+The arithmetic in Task 4's own output gives it away: 32 teams × ~30 players ≈ **950 players
+expected**, but it reported `synced=98 failed=43`. 98 + 43 = 141. **About 800 players were
+never even attempted.**
+
+Because `syncTeamRoster` calls `upsertPlayerFull` per player, and that hits the NHL
+**landing** endpoint once per player, a full-slate night fires ~950 requests at
+`CONCURRENCY = 15`. The NHL API rate-limits hard and IP-globally — it allows a burst, then
+429s *everything*, including the cheap roster endpoint. Reproduced directly:
+
+```
+ANA: synced=35  rosterFetchFailed=false
+BOS: synced=15  rosterFetchFailed=false  playerFails=14
+BUF: synced=0   rosterFetchFailed=true
+CGY: synced=0   rosterFetchFailed=true
+CAR: synced=0   rosterFetchFailed=true    (and CHI, COL, CBJ the same)
+8 teams in 30.5s | synced=50 WHOLE-ROSTER-FETCH-FAILURES=6 individual-player-failures=14
+```
+
+One team succeeds, the second half-succeeds, and from the third on the API refuses
+everything. So `rosterSync`'s 120.3s is mostly **Task 1's retry backoff patiently waiting
+on doomed requests** (500ms → 1s → 2s ≈ 3.5s per failed call), not useful work. Retrying
+into a rate limit both costs time and adds load.
+
+Two consequences worth stating plainly:
+- **Roster sync has almost certainly never worked properly in production.** The August
+  commit "Fix cron route 500: serverless timeout on full roster sync" read this as a
+  timeout; it was at least partly this.
+- **Task 2 turned a loud crash into a silent partial failure.** That is the correct
+  behaviour and should stay — but it is why this presented as "slow" instead of "broken."
+
+### The fix: the roster endpoint already carries almost everything
+
+`NhlRosterPlayer` is declared with four fields. The endpoint actually returns far more —
+the same understatement the boxscore types had (see the player-modal batch's Task 1). Real
+payload for `/roster/ANA/current`:
+
+```json
+{ "id": 8484153, "headshot": "https://assets.nhle.com/mugs/nhl/20262027/ANA/8484153.png",
+  "firstName": {"default":"Leo"}, "lastName": {"default":"Carlsson"}, "sweaterNumber": 91,
+  "positionCode": "C", "shootsCatches": "L", "heightInInches": 75, "weightInPounds": 215,
+  "heightInCentimeters": 191, "weightInKilograms": 98, "birthDate": "2004-12-26",
+  "birthCity": {"default":"Karlstad"}, "birthCountry": "SWE" }
+```
+
+Against what `upsertPlayerFull` writes:
+
+| `Player` field | landing | roster payload |
+|---|---|---|
+| `fullName` | ✅ | ✅ `firstName`/`lastName` |
+| `dob` | ✅ | ✅ `birthDate` |
+| `primaryPosition` | ✅ | ✅ `positionCode` |
+| `shoots` | ✅ | ✅ `shootsCatches` |
+| `currentNhlOrg` | ✅ | ✅ implied by which roster was fetched |
+| `headshotUrl` | ✅ | ✅ `headshot` |
+| `careerNhlGp` | ✅ | ❌ **the only field that needs landing** |
+
+**~950 requests become 32.** Plus height/weight arrive free, which closes one of the
+player-modal batch's listed known gaps.
+
+### Changes
+
+`src/lib/nhl/client.ts`
+- Extend `NhlRosterPlayer` to declare the fields above (`headshot`, `sweaterNumber`,
+  `shootsCatches`, `birthDate`, `heightInInches`, `weightInPounds`). Comment that the type
+  was previously understated and the payload always had them, same as `NhlBoxscore`.
+
+`src/lib/players/identity.ts`
+- New `upsertPlayerFromRoster(rosterPlayer, teamAbbrev)` writing every field in the table
+  above **except `careerNhlGp`**, which it must leave untouched. Keep `upsertPlayerFull`
+  as-is for the bounded landing path below.
+
+`src/lib/players/sync.ts`
+- `syncTeamRoster` uses `upsertPlayerFromRoster` for every player on the roster — **no
+  per-player network call at all.** One request per team.
+- Drop `CONCURRENCY = 15`. Fan out across *teams* at concurrency **3** instead, which
+  measured clean in testing; 6 did not. Comment why the number is what it is.
+- Keep the `-1` whole-roster-failure sentinel from Task 2, and **report it separately** from
+  per-player failures — conflating them is what hid this bug. `RosterSyncResult` gains
+  `rosterFetchFailed: boolean`.
+
+`src/lib/players/careerGp.ts` (new) — the only landing-endpoint consumer left
+- `refreshCareerGp(limit = 40)`: picks players by priority and calls `upsertPlayerFull` for
+  at most `limit` of them, at concurrency 3.
+- Priority order: (1) players with `careerNhlGp = 0` **and** at least one `GameStatLine`
+  row — a stub that never got enriched; (2) players with `careerNhlGp` between 60 and 90,
+  the band where the 80-GP waiver exemption (DESIGN.md §2.3) actually bites; (3) oldest
+  `updatedAt` first, as a rolling refresh.
+- 40/night covers the whole player pool in about three weeks, which is ample for a
+  threshold that only matters at 80 games. Document that reasoning in the file header.
+
+`src/app/api/cron/daily-ingest/route.ts`
+- Add `refreshCareerGp()` as its own Task 2-style phase after the roster sync.
+
+`scripts/ingest-dress-rehearsal.ts`
+- Report `rosterFetchFailed` separately from per-player failures, and print
+  `playersSeen` alongside `synced` so a silent mass-skip can never look like a slow success
+  again. Add the new `careerGp` phase to the timing table.
+
+### Verification
+
+- `npx tsc --noEmit`, `npm run build`.
+- **Re-run the dress rehearsal for `2025-10-11` — this is the gate.** `rosterSync` must
+  drop from 120.3s to roughly the cost of 32 requests, `playersSeen` must be ~950 (not
+  141), and whole-roster failures must be **0**. The 16-game TOTAL must come in under the
+  45s soft budget. If it does not, stop and report again rather than tuning further.
+- Spot-check one player against the raw roster payload: `dob`, `shoots`, `headshotUrl`,
+  `primaryPosition`, `currentNhlOrg` all correct, and **`careerNhlGp` unchanged** by the
+  roster path.
+- Confirm `refreshCareerGp` respects its limit, picks the documented priority order, and
+  that a player it refreshes gets a `careerNhlGp` matching the landing endpoint.
+- Row counts unchanged: `League` 9, `Team` 22, `RosterSlot` 180, `GameStatLine` 52,478.
+- **Be a good citizen while testing.** The NHL API rate-limits IP-globally and stays
+  limited for minutes. Space out repeat runs; do not loop the full 32-team sync
+  back-to-back. If everything starts returning 429, that is your own test traffic — wait it
+  out rather than concluding the code is broken.
+
+### Checklist
+- [ ] `NhlRosterPlayer` extended; comment notes the previous understatement
+- [ ] `upsertPlayerFromRoster` writes everything except `careerNhlGp`
+- [ ] `syncTeamRoster` makes **one** request per team; teams fan out at concurrency 3
+- [ ] `rosterFetchFailed` reported separately from per-player failures
+- [ ] `refreshCareerGp` with documented priority + 40/night cap, wired as its own phase
+- [ ] Dress rehearsal: `rosterSync` collapses, `playersSeen` ~950, 0 roster-fetch failures
+- [ ] 16-game TOTAL under 45s — or stop and report
+- [ ] `careerNhlGp` provably untouched by the roster path
+- [ ] Row counts unchanged
+- [ ] PROGRESS.md section + commit
+
+---
+
 ## Task 5 — NHL playoff games ingest
 
 Fixes defect #5. Not urgent for September, essential before April.
