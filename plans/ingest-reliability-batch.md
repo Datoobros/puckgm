@@ -355,13 +355,13 @@ runnable-regression-check convention)
   (count them before and after).
 
 ### Checklist
-- [ ] `scripts/ingest-dress-rehearsal.ts` runs the full cron body with per-phase timing
-- [ ] 16-game day measured; PASS/FAIL vs the 60s budget stated plainly
-- [ ] Quiet preseason day measured
-- [ ] Both timings recorded in PROGRESS.md
-- [ ] Row counts unchanged; no league/team/roster mutations
-- [ ] Escalate instead of improvising if over budget
-- [ ] PROGRESS.md section + commit
+- [x] `scripts/ingest-dress-rehearsal.ts` runs the full cron body with per-phase timing
+- [x] 16-game day measured; PASS/FAIL vs the 60s budget stated plainly (**FAIL**, 162.5s)
+- [x] Quiet preseason day measured (**PASS**, 13.0s)
+- [x] Both timings recorded in PROGRESS.md
+- [x] Row counts unchanged; no league/team/roster mutations
+- [x] Escalate instead of improvising if over budget — escalated, no fix attempted
+- [x] PROGRESS.md section + commit
 
 ---
 

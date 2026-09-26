@@ -3796,6 +3796,7 @@ instead of `ingestDate(yesterdayUTC())`, and updates the row at the end. Respons
   0` (correctly skipped — `gameType` 1), `ok: true`, response carried a real `ingestRunId`.
   Read that row back directly: `finishedAt` set, `phaseErrorsJson`/`ingestErrorsJson` both
   `null`, all counts matching the response.
+  (Task 4 below found a real problem in this same code path, see that section.)
 - **Heal test (mandatory, exact-gameId, shared prod DB):** recorded gameId `2025020035`
   (one of the 16 games on 2025-10-11) at 40 rows; total `GameStatLine` was 52,478. Deleted
   those 40 rows by exact `gameId` only (`deleteMany({ where: { gameId } })`) — total dropped
@@ -3809,3 +3810,89 @@ instead of `ingestDate(yesterdayUTC())`, and updates the row at the end. Respons
 - **401 path:** wrong bearer token still returns 401 with body `Unauthorized`;
   `IngestRun` count confirmed unchanged (1 before, 1 after) — no row written.
 - All throwaway scripts (`scripts/_tmp-*.ts`) deleted before commit.
+
+## Task 4 of `plans/ingest-reliability-batch.md` — opening-night dress rehearsal (2026-09-26)
+
+**No feature work, as specified — this task exists to measure whether Tasks 1-3 actually
+hold up, and it found a real problem.**
+
+New `scripts/ingest-dress-rehearsal.ts`, following `roster-action-check.ts`'s
+runnable-regression-check convention (`main()` / `SCRIPT ERROR` / `finally($disconnect)`).
+Takes a date argument (default `2025-10-11`, the known 16-game day) and runs the same eight
+phases as the real cron route, timed individually: heal-forward ingest (reimplemented
+locally around the real, unmodified `ingestDate`, anchored at the rehearsal date instead of
+real "yesterday" — `ingestRecentDates` itself can't be pointed at a historical date), scoped
+roster sync, injury sync, waivers, FAAB, trades, lineup materialization (deliberately using
+the *real* today/yesterday dates, not the rehearsal date — materializing lineups against a
+2025 date would write bogus historical `LineupEntry` rows), and playoffs. Prints a
+plain-language PASS/FAIL against a 45s soft budget (60s hard Vercel limit) and throws if
+`League`/`Team`/`RosterSlot` row counts change across the run — the read-only-with-respect-
+to-leagues guarantee is asserted by the script itself, not just eyeballed.
+
+**Measured for real, against the live dev server and the shared prod database:**
+
+16-game day (`2025-10-11`):
+```
+Phase breakdown:
+  ingest (heal-forward)   26.1s   dates=2025-10-11,2025-10-10,2025-10-09 gamesIngested=30 errors=0
+  rosterSync            120.3s   teams=32 synced=98 failed=43
+  injurySync              1.2s   matched=11 cleared=0
+  waivers                 0.1s   processed=0
+  faab                    0.1s   processed=0
+  trades                  0.1s   processed=0
+  lineups                13.8s   teams=22 dates=2026-09-25,2026-09-26 materialized=44
+  playoffs                0.6s   done
+  TOTAL                 162.5s
+```
+Row counts unchanged: League 9→9, Team 22→22, RosterSlot 180→180, GameStatLine
+52,478→52,478.
+
+**❌ FAIL — 162.5s, 2.7x the 60s hard limit.** `rosterSync` alone is 120.3s — double the
+*entire* budget by itself — with `failed=43` out of the ~608 individual player-detail
+fetches implied by 32 teams' full rosters. That failure count is real 429 pressure from the
+NHL API under this load (each failed fetch already paid Task 1's full 500ms→1s→2s retry
+backoff before giving up), not a fluke of this one run.
+
+Quiet preseason day (`2025-09-22`):
+```
+Phase breakdown:
+  ingest (heal-forward)    1.1s   dates=2025-09-22,2025-09-21,2025-09-20 gamesIngested=0 errors=0
+  rosterSync               0.0s   teams=0 synced=0 failed=0
+  injurySync               1.0s   matched=11 cleared=0
+  waivers                  0.1s   processed=0
+  faab                     0.1s   processed=0
+  trades                   0.1s   processed=0
+  lineups                 10.0s   teams=22 dates=2026-09-25,2026-09-26 materialized=44
+  playoffs                 0.6s   done
+  TOTAL                   13.0s
+```
+Row counts unchanged: League 9→9, Team 22→22, RosterSlot 180→180, GameStatLine
+52,478→52,478. **✅ PASS — 13.0s.** Preseason games correctly skipped (`gamesIngested: 0`);
+with no teams involved, roster sync is free. This is closer to most nights this season, but
+opening night and any other full-slate day will hit the 16-game case, not this one.
+
+**Stopping and escalating, per the plan's explicit instruction — not attempting a fix
+here:**
+
+This is a real gap, found three days before the 2026-09-29 opener. The 16-game case isn't a
+rare edge case — it's what a full NHL slate looks like, and the current cron will almost
+certainly get killed mid-run by Vercel's platform timeout on any such night (that's exactly
+the `finishedAt: null` case Task 3 built visibility for). `rosterSync`'s own 429 failures are
+made *worse* by load, not better, so this isn't a one-off measurement artifact.
+
+The plan is explicit that the next move — moving roster sync to its own weekly cron, or a
+queue, off the ingest request path entirely — is a scope decision for the user, not
+something to improvise inside this task. **Flagging for the user's decision before
+2026-09-29:** roster data (name/position/org) changes far less often than nightly; a weekly
+(or even twice-weekly) roster-sync cron decoupled from daily ingest would remove the
+dominant cost from this path entirely without touching ingest, injuries, waivers, FAAB,
+trades, or lineups, all of which stayed fast and are fine as-is.
+
+### Checklist
+- [x] `scripts/ingest-dress-rehearsal.ts` runs the full cron body with per-phase timing
+- [x] 16-game day measured; PASS/FAIL vs the 60s budget stated plainly (**FAIL**, 162.5s)
+- [x] Quiet preseason day measured (**PASS**, 13.0s)
+- [x] Both timings recorded in PROGRESS.md verbatim
+- [x] Row counts unchanged; no league/team/roster mutations (asserted by the script itself)
+- [x] Escalate instead of improvising if over budget — escalated above, no fix attempted
+- [x] PROGRESS.md section + commit
