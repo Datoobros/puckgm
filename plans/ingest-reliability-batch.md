@@ -316,14 +316,14 @@ Migration name: `add_ingest_run`.
 - Confirm a wrong bearer token still returns 401 and writes **no** `IngestRun` row.
 
 ### Checklist
-- [ ] `IngestRun` model + `add_ingest_run` migration
-- [ ] `ingestRecentDates` with a documented 3-day window; `ingestDate` unchanged
-- [ ] Row created before work, updated after; timeout leaves `finishedAt: null`
-- [ ] `statLinesWritten` summed from real return values
-- [ ] Offseason run: 3 dates attempted, preseason skipped, `ok: true`
-- [ ] Deleted-game heal test passes, back to 52,478
-- [ ] 401 path writes no row
-- [ ] PROGRESS.md section + commit
+- [x] `IngestRun` model + `add_ingest_run` migration
+- [x] `ingestRecentDates` with a documented 3-day window; `ingestDate` unchanged
+- [x] Row created before work, updated after; timeout leaves `finishedAt: null`
+- [x] `statLinesWritten` summed from real return values
+- [x] Offseason run: 3 dates attempted, preseason skipped, `ok: true`
+- [x] Deleted-game heal test passes, back to 52,478
+- [x] 401 path writes no row
+- [x] PROGRESS.md section + commit
 
 ---
 

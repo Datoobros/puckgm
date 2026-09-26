@@ -583,3 +583,27 @@ model WatchlistEntry {
   @@unique([leagueId, userId, playerId])
   @@index([leagueId, userId])
 }
+
+// ---------------------------------------------------------------------------
+// Ingest observability. Created at the top of the daily-ingest cron route
+// before any work runs, updated once at the end — a row with finishedAt:
+// null means the run was killed (e.g. Vercel's 60s function limit) before
+// it could finish, which is otherwise invisible in a JSON response nobody
+// reads. See PROGRESS.md's ingest-reliability-batch Task 3 section.
+// ---------------------------------------------------------------------------
+
+model IngestRun {
+  id               String   @id @default(cuid())
+  startedAt        DateTime @default(now())
+  finishedAt       DateTime?
+  datesAttempted   String[]          // the heal-forward window actually walked
+  gamesFound       Int      @default(0)
+  gamesIngested    Int      @default(0)
+  gamesSkipped     Int      @default(0)
+  statLinesWritten Int      @default(0)
+  phaseErrorsJson  Json?             // [{ phase, error }] from Task 2, null when clean
+  ingestErrorsJson Json?             // per-game errors, null when clean
+  ok               Boolean  @default(false)
+
+  @@index([startedAt])
+}

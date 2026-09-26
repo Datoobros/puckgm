@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
+import { healForwardDates, ingestRecentDates, yesterdayUTC } from "@/lib/ingest/daily";
 import { syncTeamsRosters } from "@/lib/players/sync";
 import { syncInjuryStatuses } from "@/lib/players/injuries";
 import { processExpiredWaivers } from "@/lib/waivers/mutations";
@@ -59,7 +60,15 @@ export async function GET(request: Request) {
   const phaseErrors: PhaseError[] = [];
   const date = yesterdayUTC();
 
-  const ingestResult = await phase("ingest", phaseErrors, () => ingestDate(date));
+  // Created before any work runs, updated once at the end — a row that's
+  // still finishedAt: null means the run was killed (e.g. Vercel's 60s
+  // function limit) before it could get back here. That absence is the
+  // signal; nothing else makes a mid-run death visible.
+  const ingestRun = await prisma.ingestRun.create({
+    data: { datesAttempted: healForwardDates() },
+  });
+
+  const ingestResult = await phase("ingest", phaseErrors, () => ingestRecentDates());
   const rosterResults = await phase("rosterSync", phaseErrors, () =>
     syncTeamsRosters(ingestResult?.teamsInvolved ?? []),
   );
@@ -108,9 +117,29 @@ export async function GET(request: Request) {
 
   const rosterSynced = rosterResults?.reduce((s, r) => s + r.playersSynced, 0) ?? 0;
   const rosterFailed = rosterResults?.reduce((s, r) => s + r.failures.length, 0) ?? 0;
+  const ok = phaseErrors.length === 0;
+
+  await prisma.ingestRun.update({
+    where: { id: ingestRun.id },
+    data: {
+      finishedAt: new Date(),
+      gamesFound: ingestResult?.gamesFound ?? 0,
+      gamesIngested: ingestResult?.gamesIngested ?? 0,
+      gamesSkipped: ingestResult?.gamesSkipped ?? 0,
+      statLinesWritten: ingestResult?.statLinesWritten ?? 0,
+      phaseErrorsJson:
+        phaseErrors.length > 0 ? (phaseErrors as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+      ingestErrorsJson:
+        ingestResult && ingestResult.errors.length > 0
+          ? (ingestResult.errors as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+      ok,
+    },
+  });
 
   return NextResponse.json({
-    ok: phaseErrors.length === 0,
+    ok,
+    ingestRunId: ingestRun.id,
     phaseErrors,
     ingest: ingestResult,
     rosterSync: { teams: ingestResult?.teamsInvolved ?? [], synced: rosterSynced, failed: rosterFailed },

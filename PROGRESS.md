@@ -3761,3 +3761,51 @@ success.
 - Reverted both sabotage edits; re-ran `npx tsc --noEmit` / `npm run build` clean, then
   confirmed a clean run again reports `ok: true` with an empty `phaseErrors`.
 - `grep -rn "TEMP:" src/` clean before commit.
+
+## Task 3 of `plans/ingest-reliability-batch.md` — heal-forward window + `IngestRun` (2026-09-26)
+
+New `IngestRun` model (`prisma/schema.prisma`, migration `20260926195948_add_ingest_run`)
+gives a failed or killed cron run a row in the database instead of a JSON response nobody
+reads — `startedAt`/`datesAttempted` written before any work runs, everything else
+(`gamesFound`, `gamesIngested`, `gamesSkipped`, `statLinesWritten`, `phaseErrorsJson`,
+`ingestErrorsJson`, `ok`, `finishedAt`) written once at the end. A run killed by Vercel's
+60s limit leaves `finishedAt: null` — that absence is the signal.
+
+`src/lib/ingest/daily.ts` gained `INGEST_HEAL_DAYS = 3`, `healForwardDates()`, and
+`ingestRecentDates()`. `ingestDate` itself is unchanged (still one date, one job, still
+`gameState === "OFF"` only — `FINAL` was never added, per the plan's decision) — it just
+also now sums `ingestGame`'s `playerLinesWritten` into a new `statLinesWritten` field on
+`DailyIngestResult` so the run row's total is real. `ingestRecentDates` walks yesterday plus
+two days further back, calling `ingestDate` once per date **sequentially** (not fanned out
+across dates — each `ingestDate` call already fans out across that day's games at
+concurrency 6, and stacking multiple days of those bursts on top of each other is the same
+mistake Task 1 fixed for a single day) and merges the per-date results.
+
+`src/app/api/cron/daily-ingest/route.ts` creates the `IngestRun` row right after the auth
+check (so a bad bearer token still 401s with no row written), calls `ingestRecentDates()`
+instead of `ingestDate(yesterdayUTC())`, and updates the row at the end. Response gained
+`ingestRunId`; shape otherwise unchanged, still always 200 (Task 2's guarantee untouched).
+
+**Verified against the live dev server and the real database (2026-09-26):**
+- `npx prisma migrate dev --name add_ingest_run` applied clean; `npx tsc --noEmit` and
+  `npm run build` clean throughout (Prisma's nullable-Json update needed the existing
+  `Prisma.JsonNull` / `as unknown as Prisma.InputJsonValue` convention already used in
+  `src/lib/leagues/mutations.ts` — not a new pattern).
+- **Offseason run** (correct `CRON_SECRET`, real date 2026-09-26): `datesAttempted:
+  ["2026-09-25","2026-09-24","2026-09-23"]`, `gamesFound: 19` (preseason), `gamesIngested:
+  0` (correctly skipped — `gameType` 1), `ok: true`, response carried a real `ingestRunId`.
+  Read that row back directly: `finishedAt` set, `phaseErrorsJson`/`ingestErrorsJson` both
+  `null`, all counts matching the response.
+- **Heal test (mandatory, exact-gameId, shared prod DB):** recorded gameId `2025020035`
+  (one of the 16 games on 2025-10-11) at 40 rows; total `GameStatLine` was 52,478. Deleted
+  those 40 rows by exact `gameId` only (`deleteMany({ where: { gameId } })`) — total dropped
+  to 52,438. Temporarily pointed `healForwardDates`'s base date at `2025-10-11` (`// TEMP:`,
+  same sabotage-and-revert convention as Task 2), ran the real `ingestRecentDates()` via a
+  throwaway script: `datesAttempted: ["2025-10-11","2025-10-10","2025-10-09"]`,
+  `gamesIngested: 30, errors: 0`, gameId `2025020035` back to **40 rows**, total back to
+  **52,478**. Reverted the sabotage immediately; `grep -rn "TEMP:" src/` clean, `tsc`/`build`
+  clean again, then re-ran the route for real and confirmed it's back to attempting
+  `2026-09-25`/`24`/`23` with `ok: true`.
+- **401 path:** wrong bearer token still returns 401 with body `Unauthorized`;
+  `IngestRun` count confirmed unchanged (1 before, 1 after) — no row written.
+- All throwaway scripts (`scripts/_tmp-*.ts`) deleted before commit.
