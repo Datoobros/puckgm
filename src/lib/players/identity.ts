@@ -4,7 +4,7 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getPlayerLanding } from "@/lib/nhl/client";
+import { getPlayerLanding, type NhlRosterPlayer } from "@/lib/nhl/client";
 
 async function resolvePlayerId(
   nhlPlayerId: number,
@@ -82,6 +82,41 @@ export async function upsertPlayerFull(nhlPlayerId: number): Promise<string> {
       currentNhlOrg: landing.currentTeamAbbrev,
       careerNhlGp: landing.careerTotals?.regularSeason?.gamesPlayed ?? 0,
       headshotUrl: landing.headshot,
+    },
+  });
+
+  return playerId;
+}
+
+/**
+ * Roster-endpoint upsert — one request per *team* instead of one per
+ * *player* (see src/lib/players/sync.ts). Writes every field the roster
+ * payload carries except `careerNhlGp`, which it deliberately leaves
+ * untouched: the roster endpoint doesn't return it, only the landing
+ * endpoint does, and that's now refreshCareerGp's job
+ * (src/lib/players/careerGp.ts), not this function's.
+ */
+export async function upsertPlayerFromRoster(
+  rosterPlayer: NhlRosterPlayer,
+  teamAbbrev: string,
+): Promise<string> {
+  const fullName = `${rosterPlayer.firstName.default} ${rosterPlayer.lastName.default}`;
+
+  const playerId = await resolvePlayerId(rosterPlayer.id, {
+    fullName,
+    position: rosterPlayer.positionCode,
+  });
+
+  await prisma.player.update({
+    where: { id: playerId },
+    data: {
+      fullName,
+      dob: rosterPlayer.birthDate ? new Date(rosterPlayer.birthDate) : undefined,
+      primaryPosition: rosterPlayer.positionCode,
+      shoots: rosterPlayer.shootsCatches,
+      currentNhlOrg: teamAbbrev,
+      headshotUrl: rosterPlayer.headshot,
+      // careerNhlGp intentionally absent — see doc comment above.
     },
   });
 

@@ -22,6 +22,7 @@ import { prisma } from "@/lib/db";
 import { ingestDate, yesterdayUTC } from "@/lib/ingest/daily";
 import { shiftDate, todayUTC } from "@/lib/dates";
 import { syncTeamsRosters } from "@/lib/players/sync";
+import { refreshCareerGp } from "@/lib/players/careerGp";
 import { syncInjuryStatuses } from "@/lib/players/injuries";
 import { processExpiredWaivers } from "@/lib/waivers/mutations";
 import { processFaabBids } from "@/lib/faab/mutations";
@@ -89,10 +90,31 @@ async function main() {
     (results) => {
       const synced = results.reduce((s, r) => s + r.playersSynced, 0);
       const failed = results.reduce((s, r) => s + r.failures.length, 0);
-      return `teams=${teamsInvolved.length} synced=${synced} failed=${failed}`;
+      // playersSeen — synced + per-player failures — is the metric that
+      // actually catches a silent mass-skip: Task 4b's bug reported
+      // synced=98 failed=43 (141 total) out of ~950 expected players and
+      // that alone looked like "some failures on a slow day," not "800
+      // players never attempted." rosterFetchFailed is reported separately
+      // for exactly the same reason: a team whose whole roster fetch failed
+      // contributes 0 to playersSeen, not folded into per-player failures.
+      const playersSeen = synced + failed;
+      const rosterFetchFailures = results.filter((r) => r.rosterFetchFailed).length;
+      return (
+        `teams=${teamsInvolved.length} playersSeen=${playersSeen} synced=${synced} ` +
+        `playerFailed=${failed} rosterFetchFailed=${rosterFetchFailures}`
+      );
     },
   );
   timings.push(rosterTiming);
+
+  // Phase 2b: career-GP refresh — the one landing-endpoint consumer left
+  // after Task 4b, bounded to a small nightly batch on purpose.
+  const { timing: careerGpTiming } = await timed(
+    "careerGp",
+    () => refreshCareerGp(),
+    (r) => `attempted=${r.attempted} refreshed=${r.refreshed} failed=${r.failures.length}`,
+  );
+  timings.push(careerGpTiming);
 
   // Phase 3: injury sync — unscoped, same as the real route.
   const { result: injuryResult, timing: injuryTiming } = await timed(

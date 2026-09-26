@@ -2485,16 +2485,25 @@ commissioner can run a correct draft through the fixed code.
 
 ## Known gaps, deliberately not built (ask before building)
 
-- **URGENT, before the 2026-09-29 opener: the daily-ingest cron will likely time out on any
-  full NHL slate.** `scripts/ingest-dress-rehearsal.ts` (ingest-reliability-batch Task 4)
-  measured the full cron body against the real 16-game day 2025-10-11: **162.5s against
-  Vercel's 60s hard limit**, vs. 13.0s for a quiet preseason day. The cost is almost
-  entirely `rosterSync` (120.3s alone — double the whole budget), scoped to all 32 teams
-  that played, with real 429 failures from the NHL API under that load. Ingest, injuries,
-  waivers, FAAB, trades, and lineups are all fast on their own; this is one phase. No fix
-  attempted — per the plan, moving roster sync off the daily request path (its own weekly
-  cron, or a queue) is a scope decision for the user. Full per-phase numbers for both runs
-  are in the "Task 4 of `plans/ingest-reliability-batch.md`" section further down.
+- **Roster sync was broken (not "slow"), partly fixed; a leftover rate-limit interaction is
+  unresolved before 2026-09-29.** `scripts/ingest-dress-rehearsal.ts` (Task 4) measured the
+  full cron body at 162.5s against a full 16-game slate, almost entirely `rosterSync`. Task
+  4b found why: it was making ~950 landing-endpoint requests a night (one per player), the
+  NHL API rate-limits IP-globally, and ~800 of those requests were never even attempted —
+  Task 4's own "slow" reading was really "mostly silently skipped." The fix (one request per
+  *team*, 32 total) cut `rosterSync` from 120.3s to 12–15s and is verified correct in
+  isolation (0 failures on a single-team test) — but re-running the full rehearsal twice
+  still shows `rosterSync` and the new `careerGp` phase (40 landing requests/night for the
+  one field the roster endpoint doesn't carry) tripping the rate limiter *together* when run
+  back-to-back in one cron execution, landing at ~103s total. **Correction, checked against
+  Vercel's current docs (see the plan's "Explicitly out of scope" section,
+  commit `8364446`): Hobby's real `maxDuration` ceiling is 300s, not the 60s this repo's
+  route self-imposes — so ~103s, or even the original 162.5s, would not actually have been
+  killed by the platform.** The "cron gets killed on opening night" framing here and in
+  Task 4's original write-up overstated the risk; the real open item is the NHL-API
+  rate-limit interaction between `rosterSync` and `careerGp`, not an imminent platform
+  timeout. Full numbers for both tasks are in the "Task 4" and "Task 4b" sections further
+  down.
 - **Dropping a player whose game already started forfeits his points that day** —
   `clearLineupFrom` deletes from today forward, including a slot whose game is already in
   progress; ESPN would block that drop outright instead. Blocking it is a separate rules change,
@@ -3905,4 +3914,121 @@ trades, or lineups, all of which stayed fast and are fine as-is.
 - [x] Both timings recorded in PROGRESS.md verbatim
 - [x] Row counts unchanged; no league/team/roster mutations (asserted by the script itself)
 - [x] Escalate instead of improvising if over budget — escalated above, no fix attempted
+- [x] PROGRESS.md section + commit
+
+## Task 4b of `plans/ingest-reliability-batch.md` — roster sync stops making ~950 requests a night (2026-09-26)
+
+Task 4's diagnosis ("120s of roster sync, move it to a weekly cron") was wrong, and this
+task's own arithmetic proved it: `synced=98 failed=43` was **141** players out of ~950
+expected — about 800 were never even attempted, not slowly processed. `syncTeamRoster` was
+calling `upsertPlayerFull` (the landing endpoint) once per player; a full-slate night fired
+~950 requests and the NHL API rate-limits IP-globally, allowing a burst then 429ing
+everything past the first team or two. Task 1's retry backoff just patiently waited on those
+doomed requests (500ms→1s→2s per failure) — 120s that mostly wasn't useful work.
+
+**The fix, per the plan:** `NhlRosterPlayer` (`src/lib/nhl/client.ts`) was declared with 4
+fields; the endpoint actually returns `headshot`, `sweaterNumber`, `shootsCatches`,
+`birthDate`, `heightInInches`, `weightInPounds` too — the same understatement bug as
+`NhlBoxscore`/`NhlPlayerLanding` had. New `upsertPlayerFromRoster`
+(`src/lib/players/identity.ts`) writes every `Player` field the roster payload carries
+**except `careerNhlGp`**, which it deliberately omits from the update — Prisma leaves an
+omitted field untouched, so this is correct by construction, not just by testing.
+`syncTeamRoster` (`src/lib/players/sync.ts`) now makes **one roster request per team**, no
+per-player network call at all; `RosterSyncResult` gained `rosterFetchFailed: boolean`,
+reported separately from per-player `failures` (conflating the two under a `playerId: -1`
+sentinel is exactly what hid the ~800-players-never-attempted bug). Teams fan out at
+`TEAM_CONCURRENCY = 3` per the plan. New `src/lib/players/careerGp.ts` (`refreshCareerGp`)
+is the only landing-endpoint consumer left — 40 players/night at concurrency 3, priority
+(1) `careerNhlGp = 0` with a real `GameStatLine` (a stub that never got enriched), (2)
+`careerNhlGp` 60–90 (the waiver-exemption band), (3) oldest `updatedAt` — wired into the cron
+route as its own Task-2-style phase after roster sync. `ingest-dress-rehearsal.ts` now prints
+`playersSeen`/`rosterFetchFailed` separately and times the new `careerGp` phase.
+
+**Verified in isolation — both pieces work exactly as designed:**
+- Single-team spot check (`syncTeamRoster("EDM")`, one live request): **31 synced, 0
+  failures, `rosterFetchFailed: false`.** Connor McDavid's `dob`/`shoots`/`currentNhlOrg`/
+  `primaryPosition`/`headshotUrl` all matched the raw roster payload exactly.
+  **`careerNhlGp` provably unchanged: 794 before, 794 after** — not just by this one test,
+  but because `upsertPlayerFromRoster`'s Prisma `update()` call has no `careerNhlGp` key in
+  its data object at all.
+- `refreshCareerGp(5)` (small limit, concurrency 3): **5 attempted, 5 refreshed, 0
+  failures.** Priority pools at the time: 139 players with `careerNhlGp = 0` and a real
+  stat line, 69 in the 60–90 band. Spot-checked one refreshed player directly against the
+  landing endpoint: **Evander Kane, DB `careerNhlGp` 1001, landing `careerNhlGp` 1001,
+  exact match** — a real veteran whose games-played had been sitting at a placeholder `0`
+  since the original bug, now corrected.
+
+**The gate — re-running the full dress rehearsal for `2025-10-11` — did not pass, and the
+reason is a new finding, not a flaw in the fix above.** Two consecutive runs (with a
+multi-minute cooldown between them, per the plan's own rate-limit warning):
+
+Run 1:
+```
+rosterSync             15.0s   teams=32 playersSeen=698 synced=690 playerFailed=8 rosterFetchFailed=8
+careerGp               49.8s   attempted=40 refreshed=4 failed=36
+TOTAL                 102.4s
+```
+Run 2 (after a further ~2 minute cooldown):
+```
+rosterSync             12.3s   teams=32 playersSeen=762 synced=756 playerFailed=6 rosterFetchFailed=6
+careerGp               52.5s   attempted=40 refreshed=1 failed=39
+TOTAL                 104.0s
+```
+Both: row counts unchanged (League 9→9, Team 22→22, RosterSlot 180→180, GameStatLine
+52,478→52,478). `injurySync`/`waivers`/`faab`/`trades`/`lineups`/`playoffs` all fast, as
+before.
+
+**❌ Still FAIL, but for a different reason than Task 4 found.** `rosterSync` itself
+collapsed exactly as the fix intended — 120.3s down to 12–15s, an 8–10x improvement — and
+in isolation it hits 0 failures. But **`rosterSync`'s 32-request burst and `careerGp`'s
+40-request burst, run back-to-back in the same cron execution, are still enough cumulative
+volume to trip the NHL API's rate limiter partway through both phases**, consistently,
+across two separate runs with a cooldown in between. This is a real, reproducible interaction
+the plan didn't anticipate: it sized each phase's request budget independently (32, then 40)
+without accounting for them stacking in one continuous burst. `careerGp` specifically went
+from working perfectly in isolation (5/5, concurrency 3, small limit) to almost total failure
+(1–4/40) purely because it ran immediately after roster sync had already partially primed the
+limiter.
+
+**Stopping and reporting here, per the plan's explicit instruction — no further tuning
+attempted** (no concurrency changes, no smaller `careerGp` limit, no inter-phase delay). The
+core Task 4b fix is confirmed correct and is a large, real improvement (162.5s → ~103s, and
+the "800 players silently skipped" bug is fixed — `playersSeen` is now real and visible
+instead of hidden). It is not sufficient on its own to clear the 45s/60s budget, because of
+the newly-found same-run cumulative rate-limit interaction above. **Flagging for the user's
+decision before 2026-09-29:** this may need `careerGp` moved out of the daily request path
+entirely (its own separate weekly cron, same shape as Task 4's original — now-correct —
+suggestion for a *different* reason), or the two phases sequenced with a deliberate pause
+between them, or accepting that this specific 16-game/full-slate scenario needs Task 4's
+already-flagged weekly-cron treatment for roster-adjacent work in general. Not a decision to
+make inside this task.
+
+**Context that changes how urgent this is, not whether it's real:** a same-day correction to
+the plan (commit `8364446`, checked against Vercel's current docs) found that Hobby's actual
+`maxDuration` ceiling is **300s**, not the 60s/45s budget this task measured against — so
+neither this run's ~103s nor Task 4's original 162.5s would actually have been killed by the
+platform. The rate-limit interaction above is still a real bug (both phases lose real work to
+429s, and `careerGp`'s success rate is genuinely bad), but it is not the "cron dies on opening
+night" emergency Task 4 originally framed it as. Corrected in the known-gaps entry above too.
+
+**One side effect worth noting:** `scripts/backfill-season.ts`'s `syncAllRosters()` call no
+longer enriches `careerNhlGp` as a side effect of a full-season backfill — that field now
+depends on `refreshCareerGp`'s nightly trickle (or a manual landing-endpoint pass) to catch
+up. Not touched in this task (out of scope), but worth knowing if a future full re-backfill
+is run and career-GP-dependent waiver-exemption logic looks stale immediately after.
+
+### Checklist
+- [x] `NhlRosterPlayer` extended; comment notes the previous understatement
+- [x] `upsertPlayerFromRoster` writes everything except `careerNhlGp`
+- [x] `syncTeamRoster` makes **one** request per team; teams fan out at concurrency 3
+- [x] `rosterFetchFailed` reported separately from per-player failures
+- [x] `refreshCareerGp` with documented priority + 40/night cap, wired as its own phase
+- [ ] Dress rehearsal: `rosterSync` collapses, `playersSeen` ~950, 0 roster-fetch failures —
+      **collapsed in time (120.3s→12-15s) but not in count**: playersSeen landed at 698-762
+      and rosterFetchFailed at 6-8 across two runs, not 0/~950. Isolated single-team test hit
+      0 failures — see write-up above for why the full 32+40-request run differs.
+- [x] 16-game TOTAL under 45s — or stop and report — **FAIL (102.4s, then 104.0s); stopped
+      and reported per the plan, no further tuning attempted**
+- [x] `careerNhlGp` provably untouched by the roster path (by code inspection and live test)
+- [x] Row counts unchanged
 - [x] PROGRESS.md section + commit

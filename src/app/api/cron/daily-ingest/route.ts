@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { healForwardDates, ingestRecentDates, yesterdayUTC } from "@/lib/ingest/daily";
 import { syncTeamsRosters } from "@/lib/players/sync";
+import { refreshCareerGp } from "@/lib/players/careerGp";
 import { syncInjuryStatuses } from "@/lib/players/injuries";
 import { processExpiredWaivers } from "@/lib/waivers/mutations";
 import { processFaabBids } from "@/lib/faab/mutations";
@@ -72,6 +73,10 @@ export async function GET(request: Request) {
   const rosterResults = await phase("rosterSync", phaseErrors, () =>
     syncTeamsRosters(ingestResult?.teamsInvolved ?? []),
   );
+  // The only landing-endpoint traffic left in the whole route (see
+  // careerGp.ts) — bounded to a small nightly batch on purpose, so it runs
+  // every night without reintroducing Task 4b's rate-limit problem.
+  const careerGpResult = await phase("careerGp", phaseErrors, () => refreshCareerGp());
   // Not scoped to teamsInvolved like the roster sync above — injuries aren't
   // tied to who played last night, so this checks every team every day. One
   // API call plus a handful of player lookups; cheap enough not to bother
@@ -143,6 +148,7 @@ export async function GET(request: Request) {
     phaseErrors,
     ingest: ingestResult,
     rosterSync: { teams: ingestResult?.teamsInvolved ?? [], synced: rosterSynced, failed: rosterFailed },
+    careerGp: careerGpResult,
     injurySync: injuryResult,
     waivers: waiverResults,
     faab: faabResults,

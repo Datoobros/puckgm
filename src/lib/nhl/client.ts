@@ -101,11 +101,24 @@ export function getPlayerLanding(nhlPlayerId: number): Promise<NhlPlayerLanding>
   return getJson<NhlPlayerLanding>(`${API_BASE}/player/${nhlPlayerId}/landing`);
 }
 
+// Previously declared with only 4 fields — same understatement bug as
+// NhlBoxscore/NhlPlayerLanding had (see the player-modal batch's Task 1):
+// the endpoint always returned far more, this type just didn't say so. The
+// roster payload turns out to carry everything upsertPlayerFromRoster needs
+// except careerNhlGp (src/lib/players/identity.ts), which is why roster sync
+// no longer has to hit the landing endpoint once per player (see
+// src/lib/players/sync.ts and the ingest-reliability-batch plan's Task 4b).
 export interface NhlRosterPlayer {
   id: number;
+  headshot?: string; // full CDN URL, same as NhlPlayerLanding.headshot
   firstName: { default: string };
   lastName: { default: string };
+  sweaterNumber?: number;
   positionCode: string;
+  shootsCatches?: string;
+  birthDate?: string;
+  heightInInches?: number;
+  weightInPounds?: number;
 }
 
 export interface NhlRoster {

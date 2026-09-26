@@ -492,16 +492,17 @@ player-modal batch's listed known gaps.
   out rather than concluding the code is broken.
 
 ### Checklist
-- [ ] `NhlRosterPlayer` extended; comment notes the previous understatement
-- [ ] `upsertPlayerFromRoster` writes everything except `careerNhlGp`
-- [ ] `syncTeamRoster` makes **one** request per team; teams fan out at concurrency 3
-- [ ] `rosterFetchFailed` reported separately from per-player failures
-- [ ] `refreshCareerGp` with documented priority + 40/night cap, wired as its own phase
-- [ ] Dress rehearsal: `rosterSync` collapses, `playersSeen` ~950, 0 roster-fetch failures
-- [ ] 16-game TOTAL under 45s — or stop and report
-- [ ] `careerNhlGp` provably untouched by the roster path
-- [ ] Row counts unchanged
-- [ ] PROGRESS.md section + commit
+- [x] `NhlRosterPlayer` extended; comment notes the previous understatement
+- [x] `upsertPlayerFromRoster` writes everything except `careerNhlGp`
+- [x] `syncTeamRoster` makes **one** request per team; teams fan out at concurrency 3
+- [x] `rosterFetchFailed` reported separately from per-player failures
+- [x] `refreshCareerGp` with documented priority + 40/night cap, wired as its own phase
+- [ ] Dress rehearsal: `rosterSync` collapses, `playersSeen` ~950, 0 roster-fetch failures —
+      collapsed in time, not fully in count (see PROGRESS.md write-up)
+- [x] 16-game TOTAL under 45s — or stop and report — **FAIL, stopped and reported**
+- [x] `careerNhlGp` provably untouched by the roster path
+- [x] Row counts unchanged
+- [x] PROGRESS.md section + commit
 
 ---
 
