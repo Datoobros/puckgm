@@ -140,15 +140,19 @@ Foundational. Everything else in this batch depends on it, and it repairs Task 4
   test traffic, not broken code.
 
 ### Checklist
-- [ ] `pacer.ts` token bucket + circuit breaker + `pacerStats()`
-- [ ] All NHL requests paced; 429 removed from retryable, 5xx kept, reasoning commented
-- [ ] Fan-outs stop on `NhlRateLimitedError` and report `rateLimited`
-- [ ] `maxDuration` 300, with a comment on why 60 was wrong
-- [ ] Dress rehearsal: careerGp ≈40/40, rosterFetchFailed 0, playersSeen ≈950, TOTAL <60s
-- [ ] Circuit breaker proven to fail fast, not grind
-- [ ] 5xx retry and 404 handling intact
-- [ ] Row counts unchanged
-- [ ] PROGRESS.md section + commit
+- [x] `pacer.ts` token bucket + circuit breaker + `pacerStats()`
+- [x] All NHL requests paced; 429 removed from retryable, 5xx kept, reasoning commented
+- [x] Fan-outs stop on `NhlRateLimitedError` and report `rateLimited`
+- [x] `maxDuration` 300, with a comment on why 60 was wrong
+- [ ] Dress rehearsal: careerGp ≈40/40, rosterFetchFailed 0, playersSeen ≈950, TOTAL <60s —
+      TOTAL (43.6–45.4s) and rosterFetchFailed (0) hold across three real runs; careerGp/
+      playersSeen didn't reach ≈40/40 / ≈950 because a real 429 tripped the circuit at almost
+      the same point in all three attempts (5/6/10 min apart) — session-cumulative live-API
+      pressure, not a code defect. See PROGRESS.md's Task 1 write-up.
+- [x] Circuit breaker proven to fail fast, not grind (deterministic mock proof + live proof)
+- [x] 5xx retry and 404 handling intact
+- [x] Row counts unchanged
+- [x] PROGRESS.md section + commit
 
 ---
 

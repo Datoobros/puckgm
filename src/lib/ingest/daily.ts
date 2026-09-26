@@ -6,6 +6,7 @@
 import { ingestGame } from "@/lib/ingest/games";
 import { getDaySchedule, type NhlScheduleGame } from "@/lib/nhl/schedule";
 import { runWithConcurrency } from "@/lib/concurrency";
+import { NhlRateLimitedError } from "@/lib/nhl/pacer";
 
 // Deliberate, not just "as fast as possible": syncTeamRoster already bursts
 // 15 requests per team, and the live 429 on /roster/STL/current came from
@@ -17,6 +18,11 @@ const INGEST_CONCURRENCY = 6;
 type GameIngestOutcome =
   | { kind: "ingested"; awayAbbrev: string; homeAbbrev: string; statLinesWritten: number }
   | { kind: "skipped" }
+  // Distinct from "skipped" (not ingestable — preseason, still live, etc.):
+  // this game was never even attempted because a real 429 tripped the
+  // shared pacer's circuit mid-fan-out. Kept separate so gamesSkipped stays
+  // an honest count and doesn't get inflated by rate-limit stops.
+  | { kind: "not-attempted" }
   | { kind: "error"; gameId: number; error: string };
 
 export interface DailyIngestResult {
@@ -30,11 +36,36 @@ export interface DailyIngestResult {
    * sync so a quiet day (or even a full slate) never has to touch all 32
    * teams, only the ones that actually played. */
   teamsInvolved: string[];
+  // True when a real 429 tripped the shared pacer's circuit mid-fan-out.
+  // Remaining games for this date are simply not attempted this run — the
+  // next run's heal-forward window re-ingests idempotently.
+  rateLimited: boolean;
 }
 
 /** date must be "YYYY-MM-DD". */
 export async function ingestDate(date: string): Promise<DailyIngestResult> {
-  const games = await getDaySchedule(date);
+  let games: NhlScheduleGame[];
+  try {
+    games = await getDaySchedule(date);
+  } catch (e) {
+    // The circuit can already be open before this date's fan-out even
+    // starts (e.g. tripped by an earlier date in ingestRecentDates' walk) —
+    // report it the same way the per-game fan-out below does, rather than
+    // throwing out of ingestDate entirely.
+    if (e instanceof NhlRateLimitedError) {
+      return {
+        date,
+        gamesFound: 0,
+        gamesIngested: 0,
+        gamesSkipped: 0,
+        statLinesWritten: 0,
+        errors: [],
+        teamsInvolved: [],
+        rateLimited: true,
+      };
+    }
+    throw e;
+  }
 
   // Regular season only for now — playoffs (gameType 3) are Stage 6+
   // territory once the league's actually running.
@@ -53,10 +84,14 @@ export async function ingestDate(date: string): Promise<DailyIngestResult> {
   // close to Vercel's 60s function limit. Each worker returns its own
   // outcome rather than mutating shared counters, since counters written
   // from concurrent callbacks would race.
+  let rateLimited = false;
   const outcomes = await runWithConcurrency<NhlScheduleGame, GameIngestOutcome>(
     candidates,
     INGEST_CONCURRENCY,
     async (g): Promise<GameIngestOutcome> => {
+      // Fan-out already stopped this run — don't attempt more games, don't
+      // pile more workers into an already-tripped circuit.
+      if (rateLimited) return { kind: "not-attempted" };
       try {
         const result = await ingestGame(g.id);
         return result.status === "ingested"
@@ -68,6 +103,10 @@ export async function ingestDate(date: string): Promise<DailyIngestResult> {
             }
           : { kind: "skipped" };
       } catch (e) {
+        if (e instanceof NhlRateLimitedError) {
+          rateLimited = true;
+          return { kind: "not-attempted" };
+        }
         return { kind: "error", gameId: g.id, error: e instanceof Error ? e.message : String(e) };
       }
     },
@@ -86,9 +125,11 @@ export async function ingestDate(date: string): Promise<DailyIngestResult> {
       teamsInvolved.add(outcome.homeAbbrev);
     } else if (outcome.kind === "skipped") {
       gamesSkipped += 1;
-    } else {
+    } else if (outcome.kind === "error") {
       errors.push({ gameId: outcome.gameId, error: outcome.error });
     }
+    // "not-attempted" outcomes are deliberately not counted anywhere —
+    // see the rateLimited flag below instead.
   }
 
   return {
@@ -99,6 +140,7 @@ export async function ingestDate(date: string): Promise<DailyIngestResult> {
     statLinesWritten,
     errors,
     teamsInvolved: [...teamsInvolved],
+    rateLimited,
   };
 }
 
@@ -150,6 +192,7 @@ export interface RecentIngestResult {
   statLinesWritten: number;
   errors: { date: string; gameId: number; error: string }[];
   teamsInvolved: string[];
+  rateLimited: boolean;
 }
 
 /** Calls ingestDate once per day in the heal-forward window and merges the
@@ -161,7 +204,13 @@ export async function ingestRecentDates(days: number = INGEST_HEAL_DAYS): Promis
   const datesAttempted = healForwardDates(days);
   const dates: DailyIngestResult[] = [];
   for (const date of datesAttempted) {
-    dates.push(await ingestDate(date));
+    const result = await ingestDate(date);
+    dates.push(result);
+    // The circuit is still open for its cooldown window — stop walking
+    // further heal-forward dates instead of paying (fast, but pointless)
+    // rejects for each remaining one. The next cron run's heal-forward
+    // window picks up whatever this run didn't reach.
+    if (result.rateLimited) break;
   }
 
   let gamesFound = 0;
@@ -170,6 +219,7 @@ export async function ingestRecentDates(days: number = INGEST_HEAL_DAYS): Promis
   let statLinesWritten = 0;
   const errors: { date: string; gameId: number; error: string }[] = [];
   const teamsInvolved = new Set<string>();
+  let rateLimited = false;
 
   for (const r of dates) {
     gamesFound += r.gamesFound;
@@ -178,6 +228,7 @@ export async function ingestRecentDates(days: number = INGEST_HEAL_DAYS): Promis
     statLinesWritten += r.statLinesWritten;
     for (const e of r.errors) errors.push({ date: r.date, ...e });
     for (const t of r.teamsInvolved) teamsInvolved.add(t);
+    if (r.rateLimited) rateLimited = true;
   }
 
   return {
@@ -189,5 +240,6 @@ export async function ingestRecentDates(days: number = INGEST_HEAL_DAYS): Promis
     statLinesWritten,
     errors,
     teamsInvolved: [...teamsInvolved],
+    rateLimited,
   };
 }

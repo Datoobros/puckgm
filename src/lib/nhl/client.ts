@@ -2,6 +2,8 @@
 // Verified reachable via plain server-side fetch — no special headers needed.
 // See ../../../../DESIGN.md §4/§Risks for the source-stability caveat.
 
+import { acquire, reportRateLimited, NhlRateLimitedError } from "@/lib/nhl/pacer";
+
 const API_BASE = "https://api-web.nhle.com/v1";
 const SEARCH_BASE = "https://search.d3.nhle.com/api/v1";
 
@@ -9,21 +11,43 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 429 is deliberately NOT here — see pacer.ts and
+// plans/live-tracking-batch.md's "What Task 4b left behind." Retrying a 429
+// with backoff (ingest-reliability Task 1's original approach) was
+// counterproductive for bulk work: a volume-based limiter isn't cleared by
+// a few seconds of backoff, the retry itself adds to the volume that
+// tripped it, and every doomed retry pays the full backoff cost — measured
+// at careerGp spending ~50s to refresh 1-4 of 40 players. 429 is now handled
+// up front by the shared pacer's circuit breaker (pacedFetch below) instead
+// of here. Do not add 429 back to this set; that would restore the bug.
 function isRetryableStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+  return status >= 500;
 }
 
 const RETRY_BACKOFFS_MS = [500, 1000, 2000];
 
-/** Retries on 429/5xx only — a 404 or other 4xx is a real answer, not a
+// Every NHL request — including each retry attempt — goes through the
+// shared pacer, and a real 429 trips its circuit breaker and throws
+// NhlRateLimitedError rather than returning a response. Callers must let
+// that propagate (see careerGp.ts/sync.ts/daily.ts's fan-out-stop logic)
+// rather than catching it as a generic failure.
+async function pacedFetch(url: string): Promise<Response> {
+  await acquire();
+  const res = await fetch(url);
+  if (res.status === 429) {
+    reportRateLimited();
+    throw new NhlRateLimitedError(`NHL API rate limited (429) for ${url}`);
+  }
+  return res;
+}
+
+/** Retries on 5xx only — a 404 or other 4xx is a real answer, not a
  * transient failure, and callers (getDaySchedule in particular) depend on
  * that distinction. Backs off 500ms -> 1s -> 2s, honoring a `Retry-After`
- * header when present and <= 5s. Reproduced live: the NHL API 429'd
- * /roster/STL/current mid-cron with nothing here to retry it, which killed
- * the entire nightly run downstream. Exported so schedule.ts's
- * getDaySchedule can share it rather than duplicating the backoff logic. */
+ * header when present and <= 5s. Exported so schedule.ts's getDaySchedule
+ * can share it rather than duplicating the backoff logic. */
 export async function fetchWithRetry(url: string, attempts = 3): Promise<Response> {
-  let res = await fetch(url);
+  let res = await pacedFetch(url);
   for (let i = 0; i < attempts && !res.ok && isRetryableStatus(res.status); i++) {
     const retryAfterSeconds = Number(res.headers.get("Retry-After"));
     const backoff = RETRY_BACKOFFS_MS[i] ?? RETRY_BACKOFFS_MS[RETRY_BACKOFFS_MS.length - 1];
@@ -32,7 +56,7 @@ export async function fetchWithRetry(url: string, attempts = 3): Promise<Respons
         ? retryAfterSeconds * 1000
         : backoff;
     await sleep(delay);
-    res = await fetch(url);
+    res = await pacedFetch(url);
   }
   return res;
 }

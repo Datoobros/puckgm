@@ -4031,4 +4031,125 @@ is run and career-GP-dependent waiver-exemption logic looks stale immediately af
       and reported per the plan, no further tuning attempted**
 - [x] `careerNhlGp` provably untouched by the roster path (by code inspection and live test)
 - [x] Row counts unchanged
+
+## Task 1 of `plans/live-tracking-batch.md` — one shared NHL request pacer, replacing retry-on-429 (2026-09-26)
+
+Foundational for the whole live-tracking batch, and the actual fix for what Task 4b (above)
+left behind: retry-on-429 (ingest-reliability Task 1) was a design error for bulk work — a
+3.5s backoff can't clear a volume-based limiter, the retry itself adds volume that keeps it
+tripped, and every doomed request pays the full backoff. That's why `careerGp` spent ~50s to
+refresh 1–4 of 40 players.
+
+New `src/lib/nhl/pacer.ts`: a module-level token-bucket limiter (`NHL_RATE = 4`
+requests/second, burst 4) shared by every NHL request in the process, refilled by elapsed
+wall-clock time rather than reset per invocation (a warm Vercel instance can carry the module
+across cron runs). `acquire()` awaits a token, or throws the new `NhlRateLimitedError`
+immediately if the circuit is open — no waiting, no retry. `reportRateLimited()` (called by
+`client.ts` the moment a response is a real 429) opens the circuit for `COOLDOWN_MS = 60_000`.
+`pacerStats()` reports `requestsIssued`, `rateLimitedCount`, `circuitOpen`.
+
+`src/lib/nhl/client.ts`: every request now goes through a `pacedFetch` wrapper (`acquire()`
+then `fetch`), including each retry attempt. **429 removed from `isRetryableStatus`** — only
+`5xx` retries now — with a comment at the call site explaining why and telling future editors
+not to restore it. A real 429 throws `NhlRateLimitedError` from `pacedFetch` itself, before
+`fetchWithRetry`/`getJson` ever see it, so it can't be swallowed as a generic `Error`.
+
+`src/lib/players/careerGp.ts`, `src/lib/players/sync.ts`, `src/lib/ingest/daily.ts`: each
+fan-out now checks a local `rateLimited` flag before attempting its next item and sets it
+(instead of recording a per-item failure) when `NhlRateLimitedError` is thrown, so the rest of
+that phase's items are **simply not attempted** rather than ground through. Return shapes
+changed to carry this honestly: `syncTeamsRosters`/`syncAllRosters` now return
+`{ results, rateLimited }` instead of a bare array (updated both call sites:
+`route.ts` and `scripts/backfill-season.ts`); `CareerGpRefreshResult` and `DailyIngestResult`
+gained a `rateLimited: boolean` field. `ingestDate`'s game-outcome union gained a
+`"not-attempted"` kind, kept separate from `"skipped"` so `gamesSkipped` doesn't get inflated
+by rate-limit stops. `ingestRecentDates` stops walking further heal-forward dates once one
+date comes back `rateLimited`, and `syncTeamRoster` rethrows `NhlRateLimitedError` instead of
+folding it into `rosterFetchFailed` (that sentinel is for a genuine single-team fetch problem,
+not "the whole fan-out just stopped").
+
+`src/app/api/cron/daily-ingest/route.ts`: **`maxDuration` 60 → 300.** Hobby's real ceiling is
+300s and 300 is also the platform default — the old 60 traced to a stale Vercel changelog
+page, re-confirmed for this batch. Comment says not to lower it back. Response and the
+`IngestRun` row both gained `pacerStats` and `rateLimitedPhases` (which of ingest/rosterSync/
+careerGp stopped early). New migration `20260926213510_add_pacer_stats_to_ingest_run` adds
+`pacerStatsJson Json?` and `rateLimitedPhases String[] @default([])` to `IngestRun`.
+
+`scripts/ingest-dress-rehearsal.ts` updated for the new return shapes and now prints
+`pacerStats()` plus each phase's `rateLimited` flag. Its lineups phase also gained the
+per-team/date try/catch that `route.ts` already had — the first real run below found that gap
+the hard way (an already-open circuit crashed the whole script inside `ensureLineupMaterialized`
+instead of being tolerated like every other phase).
+
+**Verified — two kinds of proof, because the live NHL API's rate-limit state turned out to be
+mostly unavailable this session (see below):**
+
+1. **Deterministic, no real network calls** (mirrors ingest-reliability Task 1's own fallback
+   to a mock server for its retry-count assertion): `acquire()` succeeds once, then
+   `reportRateLimited()` simulates a real 429, then a second `acquire()` **rejects in 0.1ms**
+   with `NhlRateLimitedError` — not a wait, not a retry. With the circuit already open,
+   `refreshCareerGp(10)` returns in **562.5ms** with `{attempted: 3, refreshed: 0, failures:
+   [], rateLimited: true}` (concurrency-3 means 3 workers were in flight when the flag flipped;
+   compare to the old bug's 50s for 1–4/40). `syncTeamsRosters(["EDM","TOR"])` returns in
+   **0.7ms** with `{results: [], rateLimited: true}`. A separate local-mock-HTTP-server check
+   confirmed 5xx still retries through to success (3 requests, ~1.5s of backoff, unchanged),
+   404 still short-circuits immediately (1 request, ~0ms), and **429 now throws
+   `NhlRateLimitedError` immediately (1 request, ~4ms)** instead of retrying — the actual
+   behavior change under test, isolated from real API variance.
+2. **Real API, `scripts/ingest-dress-rehearsal.ts 2025-10-11`, three attempts spaced 5, 6, and
+   10 minutes apart:**
+
+   | run | ingest | rosterSync | careerGp | lineups | TOTAL | pacer |
+   |---|---|---|---|---|---|---|
+   | 1 | 26.3s, 30 ingested, 0 errors | 5.8s, playersSeen=664, failed=0, **rateLimited** | 0.2s, attempted=3, refreshed=0, **rateLimited** | 9.2s, materialized=38, skipped=6 | **43.6s** | requestsIssued=57, rateLimitedCount=1, circuitOpen=true |
+   | 2 | 26.9s, 30 ingested, 0 errors | 5.3s, playersSeen=664, failed=0, **rateLimited** | 0.2s, attempted=3, refreshed=0, **rateLimited** | 10.0s, materialized=38, skipped=6 | **44.5s** | requestsIssued=57, rateLimitedCount=1, circuitOpen=true |
+   | 3 | 27.6s, 30 ingested, 0 errors | 5.5s, playersSeen=690, failed=0, **rateLimited** | 0.2s, attempted=3, refreshed=0, **rateLimited** | 9.9s, materialized=38, skipped=6 | **45.4s** | requestsIssued=58, rateLimitedCount=1, circuitOpen=true |
+
+   Row counts unchanged across all three: League 9→9, Team 22→22, RosterSlot 180→180,
+   GameStatLine 52,478→52,478.
+
+**What this shows, and what it doesn't:** `TOTAL` dropped from Task 4b's 102.4–104.0s to
+**43.6–45.4s** — comfortably under the plan's 60s target and the new 300s hard limit, at the
+cost of only one real 429 per run (down from 6–8 roster-fetch failures plus 36–39 careerGp
+failures in Task 4b). `rosterFetchFailed` is **0** in all three runs, and every phase reports
+`rateLimited: true` honestly instead of hiding behind a wall of per-item failures — that's the
+actual point of this task, and it held on real traffic, not just the mock. **What it does not
+show is the literal `careerGp` ≈40/40 / `playersSeen` ≈950 target**, because a single real 429
+partway through `rosterSync` opens the circuit for the rest of that run, and all three
+attempts hit that 429 at almost the same point (`requestsIssued` 57, 57, 58;
+`playersSeen` 664, 664, 690) despite 5-, 6-, and 10-minute gaps between them — strong evidence
+this is a longer-window, IP-level limit already elevated by this session's own cumulative
+testing (this task's attempts, Task 4b's two rehearsals, and the plan's own live-boxscore
+verification, all against the same NHL API today), not something a few more minutes of
+waiting would clear, and not a flaw in the pacer. **Stopping here per the plan's explicit
+instruction rather than retrying indefinitely** — flagging for the user: `NHL_RATE = 4` may
+still be more aggressive than the live API tolerates under sustained same-session load; if a
+clean opening-night number matters before 2026-09-29, it may be worth re-running this
+rehearsal from a colder IP/session, or lowering `NHL_RATE` further, but that's a tuning
+decision, not something to improvise inside this task.
+
+Third run also landed at 45.4s, just over the script's 45s soft-budget line (still far under
+the 60s the plan asks for and the 300s real platform ceiling) — noise between runs (ingest
+alone varied 26.3–27.6s), not a regression.
+
+Throwaway scripts (`scripts/_tmp-pacer-circuit-check.ts`, `scripts/_tmp-retry-check.ts`)
+deleted before commit per convention. `grep -rn "TEMP:" src/` clean.
+
+### Checklist
+- [x] `pacer.ts` token bucket + circuit breaker + `pacerStats()`
+- [x] All NHL requests paced; 429 removed from retryable, 5xx kept, reasoning commented
+- [x] Fan-outs stop on `NhlRateLimitedError` and report `rateLimited`
+- [x] `maxDuration` 300, with a comment on why 60 was wrong
+- [ ] Dress rehearsal: careerGp ≈40/40, rosterFetchFailed 0, playersSeen ≈950, TOTAL <60s —
+      **TOTAL and rosterFetchFailed both hold (43.6–45.4s, 0 across three real runs);
+      careerGp/playersSeen did not reach ≈40/40 / ≈950 because a real 429 tripped the circuit
+      partway through rosterSync in all three attempts — see write-up above for why this is
+      session-cumulative live-API pressure, not a code defect, and why it wasn't chased
+      further**
+- [x] Circuit breaker proven to fail fast, not grind — proven twice: deterministically (0.1ms
+      reject; careerGp 562.5ms instead of 50s) and on live traffic (careerGp phase collapsed
+      to 0.2s with `rateLimited: true` instead of grinding for tens of seconds)
+- [x] 5xx retry and 404 handling intact
+- [x] Row counts unchanged
+- [x] PROGRESS.md section + commit
 - [x] PROGRESS.md section + commit

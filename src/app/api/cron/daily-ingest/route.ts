@@ -11,16 +11,17 @@ import { processDueTrades } from "@/lib/trades/mutations";
 import { processDuePlayoffs } from "@/lib/matchups/playoffs";
 import { ensureLineupMaterialized } from "@/lib/lineups/mutations";
 import { todayUTC } from "@/lib/dates";
+import { pacerStats } from "@/lib/nhl/pacer";
 
-// Vercel Hobby allows up to 60s per serverless function (default is much
-// lower). The first production run of this route did a full 32-team roster
-// sync sequentially and got killed mid-flight — 500 with no body, since the
-// platform terminates the function rather than letting it finish. Scoping
-// the sync to only teams that played (see ingestDate) plus this opt-in
-// covers a realistic in-season day; if a day ever needs more than 60s,
-// that's a sign the work needs to move off the request path entirely
-// (e.g. a queue), not a bigger number here.
-export const maxDuration = 60;
+// Vercel Hobby's real maxDuration ceiling is 300s, and 300 is also the
+// platform default — the previous value here (60) traced to a stale Vercel
+// changelog page, not current docs (re-confirmed for this batch; see
+// plans/live-tracking-batch.md's "What Task 4b left behind"). The original
+// concern this comment used to describe — a full 32-team roster sync
+// getting killed mid-flight — is now handled by the shared pacer's circuit
+// breaker (src/lib/nhl/pacer.ts) failing fast and reporting `rateLimited`
+// instead of grinding past a real time budget. Do not lower this back to 60.
+export const maxDuration = 300;
 
 // Vercel's documented pattern: cron-triggered requests carry this header
 // automatically. CRON_SECRET is a belt-and-suspenders check so the route
@@ -70,9 +71,10 @@ export async function GET(request: Request) {
   });
 
   const ingestResult = await phase("ingest", phaseErrors, () => ingestRecentDates());
-  const rosterResults = await phase("rosterSync", phaseErrors, () =>
+  const rosterOutcome = await phase("rosterSync", phaseErrors, () =>
     syncTeamsRosters(ingestResult?.teamsInvolved ?? []),
   );
+  const rosterResults = rosterOutcome?.results ?? [];
   // The only landing-endpoint traffic left in the whole route (see
   // careerGp.ts) — bounded to a small nightly batch on purpose, so it runs
   // every night without reintroducing Task 4b's rate-limit problem.
@@ -120,9 +122,21 @@ export async function GET(request: Request) {
 
   await phase("playoffs", phaseErrors, () => processDuePlayoffs());
 
-  const rosterSynced = rosterResults?.reduce((s, r) => s + r.playersSynced, 0) ?? 0;
-  const rosterFailed = rosterResults?.reduce((s, r) => s + r.failures.length, 0) ?? 0;
+  const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
+  const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
   const ok = phaseErrors.length === 0;
+
+  // Which phases stopped early because a real 429 tripped the shared
+  // pacer's circuit (src/lib/nhl/pacer.ts) — distinct from phaseErrors,
+  // since a rate-limited stop is expected, honest partial progress, not a
+  // bug. finalPacerStats is the raw counters behind it (requests issued,
+  // 429s seen, whether the circuit is still open when this run finished).
+  const rateLimitedPhases = [
+    ingestResult?.rateLimited ? "ingest" : null,
+    rosterOutcome?.rateLimited ? "rosterSync" : null,
+    careerGpResult?.rateLimited ? "careerGp" : null,
+  ].filter((p): p is string => p !== null);
+  const finalPacerStats = pacerStats();
 
   await prisma.ingestRun.update({
     where: { id: ingestRun.id },
@@ -138,6 +152,8 @@ export async function GET(request: Request) {
         ingestResult && ingestResult.errors.length > 0
           ? (ingestResult.errors as unknown as Prisma.InputJsonValue)
           : Prisma.JsonNull,
+      pacerStatsJson: finalPacerStats as unknown as Prisma.InputJsonValue,
+      rateLimitedPhases,
       ok,
     },
   });
@@ -146,8 +162,15 @@ export async function GET(request: Request) {
     ok,
     ingestRunId: ingestRun.id,
     phaseErrors,
+    pacerStats: finalPacerStats,
+    rateLimitedPhases,
     ingest: ingestResult,
-    rosterSync: { teams: ingestResult?.teamsInvolved ?? [], synced: rosterSynced, failed: rosterFailed },
+    rosterSync: {
+      teams: ingestResult?.teamsInvolved ?? [],
+      synced: rosterSynced,
+      failed: rosterFailed,
+      rateLimited: rosterOutcome?.rateLimited ?? false,
+    },
     careerGp: careerGpResult,
     injurySync: injuryResult,
     waivers: waiverResults,

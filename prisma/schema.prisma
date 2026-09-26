@@ -603,6 +603,8 @@ model IngestRun {
   statLinesWritten Int      @default(0)
   phaseErrorsJson  Json?             // [{ phase, error }] from Task 2, null when clean
   ingestErrorsJson Json?             // per-game errors, null when clean
+  pacerStatsJson   Json?             // pacerStats() at finish — requests issued, 429s seen, circuit open
+  rateLimitedPhases String[] @default([]) // phase names that stopped early on a real 429 (see pacer.ts)
   ok               Boolean  @default(false)
 
   @@index([startedAt])

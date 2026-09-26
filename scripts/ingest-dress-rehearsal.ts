@@ -29,6 +29,7 @@ import { processFaabBids } from "@/lib/faab/mutations";
 import { processDueTrades } from "@/lib/trades/mutations";
 import { processDuePlayoffs } from "@/lib/matchups/playoffs";
 import { ensureLineupMaterialized } from "@/lib/lineups/mutations";
+import { pacerStats } from "@/lib/nhl/pacer";
 
 const HEAL_DAYS = 3;
 const SOFT_BUDGET_SECONDS = 45; // leaves headroom under Vercel's 60s hard limit
@@ -74,7 +75,8 @@ async function main() {
     (results) => {
       const gamesIngested = results.reduce((s, r) => s + r.gamesIngested, 0);
       const errors = results.reduce((s, r) => s + r.errors.length, 0);
-      return `dates=${healWindow.join(",")} gamesIngested=${gamesIngested} errors=${errors}`;
+      const rateLimited = results.some((r) => r.rateLimited);
+      return `dates=${healWindow.join(",")} gamesIngested=${gamesIngested} errors=${errors} rateLimited=${rateLimited}`;
     },
   );
   timings.push(ingestTiming);
@@ -84,10 +86,11 @@ async function main() {
   // Phase 2: roster sync, scoped to the teams that actually played across
   // the heal window — the real cron route's scoping, exercised at its worst
   // realistic case (a 16-game day touches all 32 teams).
-  const { result: rosterResults, timing: rosterTiming } = await timed(
+  const { result: rosterOutcome, timing: rosterTiming } = await timed(
     "rosterSync",
     () => syncTeamsRosters(teamsInvolved),
-    (results) => {
+    (outcome) => {
+      const results = outcome.results;
       const synced = results.reduce((s, r) => s + r.playersSynced, 0);
       const failed = results.reduce((s, r) => s + r.failures.length, 0);
       // playersSeen — synced + per-player failures — is the metric that
@@ -101,7 +104,7 @@ async function main() {
       const rosterFetchFailures = results.filter((r) => r.rosterFetchFailed).length;
       return (
         `teams=${teamsInvolved.length} playersSeen=${playersSeen} synced=${synced} ` +
-        `playerFailed=${failed} rosterFetchFailed=${rosterFetchFailures}`
+        `playerFailed=${failed} rosterFetchFailed=${rosterFetchFailures} rateLimited=${outcome.rateLimited}`
       );
     },
   );
@@ -112,7 +115,7 @@ async function main() {
   const { timing: careerGpTiming } = await timed(
     "careerGp",
     () => refreshCareerGp(),
-    (r) => `attempted=${r.attempted} refreshed=${r.refreshed} failed=${r.failures.length}`,
+    (r) => `attempted=${r.attempted} refreshed=${r.refreshed} failed=${r.failures.length} rateLimited=${r.rateLimited}`,
   );
   timings.push(careerGpTiming);
 
@@ -157,15 +160,25 @@ async function main() {
     async () => {
       const teams = await prisma.team.findMany({ select: { id: true } });
       let materialized = 0;
+      let skipped = 0;
+      // Per-team/date try/catch, matching route.ts's real lineups phase —
+      // one team's schedule lookup hitting an already-open circuit (e.g.
+      // because an earlier phase in this same rehearsal tripped it) must
+      // not crash the whole script, same as it must not cost every other
+      // team its lineup in the real cron route.
       for (const team of teams) {
         for (const d of materializeDates) {
-          await ensureLineupMaterialized(team.id, d);
-          materialized++;
+          try {
+            await ensureLineupMaterialized(team.id, d);
+            materialized++;
+          } catch {
+            skipped++;
+          }
         }
       }
-      return { teams: teams.length, materialized };
+      return { teams: teams.length, materialized, skipped };
     },
-    (r) => `teams=${r.teams} dates=${materializeDates.join(",")} materialized=${r.materialized}`,
+    (r) => `teams=${r.teams} dates=${materializeDates.join(",")} materialized=${r.materialized} skipped=${r.skipped}`,
   );
   timings.push(lineupTiming);
 
@@ -184,6 +197,12 @@ async function main() {
     console.log(`  ${t.phase.padEnd(20)} ${t.seconds.toFixed(1).padStart(6)}s   ${t.detail}`);
   }
   console.log(`  ${"TOTAL".padEnd(20)} ${totalSeconds.toFixed(1).padStart(6)}s`);
+
+  const stats = pacerStats();
+  console.log(
+    `\npacer: requestsIssued=${stats.requestsIssued} rateLimitedCount=${stats.rateLimitedCount} ` +
+      `circuitOpen=${stats.circuitOpen}`,
+  );
 
   const leaguesAfter = await prisma.league.count();
   const teamsAfter = await prisma.team.count();

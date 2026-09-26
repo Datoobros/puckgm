@@ -58,10 +58,13 @@ async function main() {
   }
 
   console.log("\nSyncing full rosters for all 32 teams (name/dob/org/careerNhlGp enrichment)...");
-  const rosterResults = await syncAllRosters();
-  const totalSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
-  const totalFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
-  console.log(`Roster sync done — ${totalSynced} players synced, ${totalFailed} failures.`);
+  const rosterOutcome = await syncAllRosters();
+  const totalSynced = rosterOutcome.results.reduce((s, r) => s + r.playersSynced, 0);
+  const totalFailed = rosterOutcome.results.reduce((s, r) => s + r.failures.length, 0);
+  console.log(
+    `Roster sync done — ${totalSynced} players synced, ${totalFailed} failures` +
+      `${rosterOutcome.rateLimited ? " (stopped early: rate limited)" : ""}.`,
+  );
 
   const totalRows = await prisma.gameStatLine.count();
   const totalPlayers = await prisma.player.count();

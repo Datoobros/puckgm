@@ -12,6 +12,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { upsertPlayerFull } from "@/lib/players/identity";
 import { runWithConcurrency } from "@/lib/concurrency";
+import { NhlRateLimitedError } from "@/lib/nhl/pacer";
 
 const DEFAULT_LIMIT = 40;
 // Same rate-limit sensitivity as the old per-player roster sync (both hit
@@ -23,6 +24,11 @@ export interface CareerGpRefreshResult {
   attempted: number;
   refreshed: number;
   failures: { playerId: number; error: string }[];
+  // True when a real 429 tripped the shared pacer's circuit mid-fan-out —
+  // `attempted` reflects only the requests actually issued before stopping,
+  // not the full pick list. Remaining players are simply not attempted this
+  // run; the next run's priority ordering (see below) picks them back up.
+  rateLimited: boolean;
 }
 
 interface PickedPlayer {
@@ -75,15 +81,25 @@ export async function refreshCareerGp(limit: number = DEFAULT_LIMIT): Promise<Ca
 
   const failures: { playerId: number; error: string }[] = [];
   let refreshed = 0;
+  let attempted = 0;
+  let rateLimited = false;
 
   await runWithConcurrency(picked, REFRESH_CONCURRENCY, async (p) => {
+    // Fan-out already stopped this run — don't attempt more players, don't
+    // pile more workers into an already-tripped circuit.
+    if (rateLimited) return;
+    attempted += 1;
     try {
       await upsertPlayerFull(p.nhlPlayerId);
       refreshed += 1;
     } catch (e) {
+      if (e instanceof NhlRateLimitedError) {
+        rateLimited = true;
+        return;
+      }
       failures.push({ playerId: p.nhlPlayerId, error: e instanceof Error ? e.message : String(e) });
     }
   });
 
-  return { attempted: picked.length, refreshed, failures };
+  return { attempted, refreshed, failures, rateLimited };
 }

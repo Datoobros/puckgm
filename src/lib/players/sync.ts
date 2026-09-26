@@ -17,6 +17,7 @@
 import { getTeamRoster, NHL_TEAM_ABBREVS } from "@/lib/nhl/client";
 import { upsertPlayerFromRoster } from "@/lib/players/identity";
 import { runWithConcurrency } from "@/lib/concurrency";
+import { NhlRateLimitedError } from "@/lib/nhl/pacer";
 
 // Teams fan out at this concurrency (not sequential, and not per-player
 // anymore — see file header). Measured directly against the live NHL API:
@@ -41,6 +42,11 @@ export async function syncTeamRoster(teamAbbrev: string): Promise<RosterSyncResu
   try {
     roster = await getTeamRoster(teamAbbrev);
   } catch (e) {
+    // Rate-limited is not a per-team failure — rethrow so syncRosters below
+    // can stop the whole fan-out instead of recording 32 misleading
+    // "failed" teams. Any other error (a genuine one-team fetch problem)
+    // still gets the sentinel/shape below.
+    if (e instanceof NhlRateLimitedError) throw e;
     // playerId -1 preserves Task 2's original sentinel/shape for anything
     // still reading `failures` directly; `rosterFetchFailed` below is the
     // explicit signal new callers should check instead.
@@ -72,17 +78,44 @@ export async function syncTeamRoster(teamAbbrev: string): Promise<RosterSyncResu
   return { team: teamAbbrev, playersSynced, failures, rosterFetchFailed: false };
 }
 
-async function syncRosters(teams: readonly string[]): Promise<RosterSyncResult[]> {
-  return runWithConcurrency([...teams], TEAM_CONCURRENCY, syncTeamRoster);
+export interface RosterSyncOutcome {
+  results: RosterSyncResult[];
+  // True when a real 429 tripped the shared pacer's circuit mid-fan-out.
+  // Remaining teams are simply not attempted this run (see syncRosters) —
+  // the next cron run picks them up, same idempotent-upsert story as
+  // ingestDate's heal-forward window.
+  rateLimited: boolean;
 }
 
-export async function syncAllRosters(): Promise<RosterSyncResult[]> {
+async function syncRosters(teams: readonly string[]): Promise<RosterSyncOutcome> {
+  const results: RosterSyncResult[] = [];
+  let rateLimited = false;
+
+  await runWithConcurrency([...teams], TEAM_CONCURRENCY, async (team) => {
+    // Fan-out already stopped this run — don't attempt more teams, don't
+    // let more workers pile into an already-tripped circuit.
+    if (rateLimited) return;
+    try {
+      results.push(await syncTeamRoster(team));
+    } catch (e) {
+      if (e instanceof NhlRateLimitedError) {
+        rateLimited = true;
+        return;
+      }
+      throw e;
+    }
+  });
+
+  return { results, rateLimited };
+}
+
+export async function syncAllRosters(): Promise<RosterSyncOutcome> {
   return syncRosters(NHL_TEAM_ABBREVS);
 }
 
 /** Scoped sync — used by the daily cron so a quiet day (or even a full
  * slate) never has to touch all 32 teams' rosters, only the ones that
  * actually played. */
-export async function syncTeamsRosters(teamAbbrevs: string[]): Promise<RosterSyncResult[]> {
+export async function syncTeamsRosters(teamAbbrevs: string[]): Promise<RosterSyncOutcome> {
   return syncRosters(teamAbbrevs);
 }
