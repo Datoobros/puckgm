@@ -367,14 +367,35 @@ it at no cost. **Vercel Pro is not required for this feature.**
 
 ### Changes
 
-`.github/workflows/live-poll.yml` (new)
-- Scheduled workflow, `*/1 * * * *`, curling the production `/api/cron/live-poll` with the
-  bearer token from a repository secret. Fails loudly on a non-200.
-- **Document GitHub Actions' real behaviour in the workflow file:** scheduled runs are
-  best-effort and can be delayed by several minutes under load. That is acceptable here —
-  a late poll is a slightly stale score, not lost data, because Task 3's finalize step and
-  the daily heal-forward both backstop it. If delays prove intolerable, cron-job.org or
-  Upstash QStash give tighter timing, also free.
+**Correction (2026-09-26): GitHub Actions cannot do this, and an earlier draft of this plan
+wrongly said it could.** GitHub's own docs are explicit: *"The shortest interval you can run
+scheduled workflows is once every 5 minutes"*, queued jobs *"may be dropped"* under load, and
+**in a public repository scheduled workflows are automatically disabled after 60 days with no
+repository activity** — which would silently kill live scoring over an offseason. A `*/1`
+schedule is not available at any price on Actions. Use a dedicated scheduler instead.
+
+**Primary: a dedicated free cron service** (cron-job.org, or Upstash QStash)
+- One HTTP GET to the production `/api/cron/live-poll` every 60 seconds, `Authorization:
+  Bearer <CRON_SECRET>`. **No repository change at all** — this is configured in the
+  service's own UI.
+- Prefer a service that emails on repeated non-200s, so a silent scheduler death is visible.
+- The token lives with that third party. That is the one real trade-off versus Actions, and
+  it is acceptable because the token only grants the right to trigger a read-only poll — it
+  is not a database or Clerk credential. Keep it distinct from anything else if possible.
+
+**Fallback if a third-party scheduler is unacceptable: self-looping on a 5-minute trigger**
+- A GitHub Actions workflow on `*/5 * * * *` (the real minimum) triggers the route, and the
+  route itself loops internally — poll, wait 60s, repeat — for up to 5 polls before
+  returning, using the `maxDuration = 300` that Task 1 established. Effective 60s freshness
+  from a 5-minute trigger.
+- **Cost note, because this changes the billing shape:** provisioned memory is billed for a
+  *running* instance, so a function held open 300s costs far more memory-time than five
+  short ones. Confined to game windows (~6h × ~25 nights ≈ 150 hours/month) it still fits
+  Hobby's 360 GB-hrs, but it must early-exit instantly outside those windows or it will not.
+  The stateless every-60s option is cheaper on every metric; this exists only to avoid a
+  third party.
+- If this route is taken, the workflow file must document the drop-under-load and 60-day
+  auto-disable behaviour, and something must re-enable it after an offseason.
 
 `src/lib/live/poll.ts`
 - **Hard usage guard.** Refuse to do work outside a plausible game window and bail instantly
@@ -391,7 +412,8 @@ it at no cost. **Vercel Pro is not required for this feature.**
 
 ### Verification
 
-- Trigger the workflow manually (`workflow_dispatch`) and confirm a 200 plus a snapshot
+- Trigger the scheduler manually (its UI's "run now", or `workflow_dispatch` on the fallback)
+  and confirm a 200 plus a snapshot
   written during live games.
 - Confirm the bearer token is a repository **secret**, never committed, and that a bad token
   gets a 401.
@@ -400,8 +422,10 @@ it at no cost. **Vercel Pro is not required for this feature.**
   and Active CPU in PROGRESS.md — projections are not measurements.
 
 ### Checklist
-- [ ] Workflow on a 1-minute schedule, token from a secret, fails loudly
-- [ ] GitHub Actions delay caveat documented in the file
+- [ ] 60s schedule via a dedicated cron service (NOT GitHub Actions — 5-min minimum), token
+      held as a secret, alerting on repeated non-200s
+- [ ] If the self-looping fallback is used instead: 5-min trigger, in-route loop, early exit
+      verified, and the drop-under-load + 60-day auto-disable caveats documented
 - [ ] Early exit cheap and guarded; verified sub-second when idle
 - [ ] Usage projection + the "Hobby pauses, doesn't bill" caveat recorded
 - [ ] Real measured usage recorded after ~24h

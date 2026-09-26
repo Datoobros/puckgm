@@ -12,7 +12,8 @@ detail to plan and build. When an item ships, move it off this list and document
   buildable. Decisions confirmed: 60s polling, live points folded into the score with a LIVE
   badge, display-only (results and standings settle on finalized data). Task 1 is a shared
   NHL request pacer that also fixes the rate-limit fallout from ingest-reliability Task 4b.
-  Needs no Vercel plan upgrade — an external scheduler drives it free.
+  Needs no Vercel plan upgrade — a free external cron service drives it (NOT GitHub Actions:
+  5-minute minimum interval).
 
 - **Ingest reliability + stat coverage** — planned in `plans/ingest-reliability-batch.md`
   (7 tasks). The daily ingest cron has never ingested a real game (this project started
