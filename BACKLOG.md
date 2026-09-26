@@ -6,6 +6,17 @@ detail to plan and build. When an item ships, move it off this list and document
 
 ## Open
 
+- **Ingest reliability + stat coverage** — planned in `plans/ingest-reliability-batch.md`
+  (7 tasks). The daily ingest cron has never ingested a real game (this project started
+  after the 2025-26 season ended; all 52,478 stat lines came from the backfill script), and
+  the 2026-27 season starts 2026-09-29. Tasks 1–4 must land before then: retry/backoff in
+  the NHL client, a cron route that can't be aborted by one failing phase, a 3-day
+  heal-forward window plus a visible `IngestRun` record, and a full-slate dress rehearsal
+  against the 60s function budget. Tasks 5–7 follow: NHL playoff games (currently skipped,
+  which would score every fantasy playoff matchup at zero), the takeaways/giveaways
+  divergence between the per-game and aggregate scoring paths, and hits/blocks defaulting
+  to 0 points.
+
 - **Draft needs a significant overhaul.** User says a lot is wrong with the draft as it
   stands — scope not yet defined beyond that. Needs a follow-up conversation to pin down
   specifics (setup flow? live draft room UX? autopick/timer behavior? something else
