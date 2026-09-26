@@ -5,8 +5,40 @@
 const API_BASE = "https://api-web.nhle.com/v1";
 const SEARCH_BASE = "https://search.d3.nhle.com/api/v1";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+const RETRY_BACKOFFS_MS = [500, 1000, 2000];
+
+/** Retries on 429/5xx only — a 404 or other 4xx is a real answer, not a
+ * transient failure, and callers (getDaySchedule in particular) depend on
+ * that distinction. Backs off 500ms -> 1s -> 2s, honoring a `Retry-After`
+ * header when present and <= 5s. Reproduced live: the NHL API 429'd
+ * /roster/STL/current mid-cron with nothing here to retry it, which killed
+ * the entire nightly run downstream. Exported so schedule.ts's
+ * getDaySchedule can share it rather than duplicating the backoff logic. */
+export async function fetchWithRetry(url: string, attempts = 3): Promise<Response> {
+  let res = await fetch(url);
+  for (let i = 0; i < attempts && !res.ok && isRetryableStatus(res.status); i++) {
+    const retryAfterSeconds = Number(res.headers.get("Retry-After"));
+    const backoff = RETRY_BACKOFFS_MS[i] ?? RETRY_BACKOFFS_MS[RETRY_BACKOFFS_MS.length - 1];
+    const delay =
+      Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 && retryAfterSeconds * 1000 <= 5000
+        ? retryAfterSeconds * 1000
+        : backoff;
+    await sleep(delay);
+    res = await fetch(url);
+  }
+  return res;
+}
+
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetchWithRetry(url);
   if (!res.ok) {
     throw new Error(`NHL API ${res.status} for ${url}`);
   }

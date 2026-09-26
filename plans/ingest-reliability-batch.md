@@ -197,13 +197,13 @@ Fixes defects #2 (partly), #3.
   after re-ingesting that day.
 
 ### Checklist
-- [ ] `fetchWithRetry` in `client.ts`, used by `getJson` and `getDaySchedule`
-- [ ] 404 still means "no games", not an error
-- [ ] `ingestDate` fans out at concurrency 6, counters accumulated safely
-- [ ] 16-game day: 16 ingested, 0 errors, faster than 75.4s
-- [ ] Retry path observed working, not just written
-- [ ] Row count still 52,478
-- [ ] PROGRESS.md section + commit
+- [x] `fetchWithRetry` in `client.ts`, used by `getJson` and `getDaySchedule`
+- [x] 404 still means "no games", not an error
+- [x] `ingestDate` fans out at concurrency 6, counters accumulated safely
+- [x] 16-game day: 16 ingested, 0 errors, faster than 75.4s
+- [x] Retry path observed working, not just written
+- [x] Row count still 52,478
+- [x] PROGRESS.md section + commit
 
 ---
 

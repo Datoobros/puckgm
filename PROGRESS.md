@@ -3686,3 +3686,33 @@ anything):
   the shared dev/prod database makes this load-bearing, not just tidy.
 - Don't fake data that doesn't exist (injury status, projections, standings). Say plainly
   what's not built and why, rather than shipping a hollow version of an ESPN feature.
+
+## Task 1 of `plans/ingest-reliability-batch.md` — retry/backoff + concurrency (2026-09-26)
+
+`src/lib/nhl/client.ts` gained `fetchWithRetry` (exported), used by `getJson` and by
+`getDaySchedule` (`src/lib/nhl/schedule.ts`). Retries only on 429/5xx, up to 3 retries
+(4 total fetches) with 500ms → 1s → 2s backoff, honoring a `Retry-After` header ≤ 5s. 404
+still returns immediately with no retry — `getDaySchedule`'s "no schedule published" meaning
+is unchanged. `ingestDate` (`src/lib/ingest/daily.ts`) now filters to ingestable games first,
+then fans out through `runWithConcurrency` at concurrency 6 (deliberately below
+`syncTeamRoster`'s internal 15 — stacking those bursts is what caused the live 429 below);
+each worker returns its own outcome object instead of mutating shared counters, avoiding a
+race across concurrent callbacks.
+
+**Measured, not estimated:**
+- `ingestDate("2025-10-11")` (16 games): **14.1s**, then **12.8s** on an immediate second
+  run — both **16 ingested, 0 errors**, down from the plan's 75.4s sequential baseline (a
+  ~5x speedup from concurrency 6 alone, no retry needed on either run).
+- Retry path verified against a local mock HTTP server (not the live NHL API, to make it
+  deterministic) that returns 429 twice then 200: `fetchWithRetry` made exactly 3 requests,
+  waited the expected ~1.5s (500ms + 1s backoff) before the 3rd, and returned the 200 —
+  confirming the run succeeds through the retry instead of throwing. A second mock-server
+  check confirmed a 404 short-circuits immediately with exactly 1 request and no backoff
+  wait, so `getDaySchedule`'s existing behavior is unchanged. (The live 429 on
+  `/roster/STL/current` from the plan's investigation did not reproduce naturally during
+  this session's two back-to-back real runs — NHL's rate limiting is apparently
+  load-dependent — so the mock-server test is what actually exercises the retry code path.)
+- `GameStatLine` row count confirmed **52,478 before and after** both real re-ingests of
+  2025-10-11 — idempotent upsert held.
+
+Throwaway timing/retry scripts (`scripts/_tmp-*.ts`) deleted before commit per convention.
