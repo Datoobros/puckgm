@@ -2485,6 +2485,16 @@ commissioner can run a correct draft through the fixed code.
 
 ## Known gaps, deliberately not built (ask before building)
 
+- **URGENT, before the 2026-09-29 opener: the daily-ingest cron will likely time out on any
+  full NHL slate.** `scripts/ingest-dress-rehearsal.ts` (ingest-reliability-batch Task 4)
+  measured the full cron body against the real 16-game day 2025-10-11: **162.5s against
+  Vercel's 60s hard limit**, vs. 13.0s for a quiet preseason day. The cost is almost
+  entirely `rosterSync` (120.3s alone — double the whole budget), scoped to all 32 teams
+  that played, with real 429 failures from the NHL API under that load. Ingest, injuries,
+  waivers, FAAB, trades, and lineups are all fast on their own; this is one phase. No fix
+  attempted — per the plan, moving roster sync off the daily request path (its own weekly
+  cron, or a queue) is a scope decision for the user. Full per-phase numbers for both runs
+  are in the "Task 4 of `plans/ingest-reliability-batch.md`" section further down.
 - **Dropping a player whose game already started forfeits his points that day** —
   `clearLineupFrom` deletes from today forward, including a slot whose game is already in
   progress; ESPN would block that drop outright instead. Blocking it is a separate rules change,
