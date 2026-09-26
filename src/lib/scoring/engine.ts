@@ -19,6 +19,7 @@ export interface ScoringConfig {
   plusMinus?: number;
   giveaways?: number;
   takeaways?: number;
+  powerPlayGoals?: number;
   // goalie — wins/shutouts derived from the boxscore's `decision` field
   // (confirmed values: "W" | "L" | "O"), not a TOI/score heuristic.
   wins?: number;
@@ -51,6 +52,7 @@ export const EDITABLE_SCORING_FIELDS: { key: keyof ScoringConfig; label: string 
   { key: "plusMinus", label: "+/-" },
   { key: "giveaways", label: "Giveaways" },
   { key: "takeaways", label: "Takeaways" },
+  { key: "powerPlayGoals", label: "Power Play Goals" },
   { key: "wins", label: "Wins (G)" },
   { key: "shutouts", label: "Shutouts (G)" },
   { key: "saves", label: "Saves (G)" },
@@ -69,6 +71,7 @@ interface RawStatLine {
   plusMinus?: number;
   giveaways?: number;
   takeaways?: number;
+  powerPlayGoals?: number;
   goalsAgainst?: number;
   saves?: number;
 }
@@ -103,6 +106,7 @@ export function computeFantasyPoints(statsJson: unknown, config: ScoringConfig):
   total += (stats.plusMinus ?? 0) * (config.plusMinus ?? 0);
   total += (stats.giveaways ?? 0) * (config.giveaways ?? 0);
   total += (stats.takeaways ?? 0) * (config.takeaways ?? 0);
+  total += (stats.powerPlayGoals ?? 0) * (config.powerPlayGoals ?? 0);
   return total;
 }
 
@@ -120,12 +124,22 @@ export interface StatTotals {
   blockedShots: number;
   pim: number;
   plusMinus: number;
+  takeaways: number;
+  giveaways: number;
+  powerPlayGoals: number;
   wins: number; // count of games with decision "W", not a per-game boolean
   shutouts: number; // count
   saves: number;
   goalsAgainst: number;
 }
 
+// INVARIANT: every field computeFantasyPoints reads above must also be
+// summed into StatTotals and added here, or the per-game and aggregate
+// paths silently disagree — exactly what happened to takeaways/giveaways
+// (scored per-game, missing from the aggregate SQL) until the
+// ingest-reliability batch's Task 6 caught it via 12 call sites (Players
+// page, draft autopick, auto-set lineup, trade review, standings, the
+// profile modal, ...) all reading matchup/points totals that didn't match.
 export function computeFantasyPointsFromTotals(totals: StatTotals, config: ScoringConfig): number {
   return (
     totals.goals * (config.goals ?? 0) +
@@ -135,6 +149,9 @@ export function computeFantasyPointsFromTotals(totals: StatTotals, config: Scori
     totals.blockedShots * (config.blockedShots ?? 0) +
     totals.pim * (config.pim ?? 0) +
     totals.plusMinus * (config.plusMinus ?? 0) +
+    totals.takeaways * (config.takeaways ?? 0) +
+    totals.giveaways * (config.giveaways ?? 0) +
+    totals.powerPlayGoals * (config.powerPlayGoals ?? 0) +
     totals.wins * (config.wins ?? 0) +
     totals.shutouts * (config.shutouts ?? 0) +
     totals.saves * (config.saves ?? 0) +

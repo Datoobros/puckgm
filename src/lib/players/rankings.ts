@@ -28,6 +28,9 @@ export interface PlayerAggregateRow {
   blockedShots: number;
   pim: number;
   plusMinus: number;
+  takeaways: number;
+  giveaways: number;
+  powerPlayGoals: number;
   saves: number;
   goalsAgainst: number;
   wins: number;
@@ -94,6 +97,9 @@ export async function getPlayerStatsAggregate(opts?: {
       COALESCE(SUM((g."statsJson"->>'blockedShots')::numeric), 0)::float AS "blockedShots",
       COALESCE(SUM((g."statsJson"->>'pim')::numeric), 0)::float AS pim,
       COALESCE(SUM((g."statsJson"->>'plusMinus')::numeric), 0)::float AS "plusMinus",
+      COALESCE(SUM((g."statsJson"->>'takeaways')::numeric), 0)::float AS takeaways,
+      COALESCE(SUM((g."statsJson"->>'giveaways')::numeric), 0)::float AS giveaways,
+      COALESCE(SUM((g."statsJson"->>'powerPlayGoals')::numeric), 0)::float AS "powerPlayGoals",
       COALESCE(SUM((g."statsJson"->>'saves')::numeric), 0)::float AS saves,
       COALESCE(SUM((g."statsJson"->>'goalsAgainst')::numeric), 0)::float AS "goalsAgainst",
       COALESCE(SUM(CASE WHEN g."statsJson"->>'decision' = 'W' THEN 1 ELSE 0 END), 0)::int AS wins,
@@ -173,6 +179,9 @@ export function statLineToRow(
     blockedShots: num("blockedShots"),
     pim: num("pim"),
     plusMinus: num("plusMinus"),
+    takeaways: num("takeaways"),
+    giveaways: num("giveaways"),
+    powerPlayGoals: num("powerPlayGoals"),
     saves: num("saves"),
     goalsAgainst: num("goalsAgainst"),
     wins: won ? 1 : 0,

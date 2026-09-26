@@ -4185,3 +4185,108 @@ a clean reputation, so 4 req/s may well be fine there. The `IngestRun` row recor
 `pacerStatsJson` and `rateLimitedPhases` precisely so this can be decided on real evidence —
 **if `rateLimitedCount` stays 0 across real game days, raising `NHL_RATE` back toward 4 is
 reasonable.** First clean data point: the 2026-09-29 opening slate (5 games).
+
+## Task 6 of `plans/ingest-reliability-batch.md` — close the scoring-path divergence, add `powerPlayGoals`, drop the dead leagues (2026-09-26)
+
+**The bug, closed.** `computeFantasyPoints` (per-game) scored `takeaways`/`giveaways`;
+`computeFantasyPointsFromTotals` (aggregate) silently omitted them, because
+`getPlayerStatsAggregate`'s SQL (`src/lib/players/rankings.ts`) never summed those two
+columns. Both were already editable in `EDITABLE_SCORING_FIELDS`, so setting `takeaways: 1`
+in Adjust Scoring changed per-game totals but not the Players page, draft autopick, auto-set
+lineup, trade review, standings, or the profile modal — all 12 call sites of
+`getPlayerStatsAggregate`/`statLineToRow` feed off the aggregate path. Fixed by adding
+`takeaways`, `giveaways`, and the new `powerPlayGoals` to `PlayerAggregateRow`'s SQL (same
+`COALESCE(SUM(...))::float` shape as the neighbouring columns), to `StatTotals`, and to
+`computeFantasyPointsFromTotals` — the two scoring paths now sum the exact same field list.
+`statLineToRow` (the single-game-row path shared by `getPlayerDailyStats` and the profile
+modal's game log) got the same three fields so its return shape stays a valid `PlayerStatsRow`.
+An invariant comment now sits directly above `computeFantasyPointsFromTotals` naming this
+batch, so the next field added to `computeFantasyPoints` isn't silently missed here again.
+
+`powerPlayGoals` (already stored verbatim in every skater `GameStatLine`, per the plan's
+"What exists already" section) is now a real `ScoringConfig`/`EDITABLE_SCORING_FIELDS` entry
+and a `SKATER_COLUMNS` entry (label `PPG`) — a genuinely free win, no new NHL API calls.
+`STARTER_SCORING` was deliberately left untouched (no `powerPlayGoals` key), so it defaults to
+0 the same way every other unset `ScoringConfig` field does — Task 7's job, not this one's.
+
+**The equality assertion — the actual point of this task — passed for both a skater and a
+goalie.** Throwaway `scripts/_tmp-scoring-parity-check.ts` (deleted after use) took a config of
+`{ ...STARTER_SCORING, takeaways: 1, giveaways: -0.5, powerPlayGoals: 1 }`, picked the real
+skater with the most combined TK+GV+PPG activity in the database and the goalie with the most
+stat lines, and for each: summed `computeFantasyPoints` over every raw `GameStatLine`, compared
+against one `getPlayerStatsAggregate` row through `computeFantasyPointsFromTotals`, and asserted
+equality within floating-point tolerance.
+
+```
+skater (Nathan MacKinnon): per-game sum=168.49999999999997, aggregate=168.5, diff=2.8e-14
+goalie (Dustin Wolf):      per-game sum=372.20000000000005, aggregate=372.2, diff=5.7e-14
+PASS: per-game and aggregate scoring paths agree for both a skater and a goalie.
+```
+
+(The goalie case exercises the invariant trivially — `computeFantasyPoints`'s goalie branch
+never reads TK/GV/PPG, and a goalie's stat line has none of those keys, so both paths correctly
+contribute 0 from them — but it's still a real, passing check of the same equality property,
+not skipped as the plan warned against.)
+
+**`powerPlayGoals` spot-checked against the NHL's own numbers**, the same way the hits table in
+this plan's "What exists already" section did: summed `powerPlayGoals` across Nathan
+MacKinnon's 80 stored 2025-26 `GameStatLine` rows came to **11**, matching
+`api-web.nhle.com/v1/player/8477492/landing`'s `seasonTotals` entry for `season: 20252026,
+gameTypeId: 2` (`powerPlayGoals: 11`, `gamesPlayed: 80`) exactly.
+
+**Real-browser verification note — a deliberate substitution, not a skipped step.** Every
+league-scoped page in this app is guarded by `auth.protect()`, and prior sessions' documented
+pattern for testing against the real "Experimenting" league was a `// TEMP:` hardcoded-userId
+bypass in the relevant layouts/actions, reverted before commit. This session's harness blocked
+that: editing `auth.protect()` call sites was refused by the environment's own security
+classifier (`[Security Weaken]`) before any page could be loaded, so the edits were reverted
+immediately (confirmed via `git diff` showing no changes to `src/app/leagues/[id]/layout.tsx`,
+`settings/layout.tsx`, `players/page.tsx`, `players/actions.ts`, or `leagues/actions.ts`, and
+`grep -rn "TEMP:" src/` clean throughout). Rather than skip the plan's UI-behavior checks
+entirely, a disposable league ("Task 6 PPG Check (delete me)", commissioner
+`task6-ppg-verify-user`) was created and the exact functions each page/action calls were
+exercised directly against it: `getPlayerStatsAggregate` + `SKATER_COLUMNS` (proves the PPG
+column exists and sorts correctly — top of pool was Connor McDavid at 13), `updateLeagueSettings`
+with the same input shape `updateScoringSettingsAction` builds (proves `powerPlayGoals: 1.5`
+round-trips through `League.settingsJson`, and that a player's aggregate points then move by
+exactly `1.5 × powerPlayGoals` — 19.5 for McDavid's 13, checked to `1e-6`), and `getPlayerProfile`
+(proves the profile modal's data path doesn't throw for the same player). This is real code
+against real data, not mocked, but it is not the same as clicking through the rendered HTML —
+flagging that gap honestly rather than claiming a browser click-through that didn't happen. The
+disposable league and both throwaway scripts (`_tmp-task6-browser-setup.ts`,
+`_tmp-task6-browser-check.ts`) were deleted after use.
+
+**Cleanup: 8 leftover test leagues removed by exact name, "Experimenting" fully intact.**
+`scripts/cleanup-test-leagues.ts` was rewritten — its previous name list was stale (referenced
+leagues that no longer exist) and it only deleted `Team`+`League`, which would have hit an FK
+`RESTRICT` violation the moment any of these leagues had a `RosterSlot`/`Trade`/`Draft`/etc. row,
+same shape of bug `deleteLeague` (`src/lib/leagues/mutations.ts`) already documents fixing
+piece by piece. The script now runs the exact same FK-safe deletion order as `deleteLeague`
+(duplicated rather than imported, since `deleteLeague` requires a commissioner userId check this
+maintenance script has no user for), scoped by exact league name:
+
+- "Test Draft League"
+- "Draft Test League (delete me)"
+- "QoL Batch Test League (delete me)" — 4 separate leagues shared this exact name
+- "Co-Manager Test League (delete me)"
+- "Draft Autodraft Test League (delete me)"
+
+That's 1 + 1 + 4 + 1 + 1 = 8, confirmed by listing every league before running. The script also
+refuses to run if "Experimenting" ever matched its name filter (it can't, but asserted anyway).
+
+Before: `League` count **10** (9 pre-existing + the disposable verification league above).
+After running the cleanup script (8 deleted) and separately deleting the disposable
+verification league by its own exact name: `League` count **1**. "Experimenting"
+(`cmts0s1uu0000lc0405mux8c5`) counted before and after, unchanged: teams **3**, rosterSlots
+**153**, lineupEntries **390**, matchupPeriods **22**, matchups **21**.
+
+`npx tsc --noEmit` and `npm run build` both clean throughout.
+
+### Checklist
+- [x] TK/GV/PPG summed in the aggregate SQL and in `StatTotals`
+- [x] `powerPlayGoals` scorable and editable; PPG column added
+- [x] Invariant comment on `computeFantasyPointsFromTotals`
+- [x] Equality assertion passes for a skater and a goalie
+- [x] PPG spot-checked against NHL's own numbers
+- [x] 8 test leagues gone, "Experimenting" fully intact
+- [x] PROGRESS.md section + commit

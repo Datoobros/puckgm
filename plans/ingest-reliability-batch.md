@@ -591,13 +591,13 @@ Cleanup (separate, in the same commit — it's the same "stop wasting cron budge
   lineups, and matchups are intact (count them before and after).
 
 ### Checklist
-- [ ] TK/GV/PPG summed in the aggregate SQL and in `StatTotals`
-- [ ] `powerPlayGoals` scorable and editable; PPG column added
-- [ ] Invariant comment on `computeFantasyPointsFromTotals`
-- [ ] Equality assertion passes for a skater and a goalie
-- [ ] PPG spot-checked against NHL's own numbers
-- [ ] 8 test leagues gone, "Experimenting" fully intact
-- [ ] PROGRESS.md section + commit
+- [x] TK/GV/PPG summed in the aggregate SQL and in `StatTotals`
+- [x] `powerPlayGoals` scorable and editable; PPG column added
+- [x] Invariant comment on `computeFantasyPointsFromTotals`
+- [x] Equality assertion passes for a skater and a goalie
+- [x] PPG spot-checked against NHL's own numbers
+- [x] 8 test leagues gone, "Experimenting" fully intact
+- [x] PROGRESS.md section + commit
 
 ---
 

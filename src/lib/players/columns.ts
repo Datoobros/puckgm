@@ -23,6 +23,7 @@ export const SKATER_COLUMNS: StatColumn[] = [
   { key: "blockedShots", label: "BLK", get: (r) => r.blockedShots },
   { key: "pim", label: "PIM", get: (r) => r.pim },
   { key: "plusMinus", label: "+/-", get: (r) => r.plusMinus },
+  { key: "powerPlayGoals", label: "PPG", get: (r) => r.powerPlayGoals },
 ];
 
 export const GOALIE_COLUMNS: StatColumn[] = [
