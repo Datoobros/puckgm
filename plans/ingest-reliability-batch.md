@@ -8,8 +8,8 @@ Opening night is the pipeline's first real test, and today it has three ways to 
 silently and one way to abort the entire nightly run.
 
 This batch hardens the ingest path and closes the stat-coverage gaps found in the same
-review. **It does not build live/in-game tracking** — that needs Vercel Pro plus a
-separate provisional-stats store, and gets its own plan (see "Explicitly out of scope").
+review. **It does not build live/in-game tracking** — that is `plans/live-tracking-batch.md`,
+which also carries the rate-limit fix Task 4b turned out to need (see "Explicitly out of scope").
 
 Seven tasks, in order, one commit each. Tasks 1–4 are the ones that must land before
 2026-09-29; 5–7 can follow. Same working rules as the previous plans (`PROGRESS.md`

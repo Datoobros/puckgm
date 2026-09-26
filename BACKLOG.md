@@ -6,6 +6,14 @@ detail to plan and build. When an item ships, move it off this list and document
 
 ## Open
 
+- **Live in-game stat tracking** — planned in `plans/live-tracking-batch.md` (6 tasks).
+  Priority #1 per the user. Scores currently freeze at ~5am ET for 24h. Verified against
+  real live games: the NHL boxscore is fully populated mid-game and ~20s fresh, so this is
+  buildable. Decisions confirmed: 60s polling, live points folded into the score with a LIVE
+  badge, display-only (results and standings settle on finalized data). Task 1 is a shared
+  NHL request pacer that also fixes the rate-limit fallout from ingest-reliability Task 4b.
+  Needs no Vercel plan upgrade — an external scheduler drives it free.
+
 - **Ingest reliability + stat coverage** — planned in `plans/ingest-reliability-batch.md`
   (7 tasks). The daily ingest cron has never ingested a real game (this project started
   after the 2025-26 season ended; all 52,478 stat lines came from the backfill script), and
