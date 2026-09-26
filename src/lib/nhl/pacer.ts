@@ -8,7 +8,28 @@
 // front and failing fast on a real 429 is the fix — see client.ts's
 // pacedFetch, the only caller of acquire()/reportRateLimited() below.
 
-const NHL_RATE = 4; // requests/second, shared across every caller in this process
+// Lowered 4 -> 2 after Task 1's own dress rehearsals. All three runs took a
+// real 429 at requestsIssued ~57, within a second or two of each other,
+// across gaps of 5, 6 and 10 minutes. Tracing it: ingest fires ~33 requests
+// but is DB-bound so it only averages ~1.3 req/s; rosterSync then has
+// nothing throttling it and runs flat out, and the 429 lands ~24 requests
+// into that burst. So 4 req/s *sustained* is faster than the NHL API
+// tolerates — earlier probing put the safe sustained rate at 2-3 req/s.
+//
+// At 2 req/s a full 32-team run lands around 70-80s. That is fine: the real
+// ceiling is maxDuration = 300 (see daily-ingest/route.ts), and the 60s
+// figure the rehearsals were scored against was itself an artifact of the
+// stale Hobby limit this batch already corrected. Finishing the work slower
+// beats silently skipping ~300 players and all 40 careerGp refreshes nightly.
+//
+// Caveat worth keeping in mind before tuning this again: those rehearsals ran
+// from a dev machine whose IP had absorbed a day of testing (this task's three
+// runs, Task 4b's two, plus the plan's live-boxscore verification). Production
+// egresses from Vercel with a clean reputation, so 4 may well be fine there.
+// The IngestRun row records pacerStats/rateLimitedPhases precisely so this can
+// be decided on production evidence — if rateLimitedCount stays 0 over real
+// game days, raising this back toward 4 is reasonable.
+const NHL_RATE = 2; // requests/second, shared across every caller in this process
 const BURST = NHL_RATE; // small burst allowance — one second's worth, not more
 const COOLDOWN_MS = 60_000;
 

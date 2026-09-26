@@ -4153,3 +4153,35 @@ deleted before commit per convention. `grep -rn "TEMP:" src/` clean.
 - [x] Row counts unchanged
 - [x] PROGRESS.md section + commit
 - [x] PROGRESS.md section + commit
+
+### Addendum (same day): `NHL_RATE` lowered 4 → 2
+
+Not a task — a one-constant tune off the back of Task 1's own measurements, decided with the
+user rather than inside an implementing session.
+
+All three of Task 1's dress rehearsals took a real 429 at `requestsIssued` ≈ 57, within a
+request or two of each other, across gaps of 5, 6 and 10 minutes. Tracing the sequence
+explains why: ingest fires ~33 requests but is DB-bound, so it only averages ~1.3 req/s;
+`rosterSync` then has nothing throttling it and runs at the pacer's full rate, and the 429
+lands ~24 requests into that burst. **4 req/s sustained is faster than the NHL API
+tolerates** — earlier probing during the plan's research put the safe sustained rate at
+2–3 req/s.
+
+At 2 req/s a full 32-team run should land around 70–80s. That is fine, and the reasoning is
+worth keeping explicit: the real ceiling is `maxDuration = 300`, and the 60s figure the
+rehearsals were scored against was itself an artifact of the stale Hobby limit this batch
+already corrected (see the Task 1 section above). Finishing the work slowly beats silently
+skipping ~300 players and all 40 `careerGp` refreshes every night.
+
+Verified deterministically, no network: 6 `acquire()` calls took **2014ms** (expected ~2000ms
+— burst of 2 immediate, then 4 at 500ms), and with the circuit tripped `acquire()` still
+rejects with `NhlRateLimitedError` in **1ms**. `npx tsc --noEmit` and `npx next build` both
+clean.
+
+**Open question for production evidence, deliberately not settled here:** Task 1's rehearsals
+ran from a dev machine whose IP had absorbed a full day of testing (Task 1's three runs, Task
+4b's two, and the plan's own live-boxscore verification). Production egresses from Vercel with
+a clean reputation, so 4 req/s may well be fine there. The `IngestRun` row records
+`pacerStatsJson` and `rateLimitedPhases` precisely so this can be decided on real evidence —
+**if `rateLimitedCount` stays 0 across real game days, raising `NHL_RATE` back toward 4 is
+reasonable.** First clean data point: the 2026-09-29 opening slate (5 games).
