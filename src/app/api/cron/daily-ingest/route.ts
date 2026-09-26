@@ -25,26 +25,55 @@ export const maxDuration = 60;
 // can't be triggered by an arbitrary public GET — set it in Vercel project
 // env vars and Vercel attaches it as a Bearer token automatically for cron
 // invocations. See https://vercel.com/docs/cron-jobs/manage-cron-jobs#securing-cron-jobs
+interface PhaseError {
+  phase: string;
+  error: string;
+}
+
+// Every phase below runs through this instead of being awaited directly, so
+// one phase throwing (the live case: getTeamRoster 429'd and killed the
+// whole route — see src/lib/players/sync.ts) can no longer take the rest of
+// the night's work with it. A failed phase is recorded and the route moves
+// on; the response is still 200 either way, since a 500 tells Vercel to
+// retry the *entire* run, which is worse than a partial success plus a
+// recorded error.
+async function phase<T>(
+  name: string,
+  phaseErrors: PhaseError[],
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (e) {
+    phaseErrors.push({ phase: name, error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
+  const phaseErrors: PhaseError[] = [];
   const date = yesterdayUTC();
-  const ingestResult = await ingestDate(date);
-  const rosterResults = await syncTeamsRosters(ingestResult.teamsInvolved);
+
+  const ingestResult = await phase("ingest", phaseErrors, () => ingestDate(date));
+  const rosterResults = await phase("rosterSync", phaseErrors, () =>
+    syncTeamsRosters(ingestResult?.teamsInvolved ?? []),
+  );
   // Not scoped to teamsInvolved like the roster sync above — injuries aren't
   // tied to who played last night, so this checks every team every day. One
   // API call plus a handful of player lookups; cheap enough not to bother
   // scoping.
-  const injuryResult = await syncInjuryStatuses();
+  const injuryResult = await phase("injurySync", phaseErrors, () => syncInjuryStatuses());
   // Vercel Hobby allows only one cron trigger/day, so this is where "48
   // hours" (the demotion-waiver claim window) actually gets checked and
   // resolved — see src/lib/waivers/mutations.ts's file header.
-  const waiverResults = await processExpiredWaivers();
-  const faabResults = await processFaabBids();
-  const tradeResults = await processDueTrades();
+  const waiverResults = await phase("waivers", phaseErrors, () => processExpiredWaivers());
+  const faabResults = await phase("faab", phaseErrors, () => processFaabBids());
+  const tradeResults = await phase("trades", phaseErrors, () => processDueTrades());
 
   // The persistent-lineup feature's primary write path — see
   // src/lib/lineups/mutations.ts's ensureLineupMaterialized doc comment.
@@ -53,29 +82,42 @@ export async function GET(request: Request) {
   // morning; page views are the fallback for any team nobody's cron missed.
   // Yesterday's included so one missed cron run heals itself the next
   // morning, same reliability model as ingestDate(yesterdayUTC()).
-  const teams = await prisma.team.findMany({ select: { id: true } });
-  const materializeDates = Array.from(new Set([date, todayUTC()]));
-  let lineupsMaterialized = 0;
-  for (const team of teams) {
-    for (const d of materializeDates) {
-      await ensureLineupMaterialized(team.id, d);
-      lineupsMaterialized++;
+  const lineupsResult = await phase("lineups", phaseErrors, async () => {
+    const teams = await prisma.team.findMany({ select: { id: true } });
+    const materializeDates = Array.from(new Set([date, todayUTC()]));
+    let materialized = 0;
+    // Per-team/date try/catch — one team's bad data must not cost every
+    // other team its lineup for the day.
+    for (const team of teams) {
+      for (const d of materializeDates) {
+        try {
+          await ensureLineupMaterialized(team.id, d);
+          materialized++;
+        } catch (e) {
+          phaseErrors.push({
+            phase: `lineups:${team.id}:${d}`,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
     }
-  }
+    return { teams: teams.length, dates: materializeDates, materialized };
+  });
 
-  await processDuePlayoffs();
+  await phase("playoffs", phaseErrors, () => processDuePlayoffs());
 
-  const rosterSynced = rosterResults.reduce((s, r) => s + r.playersSynced, 0);
-  const rosterFailed = rosterResults.reduce((s, r) => s + r.failures.length, 0);
+  const rosterSynced = rosterResults?.reduce((s, r) => s + r.playersSynced, 0) ?? 0;
+  const rosterFailed = rosterResults?.reduce((s, r) => s + r.failures.length, 0) ?? 0;
 
   return NextResponse.json({
-    ok: true,
+    ok: phaseErrors.length === 0,
+    phaseErrors,
     ingest: ingestResult,
-    rosterSync: { teams: ingestResult.teamsInvolved, synced: rosterSynced, failed: rosterFailed },
+    rosterSync: { teams: ingestResult?.teamsInvolved ?? [], synced: rosterSynced, failed: rosterFailed },
     injurySync: injuryResult,
     waivers: waiverResults,
     faab: faabResults,
     trades: tradeResults,
-    lineups: { teams: teams.length, dates: materializeDates, materialized: lineupsMaterialized },
+    lineups: lineupsResult,
   });
 }

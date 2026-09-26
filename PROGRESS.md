@@ -3716,3 +3716,48 @@ race across concurrent callbacks.
   2025-10-11 — idempotent upsert held.
 
 Throwaway timing/retry scripts (`scripts/_tmp-*.ts`) deleted before commit per convention.
+
+## Task 2 of `plans/ingest-reliability-batch.md` — the cron route can't be aborted by one failing phase (2026-09-26)
+
+`syncTeamRoster` (`src/lib/players/sync.ts`) now wraps its `getTeamRoster` call in a
+try/catch; on failure it returns `{ team, playersSynced: 0, failures: [{ playerId: -1,
+error }] }` instead of throwing — `playerId: -1` is a documented sentinel meaning "the
+roster fetch itself failed," distinct from a per-player upsert failure. This is the actual
+fix for the reproduced live bug: a 429 on `/roster/STL/current` used to propagate out of
+`syncTeamRoster` → `syncRosters` → `syncTeamsRosters` → the route handler, silently killing
+injury sync, waivers, FAAB, trades, lineup materialization, and playoffs for the night.
+
+`src/app/api/cron/daily-ingest/route.ts` gained a local `phase<T>(name, phaseErrors, fn)`
+helper — every phase (ingest, roster sync, injury sync, waivers, FAAB, trades, lineups,
+playoffs) now runs through it. A throw is caught, recorded as `{ phase, error }` in a
+`phaseErrors` array, and the phase returns `null` so the next one still runs off sane
+fallbacks (`?? []` for team lists, etc.). The lineup-materialization loop additionally
+try/catches per team/date, so one team's bad data can't cost every other team its lineup.
+The route always returns **200** with `{ ok: phaseErrors.length === 0, phaseErrors, ... }`
+— never 500, since a 500 tells Vercel to retry the whole run instead of keeping the partial
+success.
+
+**Verification:**
+- `npx tsc --noEmit` and `npm run build` clean, both before and after the sabotage test.
+- Clean run against the local dev server (correct `CRON_SECRET` bearer token, real off-season
+  date 2026-09-25): `{"ok":true,"phaseErrors":[],...}`, all phases present in the response
+  (injurySync matched 11, lineups materialized 44 across 22 teams × 2 dates).
+- Sabotage test: temporarily made `getTeamRoster` throw unconditionally (`src/lib/nhl/client.ts`)
+  and temporarily hardcoded the route's `date` to `2025-10-11` (16 real games, already
+  ingested — idempotent) so `teamsInvolved` would be non-empty and actually exercise the
+  sabotaged call; both reverted immediately after. Result: **200**, `ok: true`,
+  `phaseErrors: []`, `rosterSync: {"failed": 32}` (every team's fetch failed via the `-1`
+  sentinel), and — the actual point — `injurySync`, `waivers`, `faab`, `trades`, and
+  `lineups` all still ran to completion in the same response.
+  - **Note on `phaseErrors`**: it did *not* name `rosterSync`, because the sync.ts fix (as
+    specified) catches the `getTeamRoster` failure one layer down and returns a normal
+    result rather than throwing — so the failure never reaches the route's `phase()`
+    wrapper at all. This satisfies the substantive goal (no phase's failure blocks another;
+    the route never 500s) even though the plan's verification wording anticipated the
+    error surfacing in `phaseErrors` specifically. Flagging the discrepancy rather than
+    bending the implementation to force that exact field to populate, since the sync.ts
+    "catch and return a sentinel, don't throw" behavior is the literal spec for Task 2's
+    `src/lib/players/sync.ts` change.
+- Reverted both sabotage edits; re-ran `npx tsc --noEmit` / `npm run build` clean, then
+  confirmed a clean run again reports `ok: true` with an empty `phaseErrors`.
+- `grep -rn "TEMP:" src/` clean before commit.

@@ -21,7 +21,21 @@ export interface RosterSyncResult {
 }
 
 export async function syncTeamRoster(teamAbbrev: string): Promise<RosterSyncResult> {
-  const roster = await getTeamRoster(teamAbbrev);
+  let roster;
+  try {
+    roster = await getTeamRoster(teamAbbrev);
+  } catch (e) {
+    // playerId -1 marks "the roster fetch itself failed" (e.g. the NHL API
+    // 429'd this team), distinct from a per-player upsert failure below —
+    // this call used to sit outside any try/catch and a single throw here
+    // propagated all the way out of the cron route, killing every phase
+    // after it (waivers, FAAB, trades, lineups) for the whole night.
+    return {
+      team: teamAbbrev,
+      playersSynced: 0,
+      failures: [{ playerId: -1, error: e instanceof Error ? e.message : String(e) }],
+    };
+  }
   const allPlayers = [...roster.forwards, ...roster.defensemen, ...roster.goalies];
 
   let playersSynced = 0;

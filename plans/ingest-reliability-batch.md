@@ -243,12 +243,12 @@ Fixes defect #2.
 - `grep -rn "TEMP:" src/` clean before commit.
 
 ### Checklist
-- [ ] `getTeamRoster` failure caught, `-1` sentinel documented
-- [ ] Every phase wrapped; per-team/date try/catch inside the lineup loop
-- [ ] Route returns 200 even with a failed phase; never 500
-- [ ] Sabotage test proves downstream phases still run
-- [ ] Clean run still `ok: true`
-- [ ] PROGRESS.md section + commit
+- [x] `getTeamRoster` failure caught, `-1` sentinel documented
+- [x] Every phase wrapped; per-team/date try/catch inside the lineup loop
+- [x] Route returns 200 even with a failed phase; never 500
+- [x] Sabotage test proves downstream phases still run
+- [x] Clean run still `ok: true`
+- [x] PROGRESS.md section + commit
 
 ---
 
