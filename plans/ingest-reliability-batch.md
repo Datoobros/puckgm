@@ -634,12 +634,12 @@ not a migration.
 - Real browser check of the Adjust Scoring helper text.
 
 ### Checklist
-- [ ] `STARTER_SCORING` hits/blocks at 0.5; comment explains new-leagues-only
-- [ ] Adjust Scoring helper text added
-- [ ] New-league config verified; arithmetic checked against a known hitter
-- [ ] "Experimenting" provably untouched
-- [ ] Retroactive-rescore consequence flagged to the user, not silently applied
-- [ ] PROGRESS.md section + commit
+- [x] `STARTER_SCORING` hits/blocks at 0.5; comment explains new-leagues-only
+- [x] Adjust Scoring helper text added
+- [x] New-league config verified; arithmetic checked against a known hitter
+- [x] "Experimenting" provably untouched
+- [x] Retroactive-rescore consequence flagged to the user, not silently applied
+- [x] PROGRESS.md section + commit
 
 ---
 

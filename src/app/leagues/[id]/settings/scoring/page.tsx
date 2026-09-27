@@ -53,6 +53,11 @@ export default async function ScoringSettingsPage(props: PageProps<"/leagues/[id
                 defaultValue={settings.scoringConfig[key] ?? 0}
                 className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue"
               />
+              {(key === "hits" || key === "blockedShots") && (
+                <span className="mt-1 block text-[11px] text-muted">
+                  Tracked every game — worth points as soon as this is nonzero.
+                </span>
+              )}
             </label>
           ))}
         </Card>

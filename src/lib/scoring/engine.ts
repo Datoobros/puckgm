@@ -174,19 +174,25 @@ export async function computePlayerPoints(
 }
 
 // Starting point only — values confirmed against ESPN's published defaults
-// are marked; everything else is 0 until DESIGN.md's Stage 2 shadow
-// validation (diff against a real mirrored ESPN league) fills them in.
-// League-configurable per DESIGN.md §2.4; this is not a hardcoded ruleset.
+// are marked; hits/blockedShots use ESPN's own standard optional-category
+// value (0.5) since hits and blocks are tracked exactly every game (see
+// ingest-reliability-batch.md's "What exists already") and scoring them at
+// 0 was a config default, not a data gap. Everything else stays 0 until
+// DESIGN.md's Stage 2 shadow validation (diff against a real mirrored ESPN
+// league) fills it in. League-configurable per DESIGN.md §2.4 — this only
+// seeds *new* leagues (src/lib/leagues/mutations.ts's createLeague); an
+// existing league's settingsJson.scoringConfig is untouched by this
+// constant and only changes through the commissioner's Adjust Scoring UI.
 export const STARTER_SCORING: ScoringConfig = {
   goals: 2, // confirmed ESPN default
   assists: 1, // confirmed ESPN default
   sog: 0.1, // confirmed ESPN default
   wins: 4, // confirmed ESPN default
   saves: 0.2, // confirmed ESPN default
+  hits: 0.5, // ESPN standard optional-category value; chosen here, not an ESPN default
+  blockedShots: 0.5, // ESPN standard optional-category value; chosen here, not an ESPN default
   shutouts: 0,
   goalsAgainst: 0,
-  hits: 0,
-  blockedShots: 0,
   pim: 0,
   plusMinus: 0,
 };
